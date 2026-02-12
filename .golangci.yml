@@ -1,0 +1,181 @@
+# golangci-lint configuration for ControlPlane
+# Adapted from Forge — production-ready with strict settings
+
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+  modules-download-mode: readonly
+  allow-parallel-runners: true
+
+output:
+  formats:
+    text:
+      print-linter-name: true
+      print-issued-lines: true
+
+linters:
+  default: none
+  enable:
+    - asciicheck
+    - bidichk
+    - bodyclose
+    - canonicalheader
+    - containedctx
+    - copyloopvar
+    - decorder
+    - dogsled
+    - dupword
+    - durationcheck
+    - embeddedstructfieldcheck
+    - errcheck
+    - errchkjson
+    - errname
+    - errorlint
+    - exptostd
+    - fatcontext
+    - forbidigo
+    - ginkgolinter
+    - gocheckcompilerdirectives
+    - gochecknoinits
+    - gochecksumtype
+    - gocritic
+    - godoclint
+    - godot
+    - goheader
+    - gomoddirectives
+    - gomodguard
+    - goprintffuncname
+    - gosec
+    - gosmopolitan
+    - govet
+    - grouper
+    - importas
+    - inamedparam
+    - ineffassign
+    - intrange
+    - iotamixing
+    - loggercheck
+    - makezero
+    - mirror
+    - misspell
+    - modernize
+    - musttag
+    - nakedret
+    - nilerr
+    - nilnesserr
+    - nilnil
+    - nlreturn
+    - noctx
+    - nolintlint
+    - perfsprint
+    - predeclared
+    - promlinter
+    - protogetter
+    - reassign
+    - recvcheck
+    - rowserrcheck
+    - sloglint
+    - spancheck
+    - sqlclosecheck
+    - staticcheck
+    - tagalign
+    - testableexamples
+    - tparallel
+    - unconvert
+    - usestdlibvars
+    - usetesting
+    - wastedassign
+    - whitespace
+    - wsl_v5
+    - zerologlint
+  disable:
+    - asasalint
+    - wsl
+    - varnamelen
+    - exhaustruct
+    - wrapcheck
+    - exhaustive
+    - testpackage
+    - revive
+    - unused
+    - unparam
+    - tagliatelle
+    - paralleltest
+    - prealloc
+    - noinlineerr
+    - nestif
+    - mnd
+    - nosprintfhostport
+    - lll
+    - ireturn
+    - iface
+    - godox
+    - err113
+    - interfacebloat
+    - funcorder
+    - forcetypeassert
+    - goconst
+    - gocognit
+    - gocyclo
+    - gochecknoglobals
+    - funlen
+    - cyclop
+    - maintidx
+    - dupl
+    - contextcheck
+    - depguard
+    - unqueryvet
+    - testifylint
+    - thelper
+    - nonamedreturns
+
+  exclusions:
+    generated: lax
+    warn-unused: true
+    presets:
+      - comments
+      - std-error-handling
+      - common-false-positives
+      - legacy
+    rules:
+      - path: _test\.go
+        linters:
+          - gocyclo
+          - errcheck
+          - dupl
+          - gosec
+      - linters:
+          - staticcheck
+        text: "SA9003:"
+      - path: _test\.go
+        linters:
+          - staticcheck
+        text: "SA5011"
+      - linters:
+          - lll
+        source: "^//go:generate "
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  fix: false
+
+formatters:
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/xraph/controlpane
+
+    gofumpt:
+      extra-rules: true
+
+severity:
+  default: error
+  rules:
+    - linters:
+        - dupl
+        - gocyclo
+        - lll
+      severity: warning
