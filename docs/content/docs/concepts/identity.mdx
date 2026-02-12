@@ -1,0 +1,109 @@
+---
+title: Identity (TypeID)
+description: How Ctrl Plane uses prefix-qualified, globally unique identifiers for every entity.
+---
+
+Every entity in Ctrl Plane has a TypeID. TypeIDs are globally unique, sortable, URL-safe identifiers built on UUIDv7 with a human-readable prefix that tells you what kind of entity you're looking at.
+
+A TypeID looks like this:
+
+```
+inst_01h455vb4pex5vsknk084sn02q
+```
+
+The `inst` prefix identifies this as an instance. The suffix is a base32-encoded UUIDv7 that encodes creation time, so IDs sort chronologically.
+
+## Why TypeID
+
+Plain UUIDs are opaque. If you see `550e8400-e29b-41d4-a716-446655440000` in a log line, you have no idea what it refers to. With TypeIDs, `inst_01h455vb...` is immediately recognizable as an instance, `dep_01h455vb...` as a deployment, and `ten_01h455vb...` as a tenant.
+
+TypeIDs also use UUIDv7 instead of UUIDv4, which means they encode creation time and sort chronologically. This gives better database index performance and eliminates the need for a separate `created_at` column in range queries.
+
+## The `id` package
+
+The `id` package wraps the [TypeID Go library](https://github.com/jetify-com/typeid-go) with a thin API tailored for Ctrl Plane.
+
+### Creating IDs
+
+Every call to `id.New()` requires a prefix:
+
+```go
+import "github.com/xraph/ctrlplane/id"
+
+instanceID := id.New(id.PrefixInstance)    // inst_01h455vb4pex5vsknk084sn02q
+deployID   := id.New(id.PrefixDeployment)  // dep_01h455vb4pex5vsknk084sn02q
+tenantID   := id.New(id.PrefixTenant)      // ten_01h455vb4pex5vsknk084sn02q
+```
+
+### Parsing IDs
+
+Parse any TypeID string:
+
+```go
+parsed, err := id.Parse("inst_01h455vb4pex5vsknk084sn02q")
+```
+
+Parse with prefix validation (rejects IDs with the wrong prefix):
+
+```go
+parsed, err := id.ParseWithPrefix("inst_01h455vb...", id.PrefixInstance)  // ok
+parsed, err := id.ParseWithPrefix("dep_01h455vb...", id.PrefixInstance)   // error
+```
+
+### Nil ID
+
+The zero value of `id.ID` is the nil ID. Use it to represent "no value":
+
+```go
+var empty id.ID
+empty.IsNil()  // true
+empty.String() // ""
+
+id.Nil.IsNil() // true
+```
+
+### Database storage
+
+`id.ID` implements `database/sql`'s `Scanner` and `driver.Valuer` interfaces. It stores as a string in the database and returns `NULL` for nil IDs:
+
+```go
+// In a struct with db tags
+type Instance struct {
+    ID             id.ID  `db:"id"`
+    CurrentRelease id.ID  `db:"current_release"` // nullable
+}
+```
+
+### JSON serialization
+
+`id.ID` implements `encoding.TextMarshaler` and `encoding.TextUnmarshaler`. It serializes to the string form and deserializes back:
+
+```json
+{
+  "id": "inst_01h455vb4pex5vsknk084sn02q",
+  "current_release": "rel_01h455vb4pex5vsknk084sn02q"
+}
+```
+
+Nil IDs serialize as empty strings.
+
+## Prefix reference
+
+Every entity type in Ctrl Plane has a dedicated prefix constant:
+
+| Constant | Prefix | Entity |
+|----------|--------|--------|
+| `id.PrefixInstance` | `inst` | Instance |
+| `id.PrefixDeployment` | `dep` | Deployment |
+| `id.PrefixRelease` | `rel` | Release |
+| `id.PrefixHealthCheck` | `chk` | Health check configuration |
+| `id.PrefixHealthResult` | `hres` | Health check result |
+| `id.PrefixDomain` | `dom` | Custom domain |
+| `id.PrefixRoute` | `rte` | Traffic route |
+| `id.PrefixCertificate` | `cert` | TLS certificate |
+| `id.PrefixSecret` | `sec` | Secret |
+| `id.PrefixWebhook` | `hook` | Webhook endpoint |
+| `id.PrefixWebhookDelivery` | `deli` | Webhook delivery attempt |
+| `id.PrefixTenant` | `ten` | Tenant |
+| `id.PrefixAuditEntry` | `aud` | Audit log entry |
+| `id.PrefixEvent` | `evt` | Event |

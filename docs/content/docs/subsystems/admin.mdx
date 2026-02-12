@@ -1,0 +1,116 @@
+---
+title: Administration
+description: Tenant management, quota enforcement, system statistics, and audit logging.
+---
+
+The admin subsystem handles tenant lifecycle, resource quotas, provider status, and the audit trail. It's the operational backbone for managing a multi-tenant deployment.
+
+## Tenant management
+
+Create, update, suspend, and delete tenants:
+
+```go
+tenant, err := cp.Admin.CreateTenant(ctx, admin.CreateTenantRequest{
+    ExternalID: "org_12345",
+    Name:       "Acme Corp",
+    Slug:       "acme",
+    Plan:       "pro",
+    Metadata: map[string]string{
+        "billing_email": "billing@acme.com",
+    },
+})
+```
+
+Update a tenant's plan or metadata:
+
+```go
+tenant, err := cp.Admin.UpdateTenant(ctx, tenantID, admin.UpdateTenantRequest{
+    Plan: stringPtr("enterprise"),
+})
+```
+
+## Suspension
+
+Suspend a tenant to freeze all write operations while keeping instances running:
+
+```go
+err := cp.Admin.SuspendTenant(ctx, tenantID, "payment overdue")
+```
+
+Suspended tenants can read their data but cannot create instances, deploy, or change configuration. Unsuspend to restore full access:
+
+```go
+err := cp.Admin.UnsuspendTenant(ctx, tenantID)
+```
+
+## Quotas
+
+Set resource limits per tenant:
+
+```go
+err := cp.Admin.SetQuota(ctx, tenantID, admin.Quota{
+    MaxInstances: 10,
+    MaxCPUMillis: 16000,
+    MaxMemoryMB:  32768,
+    MaxDomains:   20,
+    MaxSecrets:   100,
+})
+```
+
+Check current usage against quotas:
+
+```go
+usage, err := cp.Admin.GetQuota(ctx, tenantID)
+// usage.Quota   -- the limits
+// usage.Used    -- current consumption
+// usage.Tenant  -- the tenant record
+```
+
+When a tenant exceeds a quota, the operation fails with `ctrlplane.ErrQuotaExceeded`.
+
+## System statistics
+
+Get a high-level view of the entire system:
+
+```go
+stats, err := cp.Admin.SystemStats(ctx)
+// stats.TotalTenants
+// stats.TotalInstances
+// stats.RunningInstances
+// stats.TotalDeployments
+```
+
+## Provider status
+
+List all registered providers and their health:
+
+```go
+providers, err := cp.Admin.ListProviders(ctx)
+for _, p := range providers {
+    fmt.Printf("%s: %s (capabilities: %v)\n", p.Name, p.Status, p.Capabilities)
+}
+```
+
+## Audit log
+
+Query the audit trail for a tenant:
+
+```go
+result, err := cp.Admin.QueryAuditLog(ctx, admin.AuditQuery{
+    TenantID: tenantID,
+    Resource: "instance",
+    Action:   "create",
+    Since:    time.Now().Add(-7 * 24 * time.Hour),
+    Limit:    50,
+})
+
+for _, entry := range result.Items {
+    fmt.Printf("[%s] %s %s/%s by %s\n",
+        entry.CreatedAt.Format(time.RFC3339),
+        entry.Action,
+        entry.Resource,
+        entry.ResourceID,
+        entry.ActorID,
+    )
+}
+```

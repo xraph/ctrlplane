@@ -1,0 +1,168 @@
+---
+title: Getting Started
+description: Install Ctrl Plane, configure a provider, and create your first instance.
+---
+
+This guide walks you through adding Ctrl Plane to a Go project, wiring up a Docker provider, and creating an instance through the HTTP API.
+
+## Prerequisites
+
+- Go 1.22 or later
+- Docker running locally (for this example)
+
+## Install
+
+Add the module to your project:
+
+```bash
+go get github.com/xraph/ctrlplane@latest
+```
+
+## Minimal server
+
+Create a `main.go` that sets up a Ctrl Plane with an in-memory store and a Docker provider:
+
+```go
+package main
+
+import (
+    "context"
+    "log"
+    "net/http"
+    "os"
+    "os/signal"
+    "time"
+
+    "github.com/xraph/ctrlplane/api"
+    "github.com/xraph/ctrlplane/app"
+    "github.com/xraph/ctrlplane/auth"
+    "github.com/xraph/ctrlplane/provider/docker"
+    "github.com/xraph/ctrlplane/store/memory"
+)
+
+func main() {
+    ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+    defer stop()
+
+    // In-memory store for development. Use postgres for production.
+    memStore := memory.New()
+
+    // Docker provider talks to the local Docker daemon.
+    dockerProv, err := docker.New(docker.Config{
+        Host:      "unix:///var/run/docker.sock",
+        Namespace: "ctrlplane",
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    // Wire everything together.
+    cp, err := app.New(
+        app.WithStore(memStore),
+        app.WithAuth(auth.NewNoopProvider()),
+        app.WithProvider("docker", dockerProv),
+        app.WithDefaultProvider("docker"),
+    )
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    // Start background workers (health checks, reconciliation, etc.)
+    if err := cp.Start(ctx); err != nil {
+        log.Fatal(err)
+    }
+    defer cp.Stop(context.Background())
+
+    // Mount the HTTP API.
+    handler := api.New(cp).Handler()
+
+    srv := &http.Server{
+        Addr:              ":8080",
+        Handler:           handler,
+        ReadHeaderTimeout: 10 * time.Second,
+    }
+
+    go func() {
+        <-ctx.Done()
+        srv.Shutdown(context.Background())
+    }()
+
+    log.Println("ctrlplane listening on :8080")
+    if err := srv.ListenAndServe(); err != http.ErrServerClosed {
+        log.Fatal(err)
+    }
+}
+```
+
+Run it:
+
+```bash
+go run main.go
+```
+
+## Create a tenant
+
+Every operation in Ctrl Plane is scoped to a tenant. Create one first:
+
+```bash
+curl -s -X POST http://localhost:8080/v1/admin/tenants \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Acme Corp",
+    "slug": "acme",
+    "plan": "pro"
+  }' | jq .
+```
+
+Note the `id` in the response -- you'll need it as the `tenant_id` for subsequent requests.
+
+## Create an instance
+
+With a tenant in place, create an instance:
+
+```bash
+curl -s -X POST http://localhost:8080/v1/instances \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tenant_id": "ten_YOUR_TENANT_ID_HERE",
+    "name": "web-app",
+    "image": "nginx:alpine",
+    "provider_name": "docker",
+    "resources": {
+      "cpu_millis": 500,
+      "memory_mb": 256
+    },
+    "ports": [
+      {"container_port": 80, "protocol": "tcp"}
+    ]
+  }' | jq .
+```
+
+The instance starts in the `provisioning` state and transitions through `starting` to `running` as the Docker container comes up.
+
+## Check instance status
+
+```bash
+curl -s http://localhost:8080/v1/instances/inst_YOUR_INSTANCE_ID | jq .state
+```
+
+## Deploy a new version
+
+Push a new image to a running instance:
+
+```bash
+curl -s -X POST http://localhost:8080/v1/instances/inst_YOUR_INSTANCE_ID/deploy \
+  -H "Content-Type: application/json" \
+  -d '{
+    "image": "nginx:latest",
+    "strategy": "rolling",
+    "notes": "upgrade to latest nginx"
+  }' | jq .
+```
+
+## Next steps
+
+- Read the [Architecture](/docs/architecture) overview to understand how the packages fit together.
+- Learn about [TypeID identifiers](/docs/concepts/identity) and [entities](/docs/concepts/entities).
+- Explore [deployment strategies](/docs/guides/deploy-strategies) in detail.
+- Set up a [Forge extension](/docs/guides/forge-extension) if you're building on Forge.

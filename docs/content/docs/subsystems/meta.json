@@ -1,0 +1,15 @@
+{
+  "title": "Subsystems",
+  "pages": [
+    "instances",
+    "deployments",
+    "health",
+    "network",
+    "secrets",
+    "events",
+    "telemetry",
+    "admin",
+    "workers",
+    "store"
+  ]
+}

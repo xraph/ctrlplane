@@ -1,0 +1,93 @@
+---
+title: Entities
+description: The base entity type and how domain objects are structured across Ctrl Plane.
+---
+
+Every domain object in Ctrl Plane -- instances, deployments, health checks, tenants, secrets -- embeds a common base type. This gives all entities a TypeID, creation timestamp, and update timestamp without repeating the same fields in every struct.
+
+## The base entity
+
+The root `ctrlplane` package defines `Entity`:
+
+```go
+type Entity struct {
+    ID        id.ID     `json:"id"         db:"id"`
+    CreatedAt time.Time `json:"created_at" db:"created_at"`
+    UpdatedAt time.Time `json:"updated_at" db:"updated_at"`
+}
+```
+
+Create a new entity with `NewEntity`, which generates a fresh TypeID and sets both timestamps to the current UTC time:
+
+```go
+entity := ctrlplane.NewEntity(id.PrefixInstance)
+// entity.ID is now inst_01h455vb4pex5vsknk084sn02q
+// entity.CreatedAt and entity.UpdatedAt are both time.Now().UTC()
+```
+
+## Domain entities
+
+Each subsystem defines its own entity by embedding `ctrlplane.Entity` and adding domain-specific fields. For example:
+
+```go
+// instance/instance.go
+type Instance struct {
+    ctrlplane.Entity
+
+    TenantID     string               `json:"tenant_id"     db:"tenant_id"`
+    Name         string               `json:"name"          db:"name"`
+    State        provider.InstanceState `json:"state"         db:"state"`
+    Image        string               `json:"image"         db:"image"`
+    ProviderName string               `json:"provider_name" db:"provider_name"`
+    // ...
+}
+```
+
+## Struct tag conventions
+
+All persisted or serialized fields must carry struct tags:
+
+```go
+// Domain entity (stored in database, exposed in API)
+Field string `json:"field_name" db:"field_name"`
+
+// Configuration struct (loaded from environment)
+Field string `json:"field_name" env:"CP_FIELD_NAME" default:"value"`
+
+// Request DTO (received from API client)
+Field string `json:"field_name" validate:"required"`
+
+// Secret value (never serialized to JSON)
+Value []byte `json:"-" db:"value"`
+```
+
+Tags use `snake_case` for both `json` and `db`. Environment variables use the `CP_` prefix.
+
+## Request and response types
+
+Each subsystem defines DTOs for its API operations:
+
+- **CreateRequest** -- Fields required to create a new entity.
+- **UpdateRequest** -- Fields that can be changed. Uses pointer fields for partial updates.
+- **ListOptions** -- Cursor-based pagination parameters.
+- **ListResult** -- A page of results with a next cursor and total count.
+
+```go
+// Partial update: only non-nil fields are applied
+type UpdateRequest struct {
+    Name  *string `json:"name"`
+    Image *string `json:"image"`
+}
+
+// Cursor-based pagination
+type ListOptions struct {
+    Cursor string
+    Limit  int
+}
+
+type ListResult struct {
+    Items      []*Instance
+    NextCursor string
+    Total      int
+}
+```

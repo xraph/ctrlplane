@@ -1,0 +1,94 @@
+---
+title: Background Workers
+description: The worker scheduler and the built-in periodic tasks that keep the system running.
+---
+
+Ctrl Plane uses background workers for tasks that run on a schedule: health checks, state reconciliation, telemetry collection, garbage collection, and certificate renewal. The `worker.Scheduler` manages their lifecycle.
+
+## Worker interface
+
+Every worker implements a simple interface:
+
+```go
+type Worker interface {
+    Name() string
+    Interval() time.Duration
+    Run(ctx context.Context) error
+}
+```
+
+`Interval()` controls how often the worker runs. Return `0` for event-driven workers that run once and exit.
+
+## Scheduler
+
+The scheduler manages a set of workers, starting them as goroutines and stopping them gracefully:
+
+```go
+scheduler := worker.NewScheduler()
+scheduler.Register(myWorker)
+scheduler.Register(anotherWorker)
+
+// Start all workers
+err := scheduler.Start(ctx)
+
+// Stop with a 10-second grace period
+err := scheduler.Stop(ctx)
+```
+
+When using `app.New()`, the scheduler is created and populated automatically. The five built-in workers are registered during `wireServices()`.
+
+## Built-in workers
+
+### Reconciler
+
+Detects drift between the state stored in the database and the actual state reported by the provider. If an instance is recorded as `running` but the provider reports it as `stopped`, the reconciler updates the database.
+
+**Default interval:** 60 seconds
+
+### HealthRunner
+
+Executes all configured health checks for all instances. Results are stored and status changes publish events.
+
+**Default interval:** 30 seconds (configurable via `Config.HealthInterval`)
+
+### TelemetryCollector
+
+Invokes all registered telemetry collectors to gather metrics and resource snapshots from providers.
+
+**Default interval:** 10 seconds (configurable via `Config.TelemetryFlushInterval`)
+
+### GarbageCollector
+
+Cleans up old records that are no longer needed:
+- Completed deployments older than a retention window
+- Health check results beyond a history limit
+- Audit entries past the retention period
+
+**Default interval:** 5 minutes
+
+### CertRenewer
+
+Checks TLS certificates for domains approaching expiry and renews them through the network router.
+
+**Default interval:** 1 hour
+
+## Custom workers
+
+Register your own workers for application-specific tasks:
+
+```go
+type UsageReporter struct{}
+
+func (w *UsageReporter) Name() string            { return "usage-reporter" }
+func (w *UsageReporter) Interval() time.Duration  { return 5 * time.Minute }
+func (w *UsageReporter) Run(ctx context.Context) error {
+    // collect and report usage metrics
+    return nil
+}
+
+scheduler.Register(&UsageReporter{})
+```
+
+## Lifecycle
+
+Workers are started by `cp.Start(ctx)` and stopped by `cp.Stop(ctx)`. The context passed to `Start` is used as the parent context for all worker goroutines. When `Stop` is called, the context is cancelled and workers have 10 seconds to finish their current cycle.

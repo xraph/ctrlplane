@@ -1,0 +1,89 @@
+---
+title: Networking
+description: Custom domains, traffic routes, and TLS certificate management for instances.
+---
+
+The network subsystem manages how traffic reaches instances. It handles custom domain names, traffic routing rules, and TLS certificate provisioning.
+
+## Domains
+
+A domain links a hostname to an instance. Before a domain can serve traffic, it must be verified through DNS.
+
+```go
+domain, err := cp.Network.AddDomain(ctx, network.AddDomainRequest{
+    InstanceID: instanceID,
+    Hostname:   "app.example.com",
+})
+// domain.VerifyToken contains the DNS TXT record value
+// domain.Verified is false until verification succeeds
+```
+
+### Domain verification
+
+After adding a domain, the caller sets a DNS TXT record with the verify token. Then call verify:
+
+```go
+err := cp.Network.VerifyDomain(ctx, domainID)
+```
+
+### TLS certificates
+
+Once a domain is verified, provision a TLS certificate:
+
+```go
+cert, err := cp.Network.ProvisionCert(ctx, domainID)
+// cert.ExpiresAt indicates when renewal is needed
+// cert.AutoRenew can be set to true for automatic renewal
+```
+
+The background `CertRenewer` worker handles automatic renewal for certificates approaching expiry.
+
+## Routes
+
+Routes control how traffic is distributed to an instance's ports:
+
+```go
+route, err := cp.Network.AddRoute(ctx, network.AddRouteRequest{
+    InstanceID:  instanceID,
+    Path:        "/api",
+    Port:        8080,
+    Protocol:    "http",
+    Weight:      100,
+    StripPrefix: true,
+})
+```
+
+Update route weights for traffic splitting:
+
+```go
+err := cp.Network.UpdateRoute(ctx, routeID, network.UpdateRouteRequest{
+    Weight: intPtr(50),
+})
+```
+
+## Router interface
+
+The actual traffic routing is handled by an external system through the `network.Router` interface:
+
+```go
+type Router interface {
+    AddRoute(ctx context.Context, route *Route) error
+    RemoveRoute(ctx context.Context, routeID id.ID) error
+    UpdateRoute(ctx context.Context, route *Route) error
+    AddDomain(ctx context.Context, domain *Domain) error
+    RemoveDomain(ctx context.Context, domainID id.ID) error
+    ProvisionCert(ctx context.Context, domain *Domain) (*Certificate, error)
+}
+```
+
+You can implement this interface to integrate with your load balancer, reverse proxy, or DNS provider (Traefik, Nginx, Caddy, Cloudflare, etc.).
+
+## Events
+
+| Event | When |
+|-------|------|
+| `DomainAdded` | A custom domain is registered |
+| `DomainVerified` | DNS verification succeeds |
+| `DomainRemoved` | A domain is deleted |
+| `CertProvisioned` | A TLS certificate is issued |
+| `CertExpiring` | A certificate is approaching expiry |

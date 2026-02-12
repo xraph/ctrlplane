@@ -1,0 +1,73 @@
+---
+title: Error Handling
+description: Sentinel errors, wrapping conventions, and how Ctrl Plane surfaces problems.
+---
+
+Ctrl Plane defines a set of sentinel errors in the root package. All subsystems wrap these errors with context, so you can use `errors.Is` to check for specific conditions regardless of where the error originated.
+
+## Sentinel errors
+
+```go
+var (
+    ErrNotFound         = errors.New("ctrlplane: resource not found")
+    ErrAlreadyExists    = errors.New("ctrlplane: resource already exists")
+    ErrInvalidState     = errors.New("ctrlplane: invalid state transition")
+    ErrInvalidConfig    = errors.New("ctrlplane: invalid configuration")
+    ErrProviderNotFound = errors.New("ctrlplane: provider not registered")
+    ErrProviderUnavail  = errors.New("ctrlplane: provider unavailable")
+    ErrUnauthorized     = errors.New("ctrlplane: unauthorized")
+    ErrForbidden        = errors.New("ctrlplane: forbidden")
+    ErrQuotaExceeded    = errors.New("ctrlplane: quota exceeded")
+    ErrDeploymentFailed = errors.New("ctrlplane: deployment failed")
+    ErrHealthCheckFailed = errors.New("ctrlplane: health check failed")
+    ErrRollbackFailed   = errors.New("ctrlplane: rollback failed")
+)
+```
+
+## Checking errors
+
+Use `errors.Is` to test for a specific condition. Never compare error strings.
+
+```go
+instance, err := cp.Instances.Get(ctx, instanceID)
+if errors.Is(err, ctrlplane.ErrNotFound) {
+    // handle missing instance
+}
+```
+
+Use `errors.As` when you need to extract a typed error:
+
+```go
+var stateErr *instance.StateError
+if errors.As(err, &stateErr) {
+    log.Printf("cannot transition from %s to %s", stateErr.From, stateErr.To)
+}
+```
+
+## Wrapping convention
+
+When subsystems return errors, they always wrap the sentinel with `fmt.Errorf` and `%w` to preserve the error chain:
+
+```go
+// Inside instance service
+return fmt.Errorf("instance %s: %w", instanceID, ctrlplane.ErrNotFound)
+```
+
+This means the error message includes context (`"instance inst_01h455vb...: ctrlplane: resource not found"`) while still matching `errors.Is(err, ctrlplane.ErrNotFound)`.
+
+## HTTP status mapping
+
+The API layer maps sentinel errors to HTTP status codes:
+
+| Error | Status Code |
+|-------|-------------|
+| `ErrNotFound` | 404 Not Found |
+| `ErrAlreadyExists` | 409 Conflict |
+| `ErrInvalidState` | 409 Conflict |
+| `ErrInvalidConfig` | 400 Bad Request |
+| `ErrUnauthorized` | 401 Unauthorized |
+| `ErrForbidden` | 403 Forbidden |
+| `ErrQuotaExceeded` | 429 Too Many Requests |
+| `ErrProviderNotFound` | 404 Not Found |
+| `ErrProviderUnavail` | 503 Service Unavailable |
+| Other errors | 500 Internal Server Error |

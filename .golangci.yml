@@ -1,4 +1,4 @@
-# golangci-lint configuration for ControlPlane
+# golangci-lint configuration for Ctrl Plane
 # Adapted from Forge — production-ready with strict settings
 
 version: "2"
@@ -166,7 +166,7 @@ formatters:
   settings:
     goimports:
       local-prefixes:
-        - github.com/xraph/controlpane
+        - github.com/xraph/ctrlplane
 
     gofumpt:
       extra-rules: true

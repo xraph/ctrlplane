@@ -1,0 +1,403 @@
+---
+title: HTTP API
+description: Complete reference for the Ctrl Plane REST API endpoints.
+---
+
+All endpoints are prefixed with `/v1`. Requests and responses use JSON. Authentication is handled through bearer tokens in the `Authorization` header.
+
+## Authentication
+
+Every request must include a bearer token:
+
+```
+Authorization: Bearer <token>
+```
+
+The auth middleware extracts tenant and user identity from the token. The specific token format depends on which `auth.Provider` is configured.
+
+## Instances
+
+### Create instance
+
+```http
+POST /v1/instances
+Content-Type: application/json
+
+{
+  "tenant_id": "ten_...",
+  "name": "api-server",
+  "image": "myapp:v1.0",
+  "provider_name": "docker",
+  "resources": { "cpu_millis": 500, "memory_mb": 256 },
+  "ports": [{ "container_port": 8080, "protocol": "tcp" }],
+  "env": { "NODE_ENV": "production" },
+  "labels": { "team": "platform" }
+}
+```
+
+**Response:** `201 Created` with the full instance object.
+
+### List instances
+
+```http
+GET /v1/instances?cursor=...&limit=20
+```
+
+**Response:** `200 OK` with `{ "items": [...], "next_cursor": "...", "total": 42 }`.
+
+### Get instance
+
+```http
+GET /v1/instances/{instanceID}
+```
+
+### Update instance
+
+```http
+PATCH /v1/instances/{instanceID}
+Content-Type: application/json
+
+{
+  "name": "new-name",
+  "labels": { "team": "backend" }
+}
+```
+
+Partial updates: only fields present in the request body are modified.
+
+### Delete instance
+
+```http
+DELETE /v1/instances/{instanceID}
+```
+
+### Lifecycle actions
+
+```http
+POST /v1/instances/{instanceID}/start
+POST /v1/instances/{instanceID}/stop
+POST /v1/instances/{instanceID}/restart
+```
+
+### Scale
+
+```http
+POST /v1/instances/{instanceID}/scale
+Content-Type: application/json
+
+{
+  "resources": { "cpu_millis": 2000, "memory_mb": 1024 }
+}
+```
+
+### Suspend / Unsuspend
+
+```http
+POST /v1/instances/{instanceID}/suspend
+Content-Type: application/json
+
+{ "reason": "payment overdue" }
+```
+
+```http
+POST /v1/instances/{instanceID}/unsuspend
+Content-Type: application/json
+
+{ "reason": "payment received" }
+```
+
+## Deployments
+
+### Deploy
+
+```http
+POST /v1/instances/{instanceID}/deploy
+Content-Type: application/json
+
+{
+  "image": "myapp:v2.0",
+  "strategy": "rolling",
+  "env": { "FEATURE_X": "true" },
+  "notes": "enable feature X",
+  "commit_sha": "abc123"
+}
+```
+
+### List deployments
+
+```http
+GET /v1/instances/{instanceID}/deployments?cursor=...&limit=20
+```
+
+### Get deployment
+
+```http
+GET /v1/deployments/{deploymentID}
+```
+
+### Cancel deployment
+
+```http
+POST /v1/deployments/{deploymentID}/cancel
+```
+
+### Rollback
+
+```http
+POST /v1/instances/{instanceID}/rollback
+Content-Type: application/json
+
+{ "release_id": "rel_..." }
+```
+
+### List releases
+
+```http
+GET /v1/instances/{instanceID}/releases?cursor=...&limit=20
+```
+
+### Get release
+
+```http
+GET /v1/releases/{releaseID}
+```
+
+## Health
+
+### Configure health check
+
+```http
+POST /v1/instances/{instanceID}/health/checks
+Content-Type: application/json
+
+{
+  "name": "api-health",
+  "type": "http",
+  "target": "http://localhost:8080/healthz",
+  "interval": "30s",
+  "timeout": "5s",
+  "retries": 3
+}
+```
+
+### Get instance health
+
+```http
+GET /v1/instances/{instanceID}/health
+```
+
+Returns aggregate health across all checks.
+
+### List health checks
+
+```http
+GET /v1/instances/{instanceID}/health/checks
+```
+
+### Run check manually
+
+```http
+POST /v1/health/checks/{checkID}/run
+```
+
+### Delete check
+
+```http
+DELETE /v1/health/checks/{checkID}
+```
+
+## Telemetry
+
+### Get metrics
+
+```http
+GET /v1/instances/{instanceID}/metrics?name=http_requests_total&since=2024-01-01T00:00:00Z
+```
+
+### Get logs
+
+```http
+GET /v1/instances/{instanceID}/logs?level=error&limit=50
+```
+
+### Get traces
+
+```http
+GET /v1/instances/{instanceID}/traces?limit=20
+```
+
+### Get resources
+
+```http
+GET /v1/instances/{instanceID}/resources
+```
+
+### Get dashboard
+
+```http
+GET /v1/instances/{instanceID}/dashboard
+```
+
+## Network
+
+### Add domain
+
+```http
+POST /v1/instances/{instanceID}/domains
+Content-Type: application/json
+
+{ "hostname": "app.example.com" }
+```
+
+### List domains
+
+```http
+GET /v1/instances/{instanceID}/domains
+```
+
+### Verify domain
+
+```http
+POST /v1/domains/{domainID}/verify
+```
+
+### Provision certificate
+
+```http
+POST /v1/domains/{domainID}/cert
+```
+
+### Delete domain
+
+```http
+DELETE /v1/domains/{domainID}
+```
+
+### Add route
+
+```http
+POST /v1/instances/{instanceID}/routes
+Content-Type: application/json
+
+{
+  "path": "/api",
+  "port": 8080,
+  "protocol": "http",
+  "weight": 100,
+  "strip_prefix": true
+}
+```
+
+### Update route
+
+```http
+PATCH /v1/routes/{routeID}
+```
+
+### Delete route
+
+```http
+DELETE /v1/routes/{routeID}
+```
+
+## Secrets
+
+### Set secret
+
+```http
+POST /v1/instances/{instanceID}/secrets
+Content-Type: application/json
+
+{
+  "key": "DATABASE_URL",
+  "value": "postgres://...",
+  "type": "env"
+}
+```
+
+### List secrets
+
+```http
+GET /v1/instances/{instanceID}/secrets
+```
+
+Values are never returned in list responses.
+
+### Delete secret
+
+```http
+DELETE /v1/instances/{instanceID}/secrets/{key}
+```
+
+## Admin
+
+### System stats
+
+```http
+GET /v1/admin/stats
+```
+
+### List providers
+
+```http
+GET /v1/admin/providers
+```
+
+### Create tenant
+
+```http
+POST /v1/admin/tenants
+Content-Type: application/json
+
+{
+  "name": "Acme Corp",
+  "slug": "acme",
+  "plan": "pro"
+}
+```
+
+### List tenants
+
+```http
+GET /v1/admin/tenants
+```
+
+### Get / Update / Delete tenant
+
+```http
+GET    /v1/admin/tenants/{tenantID}
+PATCH  /v1/admin/tenants/{tenantID}
+DELETE /v1/admin/tenants/{tenantID}
+```
+
+### Suspend / Unsuspend tenant
+
+```http
+POST /v1/admin/tenants/{tenantID}/suspend
+POST /v1/admin/tenants/{tenantID}/unsuspend
+```
+
+### Get / Set quota
+
+```http
+GET /v1/admin/tenants/{tenantID}/quota
+PUT /v1/admin/tenants/{tenantID}/quota
+```
+
+### Query audit log
+
+```http
+GET /v1/admin/audit?tenant_id=...&resource=instance&action=create&limit=50
+```
+
+## Error responses
+
+All errors return a JSON object with a `message` field:
+
+```json
+{
+  "message": "instance inst_01h455vb...: ctrlplane: resource not found"
+}
+```
+
+See [Error Handling](/docs/concepts/errors) for the status code mapping.

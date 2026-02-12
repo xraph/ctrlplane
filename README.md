@@ -1,12 +1,12 @@
-# ControlPlane
+# Ctrl Plane
 
 A composable Go library for deploying and managing SaaS instances at scale.
 
-ControlPlane handles instance lifecycle, zero-downtime deployments, health monitoring, secret management, traffic routing, and multi-tenant isolation. You bring a cloud provider and an auth system. ControlPlane wires everything together.
+Ctrl Plane handles instance lifecycle, zero-downtime deployments, health monitoring, secret management, traffic routing, and multi-tenant isolation. You bring a cloud provider and an auth system. Ctrl Plane wires everything together.
 
 ## Overview
 
-ControlPlane is a library, not a framework. You import Go packages, configure them with functional options, and embed them into your own application. It runs standalone or as a [Forge](https://github.com/xraph/forge) extension.
+Ctrl Plane is a library, not a framework. You import Go packages, configure them with functional options, and embed them into your own application. It runs standalone or as a [Forge](https://github.com/xraph/forge) extension.
 
 ```go
 cp, err := app.New(
@@ -33,7 +33,7 @@ http.ListenAndServe(":8080", api.New(cp).Handler())
 ## Install
 
 ```bash
-go get github.com/xraph/controlpane@latest
+go get github.com/xraph/ctrlplane@latest
 ```
 
 Requires Go 1.22 or later.
@@ -53,11 +53,11 @@ import (
     "os/signal"
     "time"
 
-    "github.com/xraph/controlpane/api"
-    "github.com/xraph/controlpane/app"
-    "github.com/xraph/controlpane/auth"
-    "github.com/xraph/controlpane/provider/docker"
-    "github.com/xraph/controlpane/store/memory"
+    "github.com/xraph/ctrlplane/api"
+    "github.com/xraph/ctrlplane/app"
+    "github.com/xraph/ctrlplane/auth"
+    "github.com/xraph/ctrlplane/provider/docker"
+    "github.com/xraph/ctrlplane/store/memory"
 )
 
 func main() {
@@ -98,7 +98,7 @@ func main() {
         srv.Shutdown(context.Background())
     }()
 
-    log.Println("controlplane listening on :8080")
+    log.Println("ctrlplane listening on :8080")
     if err := srv.ListenAndServe(); err != http.ErrServerClosed {
         log.Fatal(err)
     }
@@ -131,7 +131,7 @@ curl -X POST http://localhost:8080/v1/instances \
 ## Package structure
 
 ```
-controlplane.go          Root package (Entity, Config, sentinel errors)
+ctrlplane.go          Root package (Entity, Config, sentinel errors)
 id/                      TypeID-based identifiers (prefix-qualified, UUIDv7)
 auth/                    Authentication and authorization interface
 instance/                Instance lifecycle management
@@ -155,7 +155,7 @@ store/                   Persistence layer
 api/                     HTTP handlers and middleware
 app/                     Root orchestrator (wires everything together)
 extension/               Forge extension adapter
-cmd/controlplane/        Reference binary
+cmd/ctrlplane/        Reference binary
 ```
 
 ## Key interfaces
@@ -178,7 +178,7 @@ Every subsystem is defined by Go interfaces. Swap out any piece with your own im
 
 ## Forge extension
 
-Mount ControlPlane into a Forge application:
+Mount Ctrl Plane into a Forge application:
 
 ```go
 app := forge.New()
@@ -199,7 +199,7 @@ Full documentation is available in the `docs/` directory and covers architecture
 go build ./...
 go test ./...
 golangci-lint run ./...
-goimports -w -local github.com/xraph/controlpane .
+goimports -w -local github.com/xraph/ctrlplane .
 ```
 
 ## License

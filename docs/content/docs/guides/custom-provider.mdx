@@ -1,0 +1,151 @@
+---
+title: Writing a Custom Provider
+description: Implement the Provider interface to connect Ctrl Plane to your infrastructure.
+---
+
+If Ctrl Plane doesn't ship with a provider for your platform, you can write one. A provider implements the `provider.Provider` interface and handles the actual infrastructure operations.
+
+## The interface
+
+```go
+type Provider interface {
+    Info() ProviderInfo
+    Capabilities() []Capability
+
+    Provision(ctx context.Context, req ProvisionRequest) (*ProvisionResult, error)
+    Deprovision(ctx context.Context, instanceID id.ID) error
+
+    Start(ctx context.Context, instanceID id.ID) error
+    Stop(ctx context.Context, instanceID id.ID) error
+    Restart(ctx context.Context, instanceID id.ID) error
+
+    Status(ctx context.Context, instanceID id.ID) (*InstanceStatus, error)
+
+    Deploy(ctx context.Context, req DeployRequest) (*DeployResult, error)
+    Rollback(ctx context.Context, instanceID, releaseID id.ID) error
+
+    Scale(ctx context.Context, instanceID id.ID, spec ResourceSpec) error
+    Resources(ctx context.Context, instanceID id.ID) (*ResourceUsage, error)
+
+    Logs(ctx context.Context, instanceID id.ID, opts LogOptions) (io.ReadCloser, error)
+    Exec(ctx context.Context, instanceID id.ID, cmd ExecRequest) (*ExecResult, error)
+}
+```
+
+## Step 1: Define your config
+
+Start with a configuration struct for your provider:
+
+```go
+package myprovider
+
+type Config struct {
+    APIEndpoint string `json:"api_endpoint" env:"MY_PROVIDER_API"`
+    APIKey      string `json:"api_key"      env:"MY_PROVIDER_KEY"`
+    Region      string `json:"region"       env:"MY_PROVIDER_REGION"`
+}
+```
+
+## Step 2: Implement the constructor
+
+Follow the `New(cfg Config) (*Provider, error)` pattern:
+
+```go
+func New(cfg Config) (*Provider, error) {
+    if cfg.APIEndpoint == "" {
+        return nil, fmt.Errorf("myprovider: %w: api_endpoint is required",
+            ctrlplane.ErrInvalidConfig)
+    }
+
+    client := newAPIClient(cfg.APIEndpoint, cfg.APIKey)
+
+    return &Provider{
+        config: cfg,
+        client: client,
+    }, nil
+}
+```
+
+## Step 3: Declare capabilities
+
+Return only the capabilities your provider actually supports:
+
+```go
+func (p *Provider) Info() provider.ProviderInfo {
+    return provider.ProviderInfo{
+        Name:    "myprovider",
+        Version: "1.0.0",
+        Region:  p.config.Region,
+    }
+}
+
+func (p *Provider) Capabilities() []provider.Capability {
+    return []provider.Capability{
+        provider.CapProvision,
+        provider.CapDeploy,
+        provider.CapScale,
+        provider.CapLogs,
+        provider.CapRolling,
+    }
+}
+```
+
+## Step 4: Implement core methods
+
+At minimum, implement `Provision`, `Deprovision`, `Status`, `Deploy`, `Start`, and `Stop`. Other methods can return `ErrProviderUnavail` if not supported.
+
+```go
+func (p *Provider) Provision(ctx context.Context, req provider.ProvisionRequest) (*provider.ProvisionResult, error) {
+    // Call your platform API to create the resource
+    resource, err := p.client.Create(ctx, createParams{
+        Name:   req.Name,
+        Image:  req.Image,
+        CPU:    req.Resources.CPUMillis,
+        Memory: req.Resources.MemoryMB,
+    })
+    if err != nil {
+        return nil, fmt.Errorf("myprovider: provision: %w", err)
+    }
+
+    return &provider.ProvisionResult{
+        ProviderRef: resource.ID,
+        Endpoints: []provider.Endpoint{
+            {URL: resource.URL, Type: "http"},
+        },
+    }, nil
+}
+
+func (p *Provider) Status(ctx context.Context, instanceID id.ID) (*provider.InstanceStatus, error) {
+    resource, err := p.client.Get(ctx, instanceID.String())
+    if err != nil {
+        return nil, fmt.Errorf("myprovider: status: %w", err)
+    }
+
+    return &provider.InstanceStatus{
+        State:   mapState(resource.State),
+        Message: resource.StatusMessage,
+    }, nil
+}
+```
+
+## Step 5: Register the provider
+
+```go
+myProv, err := myprovider.New(myprovider.Config{
+    APIEndpoint: "https://api.myprovider.com",
+    APIKey:      os.Getenv("MY_PROVIDER_KEY"),
+    Region:      "us-east-1",
+})
+
+cp, err := app.New(
+    app.WithProvider("myprovider", myProv),
+    app.WithDefaultProvider("myprovider"),
+)
+```
+
+## Tips
+
+- **Error wrapping.** Always wrap errors with your provider name and the operation: `fmt.Errorf("myprovider: provision: %w", err)`.
+- **Context.** Every method receives a `context.Context`. Use it for timeouts and cancellation. Use `http.NewRequestWithContext` for HTTP calls.
+- **Idempotency.** `Provision` might be called more than once if a previous attempt timed out. Make your implementation idempotent or check for existing resources.
+- **State mapping.** Map your platform's native states to `provider.InstanceState` constants. When in doubt, use `provider.StateFailed`.

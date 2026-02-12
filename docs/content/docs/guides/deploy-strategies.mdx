@@ -1,0 +1,116 @@
+---
+title: Deployment Strategies
+description: How rolling, blue-green, canary, and recreate deployments work in Ctrl Plane.
+---
+
+Ctrl Plane ships with four deployment strategies. Each one implements the `deploy.Strategy` interface and controls how traffic moves from the old version to the new one.
+
+## Strategy interface
+
+```go
+type Strategy interface {
+    Name() string
+    Execute(ctx context.Context, params StrategyParams) error
+}
+```
+
+`StrategyParams` provides everything the strategy needs: the provider, instance, old release, new release, and deployment record.
+
+## Rolling
+
+The default strategy. Gradually replaces old containers with new ones. At any point during the rollout, a mix of old and new containers are serving traffic.
+
+**How it works:**
+1. Start a new container with the new image.
+2. Wait for it to pass health checks.
+3. Stop one old container.
+4. Repeat until all containers are running the new version.
+
+**Best for:** Most deployments. No downtime, minimal resource overhead.
+
+```bash
+curl -X POST http://localhost:8080/v1/instances/inst_.../deploy \
+  -d '{"image": "myapp:v2", "strategy": "rolling"}'
+```
+
+## Blue-green
+
+Runs two full copies of the application. Traffic switches from the old ("blue") to the new ("green") atomically.
+
+**How it works:**
+1. Provision a complete copy of the instance with the new image.
+2. Wait for all new containers to pass health checks.
+3. Switch traffic from old to new in one step.
+4. Keep the old version around briefly for fast rollback.
+5. Tear down the old version.
+
+**Best for:** Deployments where you need instant rollback capability or cannot tolerate mixed versions serving traffic simultaneously.
+
+**Trade-off:** Requires double the resources during the transition.
+
+```bash
+curl -X POST http://localhost:8080/v1/instances/inst_.../deploy \
+  -d '{"image": "myapp:v2", "strategy": "blue-green"}'
+```
+
+## Canary
+
+Routes a small fraction of traffic to the new version first. If it looks healthy, traffic gradually shifts over.
+
+**How it works:**
+1. Deploy one container with the new image.
+2. Route a small percentage (e.g., 5%) of traffic to it.
+3. Monitor health and error rates.
+4. Gradually increase the traffic percentage.
+5. Once at 100%, remove old containers.
+
+**Best for:** High-risk deployments where you want to validate in production before committing.
+
+**Requires:** The provider must support `CapCanary`.
+
+```bash
+curl -X POST http://localhost:8080/v1/instances/inst_.../deploy \
+  -d '{"image": "myapp:v2", "strategy": "canary"}'
+```
+
+## Recreate
+
+The simplest strategy. Stops the old version, then starts the new one. There is a brief period of downtime.
+
+**How it works:**
+1. Stop all containers running the old image.
+2. Start containers with the new image.
+3. Wait for health checks to pass.
+
+**Best for:** Development environments, non-critical services, or cases where running two versions simultaneously would cause data corruption.
+
+```bash
+curl -X POST http://localhost:8080/v1/instances/inst_.../deploy \
+  -d '{"image": "myapp:v2", "strategy": "recreate"}'
+```
+
+## Choosing a strategy
+
+| Strategy | Downtime | Resource overhead | Rollback speed | Complexity |
+|----------|----------|-------------------|----------------|------------|
+| Rolling | None | Low (one extra container) | Moderate | Low |
+| Blue-green | None | High (2x resources) | Instant | Medium |
+| Canary | None | Low | Fast | High |
+| Recreate | Brief | None | Slow (redeploy) | Minimal |
+
+## Custom strategies
+
+Implement the `Strategy` interface and register it with the deploy service:
+
+```go
+type MyStrategy struct{}
+
+func (s *MyStrategy) Name() string { return "my-strategy" }
+
+func (s *MyStrategy) Execute(ctx context.Context, params deploy.StrategyParams) error {
+    // Your custom rollout logic
+    return nil
+}
+```
+
+The deploy service selects a strategy by matching the `strategy` field in the deploy request against registered strategy names.

@@ -1,0 +1,8 @@
+{
+  "title": "Guides",
+  "pages": [
+    "forge-extension",
+    "custom-provider",
+    "deploy-strategies"
+  ]
+}

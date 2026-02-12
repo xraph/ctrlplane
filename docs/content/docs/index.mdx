@@ -1,0 +1,83 @@
+---
+title: Introduction
+description: A composable Go library for deploying and managing SaaS instances at scale.
+---
+
+Ctrl Plane is a Go library that handles the hard parts of multi-tenant SaaS infrastructure: provisioning instances, deploying code, checking health, managing secrets, routing traffic, and collecting telemetry. You bring your cloud provider and your auth system. Ctrl Plane wires everything together.
+
+It works in two modes. You can embed it directly into any Go application as a library, or mount it into a [Forge](https://github.com/xraph/forge) application as an extension. Either way, the API surface is the same.
+
+## What it does
+
+- **Instance lifecycle** -- Create, start, stop, scale, suspend, and destroy tenant instances across any cloud provider.
+- **Deployments** -- Push new releases with rolling, blue-green, canary, or recreate strategies. Roll back to any previous release.
+- **Health monitoring** -- Configure HTTP, TCP, gRPC, or command-based health checks per instance. Track status history and get aggregate health views.
+- **Networking** -- Manage custom domains, TLS certificates, and traffic routes per instance.
+- **Secrets** -- Store and inject environment variables, files, and registry credentials with an optional vault backend.
+- **Events** -- Publish and subscribe to lifecycle events across all subsystems. Deliver webhooks to external systems.
+- **Telemetry** -- Collect metrics, logs, traces, and resource snapshots. Query them through a unified interface.
+- **Multi-tenancy** -- Every operation is scoped to a tenant. Quotas, audit logging, and tenant suspension are built in.
+
+## Design philosophy
+
+Ctrl Plane was built with a few principles in mind:
+
+**Library, not framework.** Ctrl Plane is a set of Go packages you import, not a binary you deploy. You control the `main` function, the HTTP server, and the process lifecycle.
+
+**Interfaces over implementations.** Every subsystem defines a Go interface. The library ships with defaults (in-memory store, Docker provider, built-in health checkers), but you can replace any piece with your own implementation.
+
+**Provider agnostic.** The `provider.Provider` interface abstracts over Kubernetes, Docker, AWS ECS, Fly.io, Nomad, and anything else. Instances don't know or care which orchestrator runs them.
+
+**Multi-tenant by default.** Tenant scoping isn't an afterthought. Every store query filters by tenant ID. Every API request is authenticated and authorized. Quotas and audit trails are part of the core, not plugins.
+
+## Quick look
+
+```go
+package main
+
+import (
+    "context"
+    "log"
+    "net/http"
+
+    "github.com/xraph/ctrlplane/api"
+    "github.com/xraph/ctrlplane/app"
+    "github.com/xraph/ctrlplane/provider/docker"
+    "github.com/xraph/ctrlplane/store/memory"
+)
+
+func main() {
+    ctx := context.Background()
+
+    memStore := memory.New()
+    dockerProv, _ := docker.New(docker.Config{
+        Host: "unix:///var/run/docker.sock",
+    })
+
+    cp, err := app.New(
+        app.WithStore(memStore),
+        app.WithProvider("docker", dockerProv),
+        app.WithDefaultProvider("docker"),
+    )
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    if err := cp.Start(ctx); err != nil {
+        log.Fatal(err)
+    }
+
+    handler := api.New(cp).Handler()
+    log.Println("listening on :8080")
+    log.Fatal(http.ListenAndServe(":8080", handler))
+}
+```
+
+## Where to go next
+
+<Cards>
+  <Card title="Getting started" href="/docs/getting-started" description="Install the module and run your first instance." />
+  <Card title="Architecture" href="/docs/architecture" description="Understand how the packages fit together." />
+  <Card title="Core concepts" href="/docs/concepts/identity" description="Learn about TypeIDs, entities, and configuration." />
+  <Card title="API reference" href="/docs/api-reference/http-api" description="Full HTTP endpoint documentation." />
+</Cards>

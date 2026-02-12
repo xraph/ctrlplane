@@ -1,0 +1,130 @@
+---
+title: Telemetry
+description: Collect metrics, logs, traces, and resource snapshots from running instances.
+---
+
+The telemetry subsystem collects operational data from instances and exposes it through a unified query API. It tracks four kinds of data: metrics, log entries, distributed traces, and resource snapshots.
+
+## Data types
+
+### Metrics
+
+```go
+type Metric struct {
+    InstanceID id.ID             `json:"instance_id" db:"instance_id"`
+    Name       string            `json:"name"        db:"name"`
+    Type       MetricType        `json:"type"        db:"type"`
+    Value      float64           `json:"value"       db:"value"`
+    Labels     map[string]string `json:"labels"      db:"labels"`
+    Timestamp  time.Time         `json:"timestamp"   db:"timestamp"`
+}
+```
+
+Metric types: `gauge`, `counter`, `histogram`.
+
+### Log entries
+
+```go
+type LogEntry struct {
+    InstanceID id.ID          `json:"instance_id" db:"instance_id"`
+    Level      string         `json:"level"       db:"level"`
+    Message    string         `json:"message"     db:"message"`
+    Source     string         `json:"source"      db:"source"`
+    Fields     map[string]any `json:"fields"      db:"fields"`
+    Timestamp  time.Time      `json:"timestamp"   db:"timestamp"`
+}
+```
+
+### Traces
+
+```go
+type Trace struct {
+    InstanceID id.ID             `json:"instance_id" db:"instance_id"`
+    TraceID    string            `json:"trace_id"    db:"trace_id"`
+    SpanID     string            `json:"span_id"     db:"span_id"`
+    ParentID   string            `json:"parent_id"   db:"parent_id"`
+    Operation  string            `json:"operation"   db:"operation"`
+    Duration   time.Duration     `json:"duration"    db:"duration"`
+    Status     string            `json:"status"      db:"status"`
+    Attributes map[string]string `json:"attributes"  db:"attributes"`
+    Timestamp  time.Time         `json:"timestamp"   db:"timestamp"`
+}
+```
+
+### Resource snapshots
+
+```go
+type ResourceSnapshot struct {
+    InstanceID   id.ID     `json:"instance_id"    db:"instance_id"`
+    CPUPercent   int       `json:"cpu_percent"    db:"cpu_percent"`
+    MemoryUsedMB int      `json:"memory_used_mb" db:"memory_used_mb"`
+    MemoryLimitMB int     `json:"memory_limit_mb" db:"memory_limit_mb"`
+    DiskUsedMB   int      `json:"disk_used_mb"   db:"disk_used_mb"`
+    NetworkInMB  float64  `json:"network_in_mb"  db:"network_in_mb"`
+    NetworkOutMB float64  `json:"network_out_mb" db:"network_out_mb"`
+    Timestamp    time.Time `json:"timestamp"      db:"timestamp"`
+}
+```
+
+## Querying
+
+Query each data type through the service interface:
+
+```go
+metrics, err := cp.Telemetry.QueryMetrics(ctx, telemetry.MetricQuery{
+    InstanceID: instanceID,
+    Name:       "http_requests_total",
+    Since:      time.Now().Add(-1 * time.Hour),
+    Until:      time.Now(),
+})
+
+logs, err := cp.Telemetry.QueryLogs(ctx, telemetry.LogQuery{
+    InstanceID: instanceID,
+    Level:      "error",
+    Limit:      50,
+})
+```
+
+## Dashboard
+
+Get an aggregate view for a single instance:
+
+```go
+dashboard, err := cp.Telemetry.GetDashboard(ctx, instanceID)
+// dashboard.Resources     -- current CPU/memory/disk
+// dashboard.HealthStatus  -- "healthy", "degraded", etc.
+// dashboard.UptimePercent -- calculated from health history
+// dashboard.RequestRate   -- recent request throughput
+// dashboard.ErrorRate     -- recent error percentage
+// dashboard.P99Latency    -- 99th percentile response time
+```
+
+## Custom collectors
+
+Implement the `telemetry.Collector` interface to feed data from custom sources:
+
+```go
+type Collector interface {
+    Name() string
+    CollectMetrics(ctx context.Context, instanceID id.ID) ([]Metric, error)
+    CollectResources(ctx context.Context, instanceID id.ID) (*ResourceSnapshot, error)
+}
+```
+
+Register collectors during setup:
+
+```go
+cp.Telemetry.RegisterCollector(myPrometheusCollector)
+```
+
+The `TelemetryCollector` worker invokes all registered collectors on a periodic schedule.
+
+## Push API
+
+Services within the system push telemetry data directly:
+
+```go
+err := cp.Telemetry.PushMetrics(ctx, metrics)
+err := cp.Telemetry.PushLogs(ctx, logEntries)
+err := cp.Telemetry.PushTraces(ctx, traces)
+```

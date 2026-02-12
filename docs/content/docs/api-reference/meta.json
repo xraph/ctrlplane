@@ -1,0 +1,7 @@
+{
+  "title": "API Reference",
+  "pages": [
+    "http-api",
+    "go-packages"
+  ]
+}

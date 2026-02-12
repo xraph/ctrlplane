@@ -1,0 +1,113 @@
+---
+title: Multi-Tenancy
+description: How Ctrl Plane isolates tenants, enforces quotas, and scopes every operation.
+---
+
+Multi-tenancy is built into every layer of Ctrl Plane. Every entity belongs to a tenant. Every store query filters by tenant ID. Every API request is authenticated and scoped to the caller's tenant.
+
+## Tenant identity
+
+Tenants are first-class entities managed through the `admin.Service`:
+
+```go
+tenant, err := cp.Admin.CreateTenant(ctx, admin.CreateTenantRequest{
+    Name: "Acme Corp",
+    Slug: "acme",
+    Plan: "pro",
+})
+// tenant.ID is ten_01h455vb4pex5vsknk084sn02q
+```
+
+Every other entity carries a `TenantID` field that links it back to its owning tenant.
+
+## How scoping works
+
+### Store layer
+
+Every store method requires a `tenantID` parameter. There is no way to query across tenants at the store level:
+
+```go
+type Store interface {
+    GetByID(ctx context.Context, tenantID string, id id.ID) (*Instance, error)
+    List(ctx context.Context, tenantID string, opts ListOptions) (*ListResult, error)
+    // ...
+}
+```
+
+### Auth middleware
+
+The API layer extracts the tenant from the authenticated token. The `auth.Provider` interface authenticates the request and returns `Claims` that include a `TenantID`:
+
+```go
+type Claims struct {
+    SubjectID string
+    TenantID  string
+    Email     string
+    Roles     []string
+    // ...
+}
+```
+
+The middleware places claims into the request context. Downstream handlers extract the tenant:
+
+```go
+claims, err := auth.RequireClaims(ctx)
+tenantID := claims.TenantID
+```
+
+### Service layer
+
+Service implementations pull the tenant ID from claims and pass it to the store. A service never operates on data outside the caller's tenant.
+
+## Quotas
+
+Each tenant has a `Quota` that limits resource consumption:
+
+```go
+type Quota struct {
+    MaxInstances int `json:"max_instances" db:"max_instances"`
+    MaxCPUMillis int `json:"max_cpu_millis" db:"max_cpu_millis"`
+    MaxMemoryMB  int `json:"max_memory_mb" db:"max_memory_mb"`
+    MaxDiskMB    int `json:"max_disk_mb" db:"max_disk_mb"`
+    MaxDomains   int `json:"max_domains" db:"max_domains"`
+    MaxSecrets   int `json:"max_secrets" db:"max_secrets"`
+}
+```
+
+Quotas are checked before creating instances or adding resources. When a quota is exceeded, operations fail with `ctrlplane.ErrQuotaExceeded`.
+
+## Tenant lifecycle
+
+Tenants have three states:
+
+| State | Meaning |
+|-------|---------|
+| `active` | Normal operation. All API calls succeed. |
+| `suspended` | Read-only. Existing instances keep running but no new resources can be created. |
+| `deleted` | Soft-deleted. Not visible in listings. Resources are scheduled for cleanup. |
+
+Suspend and unsuspend a tenant through the admin API:
+
+```go
+err := cp.Admin.SuspendTenant(ctx, tenantID, "payment overdue")
+err := cp.Admin.UnsuspendTenant(ctx, tenantID)
+```
+
+## Audit logging
+
+When `AuditEnabled` is `true` (the default), Ctrl Plane records an audit entry for every state-changing operation:
+
+```go
+type AuditEntry struct {
+    ctrlplane.Entity
+    TenantID   string         `json:"tenant_id"   db:"tenant_id"`
+    ActorID    string         `json:"actor_id"    db:"actor_id"`
+    Resource   string         `json:"resource"    db:"resource"`
+    ResourceID string         `json:"resource_id" db:"resource_id"`
+    Action     string         `json:"action"      db:"action"`
+    Details    map[string]any `json:"details"     db:"details"`
+    IPAddress  string         `json:"ip_address"  db:"ip_address"`
+}
+```
+
+Query the audit log through `cp.Admin.QueryAuditLog(ctx, opts)`.

@@ -1,0 +1,88 @@
+---
+title: Configuration
+description: Global configuration, the option pattern, and how to customize Ctrl Plane behavior.
+---
+
+Ctrl Plane uses two complementary configuration mechanisms: a `Config` struct for static settings, and functional options for wiring dependencies.
+
+## Global config
+
+The root `ctrlplane.Config` struct holds settings that affect the entire system:
+
+```go
+type Config struct {
+    DatabaseURL            string        `json:"database_url"             env:"CP_DATABASE_URL"`
+    DefaultProvider        string        `json:"default_provider"         env:"CP_DEFAULT_PROVIDER"`
+    HealthInterval         time.Duration `json:"health_interval"          env:"CP_HEALTH_INTERVAL"          default:"30s"`
+    TelemetryFlushInterval time.Duration `json:"telemetry_flush_interval" env:"CP_TELEMETRY_FLUSH"           default:"10s"`
+    MaxInstancesPerTenant  int           `json:"max_instances_per_tenant" env:"CP_MAX_INSTANCES"             default:"0"`
+    AuditEnabled           bool          `json:"audit_enabled"            env:"CP_AUDIT_ENABLED"             default:"true"`
+}
+```
+
+Each field has a `json` tag for file-based config, an `env` tag for environment variables, and a `default` tag where applicable.
+
+## Functional options
+
+The `app.CtrlPlane` is configured with functional options passed to `app.New()`. Each option is a function that modifies the `CtrlPlane` during construction and can return an error if the configuration is invalid:
+
+```go
+cp, err := app.New(
+    app.WithStore(postgresStore),
+    app.WithAuth(myAuthProvider),
+    app.WithProvider("k8s-prod", kubernetesProvider),
+    app.WithProvider("docker-dev", dockerProvider),
+    app.WithDefaultProvider("k8s-prod"),
+    app.WithEventBus(natsEventBus),
+)
+```
+
+### Available options
+
+| Option | Purpose |
+|--------|---------|
+| `WithConfig(cfg)` | Set the global configuration struct |
+| `WithStore(s)` | Set the persistence backend |
+| `WithAuth(p)` | Set the authentication provider |
+| `WithProvider(name, p)` | Register a named cloud provider |
+| `WithDefaultProvider(name)` | Set which provider to use when none is specified |
+| `WithEventBus(b)` | Replace the default in-memory event bus |
+
+## Provider configuration
+
+Each provider has its own `Config` struct. Here's the Docker provider as an example:
+
+```go
+dockerProv, err := docker.New(docker.Config{
+    Host:          "unix:///var/run/docker.sock",
+    Namespace:     "ctrlplane",
+    DefaultCPU:    500,
+    DefaultMemory: 256,
+    NetworkName:   "cp-network",
+})
+```
+
+## Subsystem configuration
+
+Individual subsystem services accept configuration through their constructors. When using `app.New()`, the wiring happens automatically. When using packages independently, you create services directly:
+
+```go
+instanceSvc := instance.NewService(instance.ServiceConfig{
+    Store:    myStore,
+    Provider: myProvider,
+    Events:   myEventBus,
+})
+```
+
+## Environment variables
+
+All environment variables use the `CP_` prefix to avoid collisions:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `CP_DATABASE_URL` | Database connection string | (none) |
+| `CP_DEFAULT_PROVIDER` | Default provider name | (none) |
+| `CP_HEALTH_INTERVAL` | Health check interval | `30s` |
+| `CP_TELEMETRY_FLUSH` | Telemetry flush interval | `10s` |
+| `CP_MAX_INSTANCES` | Max instances per tenant (0 = unlimited) | `0` |
+| `CP_AUDIT_ENABLED` | Enable audit logging | `true` |

@@ -1,0 +1,155 @@
+---
+title: Go Packages
+description: Quick reference for all Ctrl Plane Go packages and their public APIs.
+---
+
+This is a reference map of every package in the module, what it exports, and when you'd use it.
+
+## Root package
+
+**Import:** `github.com/xraph/ctrlplane`
+
+| Export | Type | Purpose |
+|--------|------|---------|
+| `Entity` | struct | Base type embedded by all domain entities |
+| `NewEntity(prefix)` | func | Create an entity with a fresh TypeID and timestamps |
+| `Config` | struct | Global configuration |
+| `ErrNotFound` | error | Resource does not exist |
+| `ErrAlreadyExists` | error | Resource already exists |
+| `ErrInvalidState` | error | Invalid state transition |
+| `ErrInvalidConfig` | error | Invalid configuration |
+| `ErrProviderNotFound` | error | Provider not registered |
+| `ErrUnauthorized` | error | Authentication failed |
+| `ErrForbidden` | error | Authorization denied |
+| `ErrQuotaExceeded` | error | Tenant quota exceeded |
+
+## id
+
+**Import:** `github.com/xraph/ctrlplane/id`
+
+TypeID-based identifiers. See [Identity](/docs/concepts/identity).
+
+| Export | Purpose |
+|--------|---------|
+| `ID` | The identifier type |
+| `Prefix` | Prefix type for entity classification |
+| `New(prefix)` | Generate a new ID |
+| `Parse(s)` | Parse a TypeID string |
+| `ParseWithPrefix(s, prefix)` | Parse with prefix validation |
+| `Nil` | Zero-value ID |
+| `PrefixInstance`, `PrefixDeployment`, ... | Prefix constants for each entity type |
+
+## auth
+
+**Import:** `github.com/xraph/ctrlplane/auth`
+
+| Export | Purpose |
+|--------|---------|
+| `Provider` | Authentication/authorization interface |
+| `Claims` | Identity and tenant information |
+| `AuthzRequest` | Authorization check request |
+| `WithClaims(ctx, claims)` | Store claims in context |
+| `ClaimsFrom(ctx)` | Retrieve claims from context |
+| `RequireClaims(ctx)` | Retrieve claims or return error |
+| `NewNoopProvider()` | Dev/test provider that allows everything |
+
+## instance
+
+**Import:** `github.com/xraph/ctrlplane/instance`
+
+| Export | Purpose |
+|--------|---------|
+| `Service` | Instance lifecycle interface |
+| `Store` | Instance persistence interface |
+| `Instance` | Domain entity |
+| `CreateRequest`, `UpdateRequest`, `ScaleRequest` | Operation DTOs |
+| `ListOptions`, `ListResult` | Pagination |
+| `ValidateTransition(from, to)` | State machine validation |
+
+## deploy
+
+**Import:** `github.com/xraph/ctrlplane/deploy`
+
+| Export | Purpose |
+|--------|---------|
+| `Service` | Deployment orchestration interface |
+| `Store` | Deployment/release persistence |
+| `Strategy` | Deployment strategy interface |
+| `Deployment` | Deployment entity |
+| `Release` | Immutable release snapshot |
+| `DeployRequest` | Deployment parameters |
+
+## health
+
+**Import:** `github.com/xraph/ctrlplane/health`
+
+| Export | Purpose |
+|--------|---------|
+| `Service` | Health check management interface |
+| `Store` | Health persistence |
+| `Checker` | Health check type interface |
+| `HealthCheck` | Check configuration entity |
+| `HealthResult` | Check execution result |
+| `InstanceHealth` | Aggregate health view |
+| `StatusHealthy`, `StatusDegraded`, `StatusUnhealthy`, `StatusUnknown` | Status constants |
+
+## provider
+
+**Import:** `github.com/xraph/ctrlplane/provider`
+
+| Export | Purpose |
+|--------|---------|
+| `Provider` | Cloud orchestrator interface |
+| `Registry` | Named provider registry |
+| `ProviderInfo` | Provider metadata |
+| `Capability` | Feature flag type |
+| `ResourceSpec`, `ResourceUsage` | Resource allocation types |
+| `PortSpec`, `VolumeSpec`, `Endpoint` | Infrastructure types |
+| `ProvisionRequest`, `DeployRequest` | Operation parameters |
+| `InstanceStatus`, `InstanceState` | State reporting |
+
+## network, secrets, telemetry, admin, event, worker
+
+Each follows the same pattern: a `Service` interface, a `Store` interface, domain entities, and request/response DTOs. See the individual subsystem documentation pages for details.
+
+## store
+
+**Import:** `github.com/xraph/ctrlplane/store`
+
+| Export | Purpose |
+|--------|---------|
+| `Store` | Aggregate interface composing all subsystem stores |
+
+Implementations: `store/memory`, `store/sqlite`, `store/postgres`.
+
+## app
+
+**Import:** `github.com/xraph/ctrlplane/app`
+
+| Export | Purpose |
+|--------|---------|
+| `CtrlPlane` | Root orchestrator struct |
+| `New(opts...)` | Constructor |
+| `Option` | Functional option type |
+| `WithStore`, `WithAuth`, `WithProvider`, `WithEventBus`, `WithDefaultProvider` | Configuration options |
+
+## api
+
+**Import:** `github.com/xraph/ctrlplane/api`
+
+| Export | Purpose |
+|--------|---------|
+| `API` | HTTP handler builder |
+| `New(cp)` | Constructor |
+| `Handler()` | Returns `http.Handler` with all routes mounted |
+
+## extension
+
+**Import:** `github.com/xraph/ctrlplane/extension`
+
+| Export | Purpose |
+|--------|---------|
+| `Extension` | Forge extension adapter |
+| `New(opts...)` | Constructor |
+| `ExtOption` | Extension option type |
+| `WithAuthProvider`, `WithProvider`, `WithBasePath`, `WithConfig`, `WithStore` | Extension options |

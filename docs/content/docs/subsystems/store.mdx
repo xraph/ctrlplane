@@ -1,0 +1,105 @@
+---
+title: Storage
+description: The persistence layer -- in-memory, SQLite, and PostgreSQL store implementations.
+---
+
+Ctrl Plane separates business logic from persistence through store interfaces. Each subsystem defines its own store interface, and the aggregate `store.Store` composes them all into a single type.
+
+## Aggregate store
+
+The `store.Store` interface is the composition of every subsystem's store:
+
+```go
+type Store interface {
+    instance.Store
+    deploy.Store
+    health.Store
+    telemetry.Store
+    network.Store
+    secrets.Store
+    admin.Store
+
+    Migrate(ctx context.Context) error
+    Ping(ctx context.Context) error
+    Close() error
+}
+```
+
+Pass a `Store` implementation to `app.WithStore()` when constructing Ctrl Plane.
+
+## Implementations
+
+### In-memory
+
+The `store/memory` package provides a store backed by Go maps and `sync.RWMutex`. It requires no external dependencies and is ideal for unit tests and local development.
+
+```go
+import "github.com/xraph/ctrlplane/store/memory"
+
+s := memory.New()
+```
+
+Data is lost when the process exits.
+
+### SQLite
+
+The `store/sqlite` package stores data in a local SQLite file. Good for standalone deployments and development environments where you want persistence without running a database server.
+
+```go
+import "github.com/xraph/ctrlplane/store/sqlite"
+
+s, err := sqlite.New(sqlite.Config{
+    Path: "/var/data/ctrlplane.db",
+})
+```
+
+### PostgreSQL
+
+The `store/postgres` package is the production-grade backend. It supports all features including concurrent access, proper transaction isolation, and efficient pagination.
+
+```go
+import "github.com/xraph/ctrlplane/store/postgres"
+
+s, err := postgres.New(postgres.Config{
+    URL: "postgres://user:pass@localhost:5432/ctrlplane?sslmode=disable",
+})
+```
+
+## Subsystem store interfaces
+
+Each subsystem defines the store methods it needs. Here's the instance store as an example:
+
+```go
+// instance/store.go
+type Store interface {
+    Insert(ctx context.Context, instance *Instance) error
+    GetByID(ctx context.Context, tenantID string, id id.ID) (*Instance, error)
+    GetBySlug(ctx context.Context, tenantID string, slug string) (*Instance, error)
+    List(ctx context.Context, tenantID string, opts ListOptions) (*ListResult, error)
+    Update(ctx context.Context, instance *Instance) error
+    Delete(ctx context.Context, tenantID string, id id.ID) error
+    CountByTenant(ctx context.Context, tenantID string) (int, error)
+}
+```
+
+Every query method requires a `tenantID` parameter. There are no methods that operate across tenants.
+
+## Migrations
+
+Call `store.Migrate(ctx)` to create or update the database schema:
+
+```go
+if err := s.Migrate(ctx); err != nil {
+    log.Fatalf("migration failed: %v", err)
+}
+```
+
+The PostgreSQL and SQLite implementations handle schema creation automatically. The in-memory store's `Migrate` is a no-op.
+
+## Choosing a store
+
+| Store | Use case | Persistence | Concurrency |
+|-------|----------|-------------|-------------|
+| Memory | Unit tests, quick prototyping | None (in-process) | Single process |
+| SQLite | Standalone deployments, development | File-based | Single process |
+| PostgreSQL | Production multi-instance deployments | Full ACID | Multi-process |

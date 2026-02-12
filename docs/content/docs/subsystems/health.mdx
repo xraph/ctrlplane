@@ -1,0 +1,112 @@
+---
+title: Health Checks
+description: Configure and run health checks against instances using HTTP, TCP, gRPC, or custom commands.
+---
+
+The health subsystem lets you configure checks per instance, run them on a schedule, and query historical results. Health status feeds into the telemetry dashboard and can trigger alerts through the event bus.
+
+## Check types
+
+Ctrl Plane ships with four built-in health checkers:
+
+| Type | What it does |
+|------|-------------|
+| `http` | Sends an HTTP request to a URL and checks the status code |
+| `tcp` | Opens a TCP connection to a host:port |
+| `grpc` | Calls the gRPC health checking protocol |
+| `command` | Executes a command inside the instance container |
+
+## Configuring a check
+
+```go
+check, err := cp.Health.Configure(ctx, health.ConfigureRequest{
+    InstanceID: instanceID,
+    Name:       "api-health",
+    Type:       health.CheckHTTP,
+    Target:     "http://localhost:8080/healthz",
+    Interval:   30 * time.Second,
+    Timeout:    5 * time.Second,
+    Retries:    3,
+})
+```
+
+The check runs automatically at the configured interval once the background `HealthRunner` worker is running.
+
+## Running a check manually
+
+```go
+result, err := cp.Health.RunCheck(ctx, checkID)
+// result.Status is health.StatusHealthy, StatusDegraded, StatusUnhealthy, or StatusUnknown
+// result.Latency is the time taken
+// result.Message has details on failure
+```
+
+## Health status
+
+Each check execution produces a `HealthResult`:
+
+```go
+type HealthResult struct {
+    ctrlplane.Entity
+    CheckID    id.ID         `json:"check_id"    db:"check_id"`
+    InstanceID id.ID         `json:"instance_id"  db:"instance_id"`
+    Status     Status        `json:"status"       db:"status"`
+    Latency    time.Duration `json:"latency"      db:"latency"`
+    Message    string        `json:"message"      db:"message"`
+    StatusCode int           `json:"status_code"  db:"status_code"`
+    CheckedAt  time.Time     `json:"checked_at"   db:"checked_at"`
+}
+```
+
+Status values:
+
+| Status | Meaning |
+|--------|---------|
+| `healthy` | Check passed |
+| `degraded` | Check passed but with warnings (e.g., high latency) |
+| `unhealthy` | Check failed |
+| `unknown` | Check could not be executed |
+
+## Aggregate health
+
+Get the overall health of an instance across all its configured checks:
+
+```go
+health, err := cp.Health.GetHealth(ctx, instanceID)
+// health.Status is the worst status across all checks
+// health.Checks is a list of individual check summaries
+```
+
+## Check history
+
+Query past results for a specific check:
+
+```go
+results, err := cp.Health.GetHistory(ctx, checkID, health.HistoryOptions{
+    Limit: 100,
+    Since: time.Now().Add(-24 * time.Hour),
+})
+```
+
+## Custom checkers
+
+Implement the `health.Checker` interface and register it with the health service:
+
+```go
+type Checker interface {
+    Type() CheckType
+    Check(ctx context.Context, check *HealthCheck) (*HealthResult, error)
+}
+
+// Register during setup
+cp.Health.RegisterChecker(myCustomChecker)
+```
+
+## Events
+
+| Event | When |
+|-------|------|
+| `HealthCheckPassed` | A check transitions to healthy |
+| `HealthCheckFailed` | A check transitions to unhealthy |
+| `HealthDegraded` | A check transitions to degraded |
+| `HealthRecovered` | A check transitions from unhealthy back to healthy |

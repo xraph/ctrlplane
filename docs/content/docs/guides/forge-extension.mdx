@@ -1,0 +1,99 @@
+---
+title: Forge Extension
+description: Mount Ctrl Plane into a Forge application with shared auth and routing.
+---
+
+Ctrl Plane can run as a [Forge](https://github.com/xraph/forge) extension. This lets you embed instance management into a larger Forge-based application and share authentication, middleware, and the HTTP server.
+
+## Basic setup
+
+```go
+package main
+
+import (
+    "github.com/xraph/forge"
+    cpext "github.com/xraph/ctrlplane/extension"
+    "github.com/xraph/ctrlplane/provider/docker"
+)
+
+func main() {
+    dockerProv, _ := docker.New(docker.Config{
+        Host: "unix:///var/run/docker.sock",
+    })
+
+    app := forge.New()
+    app.Use(cpext.New(
+        cpext.WithProvider("docker", dockerProv),
+    ))
+    app.Run()
+}
+```
+
+The extension registers itself with Forge and mounts the Ctrl Plane HTTP API at the configured base path.
+
+## Extension options
+
+| Option | Purpose |
+|--------|---------|
+| `WithAuthProvider(p)` | Set the auth provider |
+| `WithProvider(name, p)` | Register a cloud provider |
+| `WithBasePath(path)` | Set the URL prefix (default: `/`) |
+| `WithConfig(cfg)` | Set extension configuration |
+| `WithStore(opt)` | Pass a store option to the underlying Ctrl Plane |
+
+## With Authsome
+
+If you're using [Authsome](https://github.com/xraph/authsome) for authentication, connect it through the adapter:
+
+```go
+package main
+
+import (
+    "github.com/xraph/forge"
+    "github.com/xraph/authsome"
+    cpext "github.com/xraph/ctrlplane/extension"
+    authadapter "github.com/xraph/ctrlplane/auth/authsome"
+)
+
+func main() {
+    app := forge.New()
+
+    // Mount Authsome first
+    authProvider := authsome.New(/* ... */)
+    app.Use(authProvider.Extension())
+
+    // Mount Ctrl Plane with the Authsome adapter
+    app.Use(cpext.New(
+        cpext.WithAuthProvider(authadapter.New(authProvider)),
+        cpext.WithProvider("k8s", kubernetesProvider),
+    ))
+
+    app.Run()
+}
+```
+
+The Authsome adapter translates Authsome's user and session model into Ctrl Plane's `auth.Claims` format.
+
+## Lifecycle
+
+The extension implements the `forge.Extension` interface:
+
+- `Init(ctx)` -- Creates the Ctrl Plane instance and wires all services.
+- `Start(ctx)` -- Starts background workers.
+- `Stop(ctx)` -- Stops background workers and flushes state.
+- `Handler()` -- Returns the HTTP handler for Forge to mount.
+
+Forge calls these methods in order during its own startup and shutdown sequence.
+
+## Accessing the Ctrl Plane
+
+If you need to call Ctrl Plane services from other parts of your Forge application:
+
+```go
+ext := cpext.New(/* ... */)
+app.Use(ext)
+
+// After init, access the underlying Ctrl Plane
+cp := ext.CtrlPlane()
+instance, err := cp.Instances.Get(ctx, instanceID)
+```

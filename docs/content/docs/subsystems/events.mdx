@@ -1,0 +1,119 @@
+---
+title: Events & Webhooks
+description: Publish, subscribe, and deliver lifecycle events across all Ctrl Plane subsystems.
+---
+
+Every state change in Ctrl Plane publishes an event. You can subscribe to events within your application for custom logic, or configure webhooks to notify external systems.
+
+## Event structure
+
+```go
+type Event struct {
+    ID         id.ID          `json:"id,omitzero"`
+    Type       Type           `json:"type"        db:"type"`
+    TenantID   string         `json:"tenant_id"   db:"tenant_id"`
+    InstanceID id.ID          `json:"instance_id,omitzero" db:"instance_id"`
+    ActorID    string         `json:"actor_id"    db:"actor_id"`
+    Payload    map[string]any `json:"payload"     db:"payload"`
+    Timestamp  time.Time      `json:"timestamp"   db:"timestamp"`
+}
+```
+
+Events are created with a builder pattern:
+
+```go
+evt := event.NewEvent(event.InstanceCreated, tenantID).
+    WithInstance(instanceID).
+    WithActor(userID).
+    WithPayload(map[string]any{
+        "name":  "api-server",
+        "image": "myapp:v1.0",
+    })
+```
+
+## Event types
+
+Events are organized by subsystem:
+
+**Instance events:** `InstanceCreated`, `InstanceStarted`, `InstanceStopped`, `InstanceFailed`, `InstanceDeleted`, `InstanceScaled`, `InstanceSuspended`, `InstanceUnsuspended`
+
+**Deploy events:** `DeployStarted`, `DeploySucceeded`, `DeployFailed`, `DeployRolledBack`
+
+**Health events:** `HealthCheckPassed`, `HealthCheckFailed`, `HealthDegraded`, `HealthRecovered`
+
+**Network events:** `DomainAdded`, `DomainVerified`, `DomainRemoved`, `CertProvisioned`, `CertExpiring`
+
+**Admin events:** `TenantCreated`, `TenantSuspended`, `TenantDeleted`, `QuotaExceeded`
+
+## Bus interface
+
+The event bus handles publishing and subscription:
+
+```go
+type Bus interface {
+    Publish(ctx context.Context, event *Event) error
+    Subscribe(handler Handler, types ...Type) Subscription
+    Close() error
+}
+
+type Handler func(ctx context.Context, event *Event) error
+```
+
+### Subscribe to events
+
+```go
+sub := cp.Events.Subscribe(func(ctx context.Context, evt *event.Event) error {
+    log.Printf("instance %s: %s", evt.InstanceID, evt.Type)
+    return nil
+}, event.InstanceCreated, event.InstanceFailed)
+
+// Later, when you're done:
+sub.Unsubscribe()
+```
+
+Subscribe to all events by passing no types:
+
+```go
+sub := cp.Events.Subscribe(handler) // receives everything
+```
+
+## Implementations
+
+Ctrl Plane ships with an in-memory event bus. Replace it with a durable bus for production:
+
+```go
+cp, err := app.New(
+    app.WithEventBus(natsEventBus), // or redis, kafka, etc.
+)
+```
+
+The `Bus` interface is small enough that adapting any message broker is straightforward.
+
+## Webhooks
+
+Webhooks deliver events to external HTTP endpoints:
+
+```go
+type Webhook struct {
+    ctrlplane.Entity
+    TenantID string   `json:"tenant_id" db:"tenant_id"`
+    URL      string   `json:"url"       db:"url"`
+    Secret   string   `json:"-"         db:"secret"` // HMAC signing key
+    Events   []Type   `json:"events"    db:"events"`
+    Active   bool     `json:"active"    db:"active"`
+}
+```
+
+When a matching event occurs, the webhook system sends an HTTP POST to the configured URL with the event payload. Deliveries are tracked with retry logic:
+
+```go
+type WebhookDelivery struct {
+    ctrlplane.Entity
+    WebhookID  id.ID      `json:"webhook_id"  db:"webhook_id"`
+    EventID    id.ID      `json:"event_id"    db:"event_id"`
+    StatusCode int        `json:"status_code" db:"status_code"`
+    Attempts   int        `json:"attempts"    db:"attempts"`
+    NextRetry  *time.Time `json:"next_retry"  db:"next_retry"`
+    Error      string     `json:"error"       db:"error"`
+}
+```

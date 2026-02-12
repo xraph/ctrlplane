@@ -1,0 +1,111 @@
+---
+title: Deployments & Releases
+description: Push new versions with zero-downtime strategies and roll back to any previous release.
+---
+
+The deployment subsystem manages how new code gets to running instances. Every deployment creates an immutable release. If something goes wrong, you can roll back to any previous release.
+
+## Concepts
+
+**Deployment** -- A single attempt to update an instance to a new image or configuration. Deployments have a lifecycle: `pending -> running -> succeeded` (or `failed` or `cancelled`).
+
+**Release** -- An immutable snapshot of what was deployed. Releases are versioned sequentially per instance (v1, v2, v3...). They record the image, environment variables, commit SHA, and notes.
+
+**Strategy** -- The method used to transition traffic from the old version to the new one. Ctrl Plane ships with four strategies.
+
+## Deploy flow
+
+```go
+deployment, err := cp.Deploys.Deploy(ctx, deploy.DeployRequest{
+    InstanceID: instanceID,
+    Image:      "myapp:v1.3.0",
+    Strategy:   "rolling",
+    Env: map[string]string{
+        "FEATURE_FLAG": "true",
+    },
+    Notes:     "enable feature flag",
+    CommitSHA: "abc123f",
+})
+```
+
+When you call `Deploy`:
+
+1. A new `Release` is created with the next version number.
+2. A `Deployment` record is created in `pending` state.
+3. The chosen strategy executes the rollout against the provider.
+4. On success, the instance's `CurrentRelease` is updated to the new release.
+5. A `DeploySucceeded` event is published.
+
+## Strategies
+
+| Strategy | Behavior |
+|----------|----------|
+| `rolling` | Gradually replaces old containers with new ones. No downtime. |
+| `blue-green` | Spins up a full copy of the new version, then switches traffic atomically. |
+| `canary` | Routes a small percentage of traffic to the new version, then gradually increases. |
+| `recreate` | Stops the old version, then starts the new one. Brief downtime. |
+
+Strategies are pluggable. Each one implements the `deploy.Strategy` interface:
+
+```go
+type Strategy interface {
+    Name() string
+    Execute(ctx context.Context, params StrategyParams) error
+}
+```
+
+See the [deployment strategies guide](/docs/guides/deploy-strategies) for details on each one.
+
+## Rollback
+
+Roll back to any previous release:
+
+```go
+deployment, err := cp.Deploys.Rollback(ctx, instanceID, releaseID)
+```
+
+This creates a new deployment that deploys the old release's image and configuration. The release itself is not modified -- it's immutable.
+
+## Cancel a deployment
+
+Cancel a deployment that's in progress:
+
+```go
+err := cp.Deploys.Cancel(ctx, deploymentID)
+```
+
+This sets the deployment state to `cancelled` and halts the strategy execution.
+
+## Listing releases
+
+Releases are append-only and versioned:
+
+```go
+result, err := cp.Deploys.ListReleases(ctx, instanceID, deploy.ListOptions{
+    Limit: 10,
+})
+
+for _, rel := range result.Items {
+    fmt.Printf("v%d: %s (%s)\n", rel.Version, rel.Image, rel.CreatedAt)
+}
+```
+
+## Deployment states
+
+| State | Meaning |
+|-------|---------|
+| `pending` | Deployment created, not yet executing |
+| `running` | Strategy is executing the rollout |
+| `succeeded` | Rollout completed successfully |
+| `failed` | Rollout failed (instance may need manual intervention) |
+| `rolled_back` | A subsequent rollback was triggered |
+| `cancelled` | Deployment was cancelled before completion |
+
+## Events
+
+| Event | When |
+|-------|------|
+| `DeployStarted` | Deployment begins executing |
+| `DeploySucceeded` | Rollout completes |
+| `DeployFailed` | Rollout fails |
+| `DeployRolledBack` | Rollback completes |

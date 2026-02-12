@@ -1,0 +1,134 @@
+---
+title: Architecture
+description: How Ctrl Plane's packages fit together, from providers to the HTTP API.
+---
+
+Ctrl Plane is organized as a set of Go packages, each responsible for one concern. There is no central god object. The `app.CtrlPlane` struct wires the packages together, but you can also use any package independently.
+
+## Package map
+
+```
+github.com/xraph/ctrlplane/
+    id/            TypeID wrapper (prefix-qualified identifiers)
+    auth/          Authentication and authorization interface
+    provider/      Cloud provider abstraction + implementations
+    instance/      Instance lifecycle management
+    deploy/        Deployments, releases, and strategies
+    health/        Health checking subsystem
+    network/       Domains, routes, and TLS certificates
+    secrets/       Secret management and vault interface
+    telemetry/     Metrics, logs, traces, resource snapshots
+    admin/         Tenant management, quotas, audit
+    event/         Event bus and webhooks
+    worker/        Background task scheduler
+    store/         Persistence layer (postgres, sqlite, memory)
+    api/           HTTP handlers and middleware
+    app/           Root orchestrator
+    extension/     Forge extension adapter
+    cmd/           Reference binary
+```
+
+## Layered design
+
+The library is structured in layers. Lower layers know nothing about higher layers.
+
+### Layer 1: Foundation
+
+The root `ctrlplane` package and the `id` package. These define the base `Entity` type, sentinel errors, configuration, and the TypeID identity system. Every other package depends on these.
+
+### Layer 2: Interfaces
+
+Each subsystem package (`instance`, `deploy`, `health`, `network`, `secrets`, `telemetry`, `admin`, `event`) defines its own `Service` interface, `Store` interface, and domain entities. These packages depend only on the foundation layer and each other where necessary.
+
+### Layer 3: Infrastructure
+
+The `provider` package defines the `Provider` interface that abstracts over cloud orchestrators. The `store` package composes all subsystem store interfaces into a single aggregate interface. The `auth` package defines the authentication abstraction.
+
+### Layer 4: Wiring
+
+The `app` package creates a `CtrlPlane` struct that instantiates all service implementations, registers background workers, and connects the event bus. The `api` package mounts HTTP handlers. The `extension` package adapts everything for Forge.
+
+## Data flow
+
+A typical request flows through these layers:
+
+```
+HTTP Request
+    -> api.AuthMiddleware (extracts tenant from token)
+    -> api.Handler (parses request, calls service)
+    -> instance.Service (business logic, state validation)
+    -> provider.Provider (talks to Docker/K8s/AWS)
+    -> instance.Store (persists state change)
+    -> event.Bus (publishes lifecycle event)
+```
+
+## Key interfaces
+
+Every subsystem follows the same pattern: a `Service` interface for business logic, a `Store` interface for persistence, and domain-specific extension interfaces.
+
+| Interface | Package | Role |
+|-----------|---------|------|
+| `provider.Provider` | `provider/` | Cloud orchestrator abstraction (15+ methods) |
+| `instance.Service` | `instance/` | Instance CRUD and lifecycle actions |
+| `deploy.Service` | `deploy/` | Deployment orchestration and release management |
+| `deploy.Strategy` | `deploy/` | Pluggable deployment strategy (rolling, blue-green, canary, recreate) |
+| `health.Service` | `health/` | Health check configuration and execution |
+| `health.Checker` | `health/` | Individual check type implementation |
+| `network.Service` | `network/` | Domain, route, and certificate management |
+| `network.Router` | `network/` | External traffic routing abstraction |
+| `secrets.Service` | `secrets/` | Secret lifecycle and injection |
+| `secrets.Vault` | `secrets/` | Backend secret storage abstraction |
+| `telemetry.Service` | `telemetry/` | Metrics, logs, and trace querying |
+| `telemetry.Collector` | `telemetry/` | Custom telemetry data source |
+| `admin.Service` | `admin/` | Tenant, quota, and audit management |
+| `event.Bus` | `event/` | Publish/subscribe event dispatch |
+| `auth.Provider` | `auth/` | Authentication and authorization |
+| `store.Store` | `store/` | Aggregate persistence (composes all subsystem stores) |
+| `worker.Worker` | `worker/` | Background periodic task |
+
+## Usage modes
+
+### Standalone library
+
+Import the packages you need, create a `CtrlPlane` with `app.New()`, and serve the HTTP API with `api.New()`. You own the process.
+
+```go
+cp, _ := app.New(
+    app.WithStore(postgresStore),
+    app.WithProvider("k8s", kubernetesProvider),
+    app.WithAuth(myAuthProvider),
+)
+cp.Start(ctx)
+http.ListenAndServe(":8080", api.New(cp).Handler())
+```
+
+### Forge extension
+
+Wrap Ctrl Plane in the extension adapter and mount it into a Forge application. Forge manages the HTTP server and process lifecycle.
+
+```go
+forgeApp := forge.New()
+forgeApp.Use(cpext.New(
+    cpext.WithProvider("k8s", kubernetesProvider),
+    cpext.WithAuthProvider(authsomeAdapter),
+))
+forgeApp.Run()
+```
+
+### Individual packages
+
+You can use any subsystem package on its own. For example, the `health` package works independently if you provide a store and a set of checkers.
+
+## Background workers
+
+The `worker.Scheduler` manages five built-in workers that run on configurable intervals:
+
+| Worker | Purpose | Default interval |
+|--------|---------|-----------------|
+| Reconciler | Detects drift between stored state and provider state | 60s |
+| HealthRunner | Executes configured health checks | 30s |
+| TelemetryCollector | Collects metrics and resource snapshots from providers | 10s |
+| GarbageCollector | Cleans up old deployments, health results, and audit entries | 5m |
+| CertRenewer | Renews TLS certificates approaching expiry | 1h |
+
+Workers are started by `cp.Start(ctx)` and stopped by `cp.Stop(ctx)`.

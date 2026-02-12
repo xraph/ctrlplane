@@ -1,0 +1,135 @@
+---
+title: Instances
+description: Instance lifecycle management -- creating, scaling, suspending, and destroying tenant instances.
+---
+
+An instance is the core unit of work in Ctrl Plane. It represents a running application belonging to a tenant, backed by a container or virtual machine in a cloud provider.
+
+## The Instance entity
+
+```go
+type Instance struct {
+    ctrlplane.Entity
+
+    TenantID       string                `json:"tenant_id"       db:"tenant_id"`
+    Name           string                `json:"name"            db:"name"`
+    Slug           string                `json:"slug"            db:"slug"`
+    ProviderName   string                `json:"provider_name"   db:"provider_name"`
+    ProviderRef    string                `json:"provider_ref"    db:"provider_ref"`
+    Region         string                `json:"region"          db:"region"`
+    State          provider.InstanceState `json:"state"           db:"state"`
+    Image          string                `json:"image"           db:"image"`
+    Resources      provider.ResourceSpec  `json:"resources"       db:"resources"`
+    Env            map[string]string      `json:"env"             db:"env"`
+    Ports          []provider.PortSpec    `json:"ports"           db:"ports"`
+    Endpoints      []provider.Endpoint    `json:"endpoints"       db:"endpoints"`
+    Labels         map[string]string      `json:"labels"          db:"labels"`
+    CurrentRelease id.ID                  `json:"current_release,omitzero" db:"current_release"`
+    SuspendedAt    *time.Time             `json:"suspended_at"    db:"suspended_at"`
+}
+```
+
+## State machine
+
+Instances move through a well-defined set of states. The state machine validates every transition and rejects invalid ones with `ctrlplane.ErrInvalidState`.
+
+```
+provisioning -> starting -> running -> stopping -> stopped
+                  |           |                      |
+                  |           +-> suspending -> suspended
+                  |           |
+                  |           +-> destroying -> destroyed
+                  |
+                  +-> failed
+```
+
+| State | Meaning |
+|-------|---------|
+| `provisioning` | Provider is creating the underlying resource |
+| `starting` | Resource exists, application is booting |
+| `running` | Application is healthy and serving traffic |
+| `stopping` | Graceful shutdown in progress |
+| `stopped` | Application is not running but resources are retained |
+| `suspending` | Transitioning to suspended state |
+| `suspended` | Instance is frozen (tenant suspension or manual) |
+| `destroying` | Resources are being torn down |
+| `destroyed` | Fully cleaned up, terminal state |
+| `failed` | Something went wrong (can retry from this state) |
+
+## Service interface
+
+The `instance.Service` interface provides all instance operations:
+
+```go
+type Service interface {
+    Create(ctx context.Context, req CreateRequest) (*Instance, error)
+    Get(ctx context.Context, instanceID id.ID) (*Instance, error)
+    List(ctx context.Context, opts ListOptions) (*ListResult, error)
+    Update(ctx context.Context, instanceID id.ID, req UpdateRequest) (*Instance, error)
+    Delete(ctx context.Context, instanceID id.ID) error
+
+    Start(ctx context.Context, instanceID id.ID) error
+    Stop(ctx context.Context, instanceID id.ID) error
+    Restart(ctx context.Context, instanceID id.ID) error
+    Scale(ctx context.Context, instanceID id.ID, req ScaleRequest) error
+    Suspend(ctx context.Context, instanceID id.ID, reason string) error
+    Unsuspend(ctx context.Context, instanceID id.ID, reason string) error
+}
+```
+
+## Creating an instance
+
+```go
+instance, err := cp.Instances.Create(ctx, instance.CreateRequest{
+    TenantID:     "ten_01h455vb...",
+    Name:         "api-server",
+    Image:        "myapp:v1.2.0",
+    ProviderName: "docker",
+    Resources: provider.ResourceSpec{
+        CPUMillis: 1000,
+        MemoryMB:  512,
+    },
+    Ports: []provider.PortSpec{
+        {ContainerPort: 8080, Protocol: "tcp"},
+    },
+    Env: map[string]string{
+        "DATABASE_URL": "postgres://...",
+    },
+})
+```
+
+This triggers a chain of actions:
+
+1. Validate the request and check tenant quotas.
+2. Create an `Instance` record in state `provisioning`.
+3. Call `provider.Provision()` to create the underlying resource.
+4. Transition to `starting`, then `running` as the provider reports success.
+5. Publish an `InstanceCreated` event.
+
+## Scaling
+
+Adjust CPU, memory, or disk without redeploying:
+
+```go
+err := cp.Instances.Scale(ctx, instanceID, instance.ScaleRequest{
+    Resources: provider.ResourceSpec{
+        CPUMillis: 2000,
+        MemoryMB:  1024,
+    },
+})
+```
+
+## Lifecycle events
+
+Every state change publishes an event through the event bus:
+
+| Event | When |
+|-------|------|
+| `InstanceCreated` | Instance is provisioned |
+| `InstanceStarted` | Instance reaches running state |
+| `InstanceStopped` | Instance is stopped |
+| `InstanceFailed` | Instance enters failed state |
+| `InstanceDeleted` | Instance is destroyed |
+| `InstanceScaled` | Resources are changed |
+| `InstanceSuspended` | Instance is suspended |
+| `InstanceUnsuspended` | Instance is resumed |

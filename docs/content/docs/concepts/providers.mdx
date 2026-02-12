@@ -1,0 +1,128 @@
+---
+title: Providers
+description: The cloud provider abstraction and how Ctrl Plane talks to infrastructure.
+---
+
+A provider is Ctrl Plane's interface to a cloud orchestrator. It abstracts over the specifics of Docker, Kubernetes, AWS ECS, Fly.io, or any other platform into a unified API for provisioning, deploying, scaling, and monitoring instances.
+
+## The Provider interface
+
+The `provider.Provider` interface defines every operation Ctrl Plane needs from an orchestrator:
+
+```go
+type Provider interface {
+    Info() ProviderInfo
+    Capabilities() []Capability
+
+    Provision(ctx context.Context, req ProvisionRequest) (*ProvisionResult, error)
+    Deprovision(ctx context.Context, instanceID id.ID) error
+
+    Start(ctx context.Context, instanceID id.ID) error
+    Stop(ctx context.Context, instanceID id.ID) error
+    Restart(ctx context.Context, instanceID id.ID) error
+
+    Status(ctx context.Context, instanceID id.ID) (*InstanceStatus, error)
+
+    Deploy(ctx context.Context, req DeployRequest) (*DeployResult, error)
+    Rollback(ctx context.Context, instanceID, releaseID id.ID) error
+
+    Scale(ctx context.Context, instanceID id.ID, spec ResourceSpec) error
+    Resources(ctx context.Context, instanceID id.ID) (*ResourceUsage, error)
+
+    Logs(ctx context.Context, instanceID id.ID, opts LogOptions) (io.ReadCloser, error)
+    Exec(ctx context.Context, instanceID id.ID, cmd ExecRequest) (*ExecResult, error)
+}
+```
+
+You don't need to implement every method. If your provider doesn't support a capability, return an appropriate error and exclude the capability from `Capabilities()`.
+
+## Capabilities
+
+Providers declare what they support through capabilities. Ctrl Plane uses this information to validate operations before attempting them:
+
+```go
+const (
+    CapProvision     Capability = "provision"
+    CapDeploy        Capability = "deploy"
+    CapScale         Capability = "scale"
+    CapLogs          Capability = "logs"
+    CapExec          Capability = "exec"
+    CapVolumes       Capability = "volumes"
+    CapGPU           Capability = "gpu"
+    CapBlueGreen     Capability = "blue_green"
+    CapCanary        Capability = "canary"
+    CapRolling       Capability = "rolling"
+    CapAutoScale     Capability = "autoscale"
+    CapCustomDomains Capability = "custom_domains"
+    CapTLS           Capability = "tls"
+)
+```
+
+Check capabilities at runtime:
+
+```go
+if provider.HasCapability(prov.Capabilities(), provider.CapCanary) {
+    // use canary deployment
+}
+```
+
+## Registry
+
+The provider registry is a thread-safe map of named providers. Register providers during setup and look them up at runtime:
+
+```go
+registry := provider.NewRegistry()
+registry.Register("k8s-prod", kubernetesProvider)
+registry.Register("docker-dev", dockerProvider)
+registry.SetDefault("k8s-prod")
+
+// Later, when creating an instance:
+prov, err := registry.Get("k8s-prod")
+defaultProv, err := registry.Default()
+```
+
+When using `app.New()`, providers are registered through options:
+
+```go
+cp, err := app.New(
+    app.WithProvider("k8s-prod", kubernetesProvider),
+    app.WithProvider("docker-dev", dockerProvider),
+    app.WithDefaultProvider("k8s-prod"),
+)
+```
+
+## Built-in providers
+
+Ctrl Plane ships with a Docker provider implementation. Other providers have defined package structures and can be implemented against the interface:
+
+| Provider | Package | Status |
+|----------|---------|--------|
+| Docker | `provider/docker` | Implemented |
+| Kubernetes | `provider/kubernetes` | Interface defined |
+| AWS ECS/Fargate | `provider/aws` | Interface defined |
+| Google Cloud Run | `provider/gcp` | Interface defined |
+| Azure Container Instances | `provider/azure` | Interface defined |
+| HashiCorp Nomad | `provider/nomad` | Interface defined |
+| Fly.io Machines | `provider/fly` | Interface defined |
+
+## Resource types
+
+Providers work with standard resource types defined in the `provider` package:
+
+```go
+type ResourceSpec struct {
+    CPUMillis int    `json:"cpu_millis" db:"cpu_millis"`
+    MemoryMB  int    `json:"memory_mb"  db:"memory_mb"`
+    DiskMB    int    `json:"disk_mb"    db:"disk_mb"`
+    GPUType   string `json:"gpu_type"   db:"gpu_type"`
+    GPUCount  int    `json:"gpu_count"  db:"gpu_count"`
+}
+
+type PortSpec struct {
+    ContainerPort int    `json:"container_port" db:"container_port"`
+    HostPort      int    `json:"host_port"      db:"host_port"`
+    Protocol      string `json:"protocol"       db:"protocol"`
+}
+```
+
+See the [custom provider guide](/docs/guides/custom-provider) for a walkthrough of implementing your own.
