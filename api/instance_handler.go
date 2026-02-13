@@ -3,235 +3,147 @@ package api
 import (
 	"net/http"
 
+	"github.com/xraph/forge"
+
 	"github.com/xraph/ctrlplane/instance"
 )
 
-// CreateInstance handles POST /v1/instances.
-func (a *API) CreateInstance(w http.ResponseWriter, r *http.Request) {
-	var req instance.CreateRequest
-
-	if err := readJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, err)
-
-		return
-	}
-
-	inst, err := a.cp.Instances.Create(r.Context(), req)
+// createInstance handles POST /v1/instances.
+func (a *API) createInstance(ctx forge.Context, req *CreateInstanceRequest) (*instance.Instance, error) {
+	inst, err := a.cp.Instances.Create(ctx.Context(), req.CreateRequest)
 	if err != nil {
-		writeError(w, errorStatus(err), err)
-
-		return
+		return nil, mapError(err)
 	}
 
-	writeJSON(w, http.StatusCreated, inst)
+	_ = ctx.JSON(http.StatusCreated, inst)
+
+	//nolint:nilnil // response already written via ctx.JSON/ctx.NoContent.
+	return nil, nil
 }
 
-// ListInstances handles GET /v1/instances.
-func (a *API) ListInstances(w http.ResponseWriter, r *http.Request) {
+// listInstances handles GET /v1/instances.
+func (a *API) listInstances(ctx forge.Context, req *ListInstancesRequest) (*instance.ListResult, error) {
+	limit := req.Limit
+	if limit == 0 {
+		limit = 20
+	}
+
 	opts := instance.ListOptions{
-		State:    r.URL.Query().Get("state"),
-		Label:    r.URL.Query().Get("label"),
-		Provider: r.URL.Query().Get("provider"),
-		Cursor:   r.URL.Query().Get("cursor"),
-		Limit:    parseIntQuery(r, "limit", 20),
+		State:    req.State,
+		Label:    req.Label,
+		Provider: req.Provider,
+		Cursor:   req.Cursor,
+		Limit:    limit,
 	}
 
-	result, err := a.cp.Instances.List(r.Context(), opts)
+	result, err := a.cp.Instances.List(ctx.Context(), opts)
 	if err != nil {
-		writeError(w, errorStatus(err), err)
-
-		return
+		return nil, mapError(err)
 	}
 
-	writeJSON(w, http.StatusOK, result)
+	return result, nil
 }
 
-// GetInstance handles GET /v1/instances/{instanceID}.
-func (a *API) GetInstance(w http.ResponseWriter, r *http.Request) {
-	instanceID, err := parseID(r, "instanceID")
+// getInstance handles GET /v1/instances/:instanceID.
+func (a *API) getInstance(ctx forge.Context, req *GetInstanceRequest) (*instance.Instance, error) {
+	inst, err := a.cp.Instances.Get(ctx.Context(), req.InstanceID)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-
-		return
+		return nil, mapError(err)
 	}
 
-	inst, err := a.cp.Instances.Get(r.Context(), instanceID)
-	if err != nil {
-		writeError(w, errorStatus(err), err)
-
-		return
-	}
-
-	writeJSON(w, http.StatusOK, inst)
+	return inst, nil
 }
 
-// UpdateInstance handles PATCH /v1/instances/{instanceID}.
-func (a *API) UpdateInstance(w http.ResponseWriter, r *http.Request) {
-	instanceID, err := parseID(r, "instanceID")
+// updateInstance handles PATCH /v1/instances/:instanceID.
+func (a *API) updateInstance(ctx forge.Context, req *UpdateInstanceRequest) (*instance.Instance, error) {
+	inst, err := a.cp.Instances.Update(ctx.Context(), req.InstanceID, req.UpdateRequest)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-
-		return
+		return nil, mapError(err)
 	}
 
-	var req instance.UpdateRequest
-
-	if err := readJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, err)
-
-		return
-	}
-
-	inst, err := a.cp.Instances.Update(r.Context(), instanceID, req)
-	if err != nil {
-		writeError(w, errorStatus(err), err)
-
-		return
-	}
-
-	writeJSON(w, http.StatusOK, inst)
+	return inst, nil
 }
 
-// DeleteInstance handles DELETE /v1/instances/{instanceID}.
-func (a *API) DeleteInstance(w http.ResponseWriter, r *http.Request) {
-	instanceID, err := parseID(r, "instanceID")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-
-		return
+// deleteInstance handles DELETE /v1/instances/:instanceID.
+func (a *API) deleteInstance(ctx forge.Context, req *DeleteInstanceRequest) (*instance.Instance, error) {
+	if err := a.cp.Instances.Delete(ctx.Context(), req.InstanceID); err != nil {
+		return nil, mapError(err)
 	}
 
-	if err := a.cp.Instances.Delete(r.Context(), instanceID); err != nil {
-		writeError(w, errorStatus(err), err)
+	_ = ctx.NoContent(http.StatusNoContent)
 
-		return
-	}
-
-	w.WriteHeader(http.StatusNoContent)
+	//nolint:nilnil // response already written via ctx.JSON/ctx.NoContent.
+	return nil, nil
 }
 
-// StartInstance handles POST /v1/instances/{instanceID}/start.
-func (a *API) StartInstance(w http.ResponseWriter, r *http.Request) {
-	instanceID, err := parseID(r, "instanceID")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-
-		return
+// startInstance handles POST /v1/instances/:instanceID/start.
+func (a *API) startInstance(ctx forge.Context, req *InstanceActionRequest) (*instance.Instance, error) {
+	if err := a.cp.Instances.Start(ctx.Context(), req.InstanceID); err != nil {
+		return nil, mapError(err)
 	}
 
-	if err := a.cp.Instances.Start(r.Context(), instanceID); err != nil {
-		writeError(w, errorStatus(err), err)
+	_ = ctx.NoContent(http.StatusNoContent)
 
-		return
-	}
-
-	w.WriteHeader(http.StatusNoContent)
+	//nolint:nilnil // response already written via ctx.JSON/ctx.NoContent.
+	return nil, nil
 }
 
-// StopInstance handles POST /v1/instances/{instanceID}/stop.
-func (a *API) StopInstance(w http.ResponseWriter, r *http.Request) {
-	instanceID, err := parseID(r, "instanceID")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-
-		return
+// stopInstance handles POST /v1/instances/:instanceID/stop.
+func (a *API) stopInstance(ctx forge.Context, req *InstanceActionRequest) (*instance.Instance, error) {
+	if err := a.cp.Instances.Stop(ctx.Context(), req.InstanceID); err != nil {
+		return nil, mapError(err)
 	}
 
-	if err := a.cp.Instances.Stop(r.Context(), instanceID); err != nil {
-		writeError(w, errorStatus(err), err)
+	_ = ctx.NoContent(http.StatusNoContent)
 
-		return
-	}
-
-	w.WriteHeader(http.StatusNoContent)
+	//nolint:nilnil // response already written via ctx.JSON/ctx.NoContent.
+	return nil, nil
 }
 
-// RestartInstance handles POST /v1/instances/{instanceID}/restart.
-func (a *API) RestartInstance(w http.ResponseWriter, r *http.Request) {
-	instanceID, err := parseID(r, "instanceID")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-
-		return
+// restartInstance handles POST /v1/instances/:instanceID/restart.
+func (a *API) restartInstance(ctx forge.Context, req *InstanceActionRequest) (*instance.Instance, error) {
+	if err := a.cp.Instances.Restart(ctx.Context(), req.InstanceID); err != nil {
+		return nil, mapError(err)
 	}
 
-	if err := a.cp.Instances.Restart(r.Context(), instanceID); err != nil {
-		writeError(w, errorStatus(err), err)
+	_ = ctx.NoContent(http.StatusNoContent)
 
-		return
-	}
-
-	w.WriteHeader(http.StatusNoContent)
+	//nolint:nilnil // response already written via ctx.JSON/ctx.NoContent.
+	return nil, nil
 }
 
-// ScaleInstance handles POST /v1/instances/{instanceID}/scale.
-func (a *API) ScaleInstance(w http.ResponseWriter, r *http.Request) {
-	instanceID, err := parseID(r, "instanceID")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-
-		return
+// scaleInstance handles POST /v1/instances/:instanceID/scale.
+func (a *API) scaleInstance(ctx forge.Context, req *ScaleInstanceRequest) (*instance.Instance, error) {
+	if err := a.cp.Instances.Scale(ctx.Context(), req.InstanceID, req.ScaleRequest); err != nil {
+		return nil, mapError(err)
 	}
 
-	var req instance.ScaleRequest
+	_ = ctx.NoContent(http.StatusNoContent)
 
-	if err := readJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, err)
-
-		return
-	}
-
-	if err := a.cp.Instances.Scale(r.Context(), instanceID, req); err != nil {
-		writeError(w, errorStatus(err), err)
-
-		return
-	}
-
-	w.WriteHeader(http.StatusNoContent)
+	//nolint:nilnil // response already written via ctx.JSON/ctx.NoContent.
+	return nil, nil
 }
 
-// SuspendInstance handles POST /v1/instances/{instanceID}/suspend.
-func (a *API) SuspendInstance(w http.ResponseWriter, r *http.Request) {
-	instanceID, err := parseID(r, "instanceID")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-
-		return
+// suspendInstance handles POST /v1/instances/:instanceID/suspend.
+func (a *API) suspendInstance(ctx forge.Context, req *SuspendInstanceRequest) (*instance.Instance, error) {
+	if err := a.cp.Instances.Suspend(ctx.Context(), req.InstanceID, req.Reason); err != nil {
+		return nil, mapError(err)
 	}
 
-	var body struct {
-		Reason string `json:"reason"`
-	}
+	_ = ctx.NoContent(http.StatusNoContent)
 
-	if err := readJSON(r, &body); err != nil {
-		writeError(w, http.StatusBadRequest, err)
-
-		return
-	}
-
-	if err := a.cp.Instances.Suspend(r.Context(), instanceID, body.Reason); err != nil {
-		writeError(w, errorStatus(err), err)
-
-		return
-	}
-
-	w.WriteHeader(http.StatusNoContent)
+	//nolint:nilnil // response already written via ctx.JSON/ctx.NoContent.
+	return nil, nil
 }
 
-// UnsuspendInstance handles POST /v1/instances/{instanceID}/unsuspend.
-func (a *API) UnsuspendInstance(w http.ResponseWriter, r *http.Request) {
-	instanceID, err := parseID(r, "instanceID")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-
-		return
+// unsuspendInstance handles POST /v1/instances/:instanceID/unsuspend.
+func (a *API) unsuspendInstance(ctx forge.Context, req *InstanceActionRequest) (*instance.Instance, error) {
+	if err := a.cp.Instances.Unsuspend(ctx.Context(), req.InstanceID); err != nil {
+		return nil, mapError(err)
 	}
 
-	if err := a.cp.Instances.Unsuspend(r.Context(), instanceID); err != nil {
-		writeError(w, errorStatus(err), err)
+	_ = ctx.NoContent(http.StatusNoContent)
 
-		return
-	}
-
-	w.WriteHeader(http.StatusNoContent)
+	//nolint:nilnil // response already written via ctx.JSON/ctx.NoContent.
+	return nil, nil
 }

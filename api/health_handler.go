@@ -3,109 +3,72 @@ package api
 import (
 	"net/http"
 
+	"github.com/xraph/forge"
+
 	"github.com/xraph/ctrlplane/health"
 )
 
-// ConfigureHealthCheck handles POST /v1/instances/{instanceID}/health/checks.
-func (a *API) ConfigureHealthCheck(w http.ResponseWriter, r *http.Request) {
-	instanceID, err := parseID(r, "instanceID")
+// configureHealthCheck handles POST /v1/instances/:instanceID/health/checks.
+func (a *API) configureHealthCheck(ctx forge.Context, req *ConfigureHealthCheckAPIRequest) (*health.HealthCheck, error) {
+	domainReq := health.ConfigureRequest{
+		InstanceID: req.InstanceID,
+		Name:       req.Name,
+		Type:       health.CheckType(req.Type),
+		Target:     req.Target,
+		Interval:   req.Interval,
+		Timeout:    req.Timeout,
+		Retries:    req.Retries,
+	}
+
+	check, err := a.cp.Health.Configure(ctx.Context(), domainReq)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-
-		return
+		return nil, mapError(err)
 	}
 
-	var req health.ConfigureRequest
+	_ = ctx.JSON(http.StatusCreated, check)
 
-	if err := readJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, err)
-
-		return
-	}
-
-	req.InstanceID = instanceID
-
-	check, err := a.cp.Health.Configure(r.Context(), req)
-	if err != nil {
-		writeError(w, errorStatus(err), err)
-
-		return
-	}
-
-	writeJSON(w, http.StatusCreated, check)
+	//nolint:nilnil // response already written via ctx.JSON/ctx.NoContent.
+	return nil, nil
 }
 
-// GetInstanceHealth handles GET /v1/instances/{instanceID}/health.
-func (a *API) GetInstanceHealth(w http.ResponseWriter, r *http.Request) {
-	instanceID, err := parseID(r, "instanceID")
+// getInstanceHealth handles GET /v1/instances/:instanceID/health.
+func (a *API) getInstanceHealth(ctx forge.Context, req *GetInstanceHealthRequest) (*health.InstanceHealth, error) {
+	ih, err := a.cp.Health.GetHealth(ctx.Context(), req.InstanceID)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-
-		return
+		return nil, mapError(err)
 	}
 
-	ih, err := a.cp.Health.GetHealth(r.Context(), instanceID)
-	if err != nil {
-		writeError(w, errorStatus(err), err)
-
-		return
-	}
-
-	writeJSON(w, http.StatusOK, ih)
+	return ih, nil
 }
 
-// ListHealthChecks handles GET /v1/instances/{instanceID}/health/checks.
-func (a *API) ListHealthChecks(w http.ResponseWriter, r *http.Request) {
-	instanceID, err := parseID(r, "instanceID")
+// listHealthChecks handles GET /v1/instances/:instanceID/health/checks.
+func (a *API) listHealthChecks(ctx forge.Context, req *ListHealthChecksRequest) ([]health.HealthCheck, error) {
+	checks, err := a.cp.Health.ListChecks(ctx.Context(), req.InstanceID)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-
-		return
+		return nil, mapError(err)
 	}
 
-	checks, err := a.cp.Health.ListChecks(r.Context(), instanceID)
-	if err != nil {
-		writeError(w, errorStatus(err), err)
-
-		return
-	}
-
-	writeJSON(w, http.StatusOK, checks)
+	return checks, nil
 }
 
-// RunHealthCheck handles POST /v1/health/checks/{checkID}/run.
-func (a *API) RunHealthCheck(w http.ResponseWriter, r *http.Request) {
-	checkID, err := parseID(r, "checkID")
+// runHealthCheck handles POST /v1/health/checks/:checkID/run.
+func (a *API) runHealthCheck(ctx forge.Context, req *RunHealthCheckRequest) (*health.HealthResult, error) {
+	result, err := a.cp.Health.RunCheck(ctx.Context(), req.CheckID)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-
-		return
+		return nil, mapError(err)
 	}
 
-	result, err := a.cp.Health.RunCheck(r.Context(), checkID)
-	if err != nil {
-		writeError(w, errorStatus(err), err)
-
-		return
-	}
-
-	writeJSON(w, http.StatusOK, result)
+	return result, nil
 }
 
-// RemoveHealthCheck handles DELETE /v1/health/checks/{checkID}.
-func (a *API) RemoveHealthCheck(w http.ResponseWriter, r *http.Request) {
-	checkID, err := parseID(r, "checkID")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-
-		return
+// removeHealthCheck handles DELETE /v1/health/checks/:checkID.
+func (a *API) removeHealthCheck(ctx forge.Context, req *RemoveHealthCheckRequest) (*health.HealthCheck, error) {
+	if err := a.cp.Health.Remove(ctx.Context(), req.CheckID); err != nil {
+		return nil, mapError(err)
 	}
 
-	if err := a.cp.Health.Remove(r.Context(), checkID); err != nil {
-		writeError(w, errorStatus(err), err)
+	_ = ctx.NoContent(http.StatusNoContent)
 
-		return
-	}
-
-	w.WriteHeader(http.StatusNoContent)
+	//nolint:nilnil // response already written via ctx.JSON/ctx.NoContent.
+	return nil, nil
 }

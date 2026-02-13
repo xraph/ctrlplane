@@ -1,114 +1,69 @@
 package api
 
 import (
-	"net/http"
+	"github.com/xraph/forge"
 
 	"github.com/xraph/ctrlplane/telemetry"
 )
 
-// QueryMetrics handles GET /v1/instances/{instanceID}/metrics.
-func (a *API) QueryMetrics(w http.ResponseWriter, r *http.Request) {
-	instanceID, err := parseID(r, "instanceID")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-
-		return
-	}
-
+// queryMetrics handles GET /v1/instances/:instanceID/metrics.
+func (a *API) queryMetrics(ctx forge.Context, req *InstanceTelemetryRequest) ([]telemetry.Metric, error) {
 	q := telemetry.MetricQuery{
-		InstanceID: instanceID,
+		InstanceID: req.InstanceID,
 	}
 
-	metrics, err := a.cp.Telemetry.QueryMetrics(r.Context(), q)
+	metrics, err := a.cp.Telemetry.QueryMetrics(ctx.Context(), q)
 	if err != nil {
-		writeError(w, errorStatus(err), err)
-
-		return
+		return nil, mapError(err)
 	}
 
-	writeJSON(w, http.StatusOK, metrics)
+	return metrics, nil
 }
 
-// QueryLogs handles GET /v1/instances/{instanceID}/logs.
-func (a *API) QueryLogs(w http.ResponseWriter, r *http.Request) {
-	instanceID, err := parseID(r, "instanceID")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-
-		return
-	}
-
+// queryLogs handles GET /v1/instances/:instanceID/logs.
+func (a *API) queryLogs(ctx forge.Context, req *InstanceTelemetryRequest) ([]telemetry.LogEntry, error) {
 	q := telemetry.LogQuery{
-		InstanceID: instanceID,
+		InstanceID: req.InstanceID,
 	}
 
-	logs, err := a.cp.Telemetry.QueryLogs(r.Context(), q)
+	logs, err := a.cp.Telemetry.QueryLogs(ctx.Context(), q)
 	if err != nil {
-		writeError(w, errorStatus(err), err)
-
-		return
+		return nil, mapError(err)
 	}
 
-	writeJSON(w, http.StatusOK, logs)
+	return logs, nil
 }
 
-// QueryTraces handles GET /v1/instances/{instanceID}/traces.
-func (a *API) QueryTraces(w http.ResponseWriter, r *http.Request) {
-	instanceID, err := parseID(r, "instanceID")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-
-		return
-	}
-
+// queryTraces handles GET /v1/instances/:instanceID/traces.
+func (a *API) queryTraces(ctx forge.Context, req *InstanceTelemetryRequest) ([]telemetry.Trace, error) {
 	q := telemetry.TraceQuery{
-		InstanceID: instanceID,
+		InstanceID: req.InstanceID,
 	}
 
-	traces, err := a.cp.Telemetry.QueryTraces(r.Context(), q)
+	traces, err := a.cp.Telemetry.QueryTraces(ctx.Context(), q)
 	if err != nil {
-		writeError(w, errorStatus(err), err)
-
-		return
+		return nil, mapError(err)
 	}
 
-	writeJSON(w, http.StatusOK, traces)
+	return traces, nil
 }
 
-// GetResources handles GET /v1/instances/{instanceID}/resources.
-func (a *API) GetResources(w http.ResponseWriter, r *http.Request) {
-	instanceID, err := parseID(r, "instanceID")
+// getResources handles GET /v1/instances/:instanceID/resources.
+func (a *API) getResources(ctx forge.Context, req *InstanceTelemetryRequest) (*telemetry.ResourceSnapshot, error) {
+	snap, err := a.cp.Telemetry.GetCurrentResources(ctx.Context(), req.InstanceID)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-
-		return
+		return nil, mapError(err)
 	}
 
-	snap, err := a.cp.Telemetry.GetCurrentResources(r.Context(), instanceID)
-	if err != nil {
-		writeError(w, errorStatus(err), err)
-
-		return
-	}
-
-	writeJSON(w, http.StatusOK, snap)
+	return snap, nil
 }
 
-// GetDashboard handles GET /v1/instances/{instanceID}/dashboard.
-func (a *API) GetDashboard(w http.ResponseWriter, r *http.Request) {
-	instanceID, err := parseID(r, "instanceID")
+// getDashboard handles GET /v1/instances/:instanceID/dashboard.
+func (a *API) getDashboard(ctx forge.Context, req *InstanceTelemetryRequest) (*telemetry.DashboardData, error) {
+	dash, err := a.cp.Telemetry.GetDashboard(ctx.Context(), req.InstanceID)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-
-		return
+		return nil, mapError(err)
 	}
 
-	dash, err := a.cp.Telemetry.GetDashboard(r.Context(), instanceID)
-	if err != nil {
-		writeError(w, errorStatus(err), err)
-
-		return
-	}
-
-	writeJSON(w, http.StatusOK, dash)
+	return dash, nil
 }

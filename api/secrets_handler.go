@@ -3,73 +3,49 @@ package api
 import (
 	"net/http"
 
+	"github.com/xraph/forge"
+
 	"github.com/xraph/ctrlplane/secrets"
 )
 
-// SetSecret creates or updates a secret for an instance.
-func (a *API) SetSecret(w http.ResponseWriter, r *http.Request) {
-	instanceID, err := parseID(r, "instanceID")
+// setSecret handles POST /v1/instances/:instanceID/secrets.
+func (a *API) setSecret(ctx forge.Context, req *SetSecretAPIRequest) (*secrets.Secret, error) {
+	domainReq := secrets.SetRequest{
+		InstanceID: req.InstanceID,
+		Key:        req.Key,
+		Value:      req.Value,
+		Type:       secrets.SecretType(req.Type),
+	}
+
+	secret, err := a.cp.Secrets.Set(ctx.Context(), domainReq)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-
-		return
+		return nil, mapError(err)
 	}
 
-	var req secrets.SetRequest
+	_ = ctx.JSON(http.StatusCreated, secret)
 
-	if err := readJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, err)
-
-		return
-	}
-
-	req.InstanceID = instanceID
-
-	secret, err := a.cp.Secrets.Set(r.Context(), req)
-	if err != nil {
-		writeError(w, errorStatus(err), err)
-
-		return
-	}
-
-	writeJSON(w, http.StatusCreated, secret)
+	//nolint:nilnil // response already written via ctx.JSON/ctx.NoContent.
+	return nil, nil
 }
 
-// ListSecrets returns all secrets for an instance.
-func (a *API) ListSecrets(w http.ResponseWriter, r *http.Request) {
-	instanceID, err := parseID(r, "instanceID")
+// listSecrets handles GET /v1/instances/:instanceID/secrets.
+func (a *API) listSecrets(ctx forge.Context, req *ListSecretsRequest) ([]secrets.Secret, error) {
+	list, err := a.cp.Secrets.List(ctx.Context(), req.InstanceID)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-
-		return
+		return nil, mapError(err)
 	}
 
-	list, err := a.cp.Secrets.List(r.Context(), instanceID)
-	if err != nil {
-		writeError(w, errorStatus(err), err)
-
-		return
-	}
-
-	writeJSON(w, http.StatusOK, list)
+	return list, nil
 }
 
-// DeleteSecret removes a secret from an instance.
-func (a *API) DeleteSecret(w http.ResponseWriter, r *http.Request) {
-	instanceID, err := parseID(r, "instanceID")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-
-		return
+// deleteSecret handles DELETE /v1/instances/:instanceID/secrets/:key.
+func (a *API) deleteSecret(ctx forge.Context, req *DeleteSecretRequest) (*secrets.Secret, error) {
+	if err := a.cp.Secrets.Delete(ctx.Context(), req.InstanceID, req.Key); err != nil {
+		return nil, mapError(err)
 	}
 
-	key := r.PathValue("key")
+	_ = ctx.NoContent(http.StatusNoContent)
 
-	if err := a.cp.Secrets.Delete(r.Context(), instanceID, key); err != nil {
-		writeError(w, errorStatus(err), err)
-
-		return
-	}
-
-	w.WriteHeader(http.StatusNoContent)
+	//nolint:nilnil // response already written via ctx.JSON/ctx.NoContent.
+	return nil, nil
 }

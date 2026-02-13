@@ -82,6 +82,26 @@ func ParseWithPrefix(s string, expected Prefix) (ID, error) {
 	return parsed, nil
 }
 
+// MustParse is like Parse but panics on error. Use for hardcoded ID values.
+func MustParse(s string) ID {
+	parsed, err := Parse(s)
+	if err != nil {
+		panic(fmt.Sprintf("id: must parse %q: %v", s, err))
+	}
+
+	return parsed
+}
+
+// MustParseWithPrefix is like ParseWithPrefix but panics on error. Use for hardcoded ID values.
+func MustParseWithPrefix(s string, expected Prefix) ID {
+	parsed, err := ParseWithPrefix(s, expected)
+	if err != nil {
+		panic(fmt.Sprintf("id: must parse with prefix %q: %v", expected, err))
+	}
+
+	return parsed
+}
+
 // String returns the full TypeID string representation (prefix_suffix).
 // Returns an empty string for the Nil ID.
 func (i ID) String() string {

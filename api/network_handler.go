@@ -3,202 +3,130 @@ package api
 import (
 	"net/http"
 
+	"github.com/xraph/forge"
+
 	"github.com/xraph/ctrlplane/network"
 )
 
-// AddDomain registers a custom domain for an instance.
-func (a *API) AddDomain(w http.ResponseWriter, r *http.Request) {
-	instanceID, err := parseID(r, "instanceID")
+// addDomain handles POST /v1/instances/:instanceID/domains.
+func (a *API) addDomain(ctx forge.Context, req *AddDomainAPIRequest) (*network.Domain, error) {
+	domainReq := network.AddDomainRequest{
+		InstanceID: req.InstanceID,
+		Hostname:   req.Hostname,
+		TLSEnabled: req.TLSEnabled,
+	}
+
+	domain, err := a.cp.Network.AddDomain(ctx.Context(), domainReq)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-
-		return
+		return nil, mapError(err)
 	}
 
-	var req network.AddDomainRequest
+	_ = ctx.JSON(http.StatusCreated, domain)
 
-	if err := readJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, err)
-
-		return
-	}
-
-	req.InstanceID = instanceID
-
-	domain, err := a.cp.Network.AddDomain(r.Context(), req)
-	if err != nil {
-		writeError(w, errorStatus(err), err)
-
-		return
-	}
-
-	writeJSON(w, http.StatusCreated, domain)
+	//nolint:nilnil // response already written via ctx.JSON/ctx.NoContent.
+	return nil, nil
 }
 
-// ListDomains returns all domains for an instance.
-func (a *API) ListDomains(w http.ResponseWriter, r *http.Request) {
-	instanceID, err := parseID(r, "instanceID")
+// listDomains handles GET /v1/instances/:instanceID/domains.
+func (a *API) listDomains(ctx forge.Context, req *ListDomainsRequest) ([]network.Domain, error) {
+	domains, err := a.cp.Network.ListDomains(ctx.Context(), req.InstanceID)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-
-		return
+		return nil, mapError(err)
 	}
 
-	domains, err := a.cp.Network.ListDomains(r.Context(), instanceID)
-	if err != nil {
-		writeError(w, errorStatus(err), err)
-
-		return
-	}
-
-	writeJSON(w, http.StatusOK, domains)
+	return domains, nil
 }
 
-// VerifyDomain confirms DNS ownership of a domain.
-func (a *API) VerifyDomain(w http.ResponseWriter, r *http.Request) {
-	domainID, err := parseID(r, "domainID")
+// verifyDomain handles POST /v1/domains/:domainID/verify.
+func (a *API) verifyDomain(ctx forge.Context, req *VerifyDomainRequest) (*network.Domain, error) {
+	domain, err := a.cp.Network.VerifyDomain(ctx.Context(), req.DomainID)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-
-		return
+		return nil, mapError(err)
 	}
 
-	domain, err := a.cp.Network.VerifyDomain(r.Context(), domainID)
-	if err != nil {
-		writeError(w, errorStatus(err), err)
-
-		return
-	}
-
-	writeJSON(w, http.StatusOK, domain)
+	return domain, nil
 }
 
-// RemoveDomain removes a custom domain.
-func (a *API) RemoveDomain(w http.ResponseWriter, r *http.Request) {
-	domainID, err := parseID(r, "domainID")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-
-		return
+// removeDomain handles DELETE /v1/domains/:domainID.
+func (a *API) removeDomain(ctx forge.Context, req *RemoveDomainRequest) (*network.Domain, error) {
+	if err := a.cp.Network.RemoveDomain(ctx.Context(), req.DomainID); err != nil {
+		return nil, mapError(err)
 	}
 
-	if err := a.cp.Network.RemoveDomain(r.Context(), domainID); err != nil {
-		writeError(w, errorStatus(err), err)
+	_ = ctx.NoContent(http.StatusNoContent)
 
-		return
-	}
-
-	w.WriteHeader(http.StatusNoContent)
+	//nolint:nilnil // response already written via ctx.JSON/ctx.NoContent.
+	return nil, nil
 }
 
-// AddRoute creates a traffic route to an instance.
-func (a *API) AddRoute(w http.ResponseWriter, r *http.Request) {
-	instanceID, err := parseID(r, "instanceID")
+// addRoute handles POST /v1/instances/:instanceID/routes.
+func (a *API) addRoute(ctx forge.Context, req *AddRouteAPIRequest) (*network.Route, error) {
+	routeReq := network.AddRouteRequest{
+		InstanceID: req.InstanceID,
+		Path:       req.Path,
+		Port:       req.Port,
+		Protocol:   req.Protocol,
+		Weight:     req.Weight,
+	}
+
+	route, err := a.cp.Network.AddRoute(ctx.Context(), routeReq)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-
-		return
+		return nil, mapError(err)
 	}
 
-	var req network.AddRouteRequest
+	_ = ctx.JSON(http.StatusCreated, route)
 
-	if err := readJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, err)
-
-		return
-	}
-
-	req.InstanceID = instanceID
-
-	route, err := a.cp.Network.AddRoute(r.Context(), req)
-	if err != nil {
-		writeError(w, errorStatus(err), err)
-
-		return
-	}
-
-	writeJSON(w, http.StatusCreated, route)
+	//nolint:nilnil // response already written via ctx.JSON/ctx.NoContent.
+	return nil, nil
 }
 
-// ListRoutes returns all routes for an instance.
-func (a *API) ListRoutes(w http.ResponseWriter, r *http.Request) {
-	instanceID, err := parseID(r, "instanceID")
+// listRoutes handles GET /v1/instances/:instanceID/routes.
+func (a *API) listRoutes(ctx forge.Context, req *ListRoutesRequest) ([]network.Route, error) {
+	routes, err := a.cp.Network.ListRoutes(ctx.Context(), req.InstanceID)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-
-		return
+		return nil, mapError(err)
 	}
 
-	routes, err := a.cp.Network.ListRoutes(r.Context(), instanceID)
-	if err != nil {
-		writeError(w, errorStatus(err), err)
-
-		return
-	}
-
-	writeJSON(w, http.StatusOK, routes)
+	return routes, nil
 }
 
-// UpdateRoute modifies an existing route.
-func (a *API) UpdateRoute(w http.ResponseWriter, r *http.Request) {
-	routeID, err := parseID(r, "routeID")
+// updateRoute handles PATCH /v1/routes/:routeID.
+func (a *API) updateRoute(ctx forge.Context, req *UpdateRouteAPIRequest) (*network.Route, error) {
+	updateReq := network.UpdateRouteRequest{
+		Path:        req.Path,
+		Weight:      req.Weight,
+		StripPrefix: req.StripPrefix,
+	}
+
+	route, err := a.cp.Network.UpdateRoute(ctx.Context(), req.RouteID, updateReq)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-
-		return
+		return nil, mapError(err)
 	}
 
-	var req network.UpdateRouteRequest
-
-	if err := readJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, err)
-
-		return
-	}
-
-	route, err := a.cp.Network.UpdateRoute(r.Context(), routeID, req)
-	if err != nil {
-		writeError(w, errorStatus(err), err)
-
-		return
-	}
-
-	writeJSON(w, http.StatusOK, route)
+	return route, nil
 }
 
-// RemoveRoute removes a traffic route.
-func (a *API) RemoveRoute(w http.ResponseWriter, r *http.Request) {
-	routeID, err := parseID(r, "routeID")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-
-		return
+// removeRoute handles DELETE /v1/routes/:routeID.
+func (a *API) removeRoute(ctx forge.Context, req *RemoveRouteRequest) (*network.Route, error) {
+	if err := a.cp.Network.RemoveRoute(ctx.Context(), req.RouteID); err != nil {
+		return nil, mapError(err)
 	}
 
-	if err := a.cp.Network.RemoveRoute(r.Context(), routeID); err != nil {
-		writeError(w, errorStatus(err), err)
+	_ = ctx.NoContent(http.StatusNoContent)
 
-		return
-	}
-
-	w.WriteHeader(http.StatusNoContent)
+	//nolint:nilnil // response already written via ctx.JSON/ctx.NoContent.
+	return nil, nil
 }
 
-// ProvisionCert obtains or renews a TLS certificate for a domain.
-func (a *API) ProvisionCert(w http.ResponseWriter, r *http.Request) {
-	domainID, err := parseID(r, "domainID")
+// provisionCert handles POST /v1/domains/:domainID/cert.
+func (a *API) provisionCert(ctx forge.Context, req *ProvisionCertRequest) (*network.Certificate, error) {
+	cert, err := a.cp.Network.ProvisionCert(ctx.Context(), req.DomainID)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-
-		return
+		return nil, mapError(err)
 	}
 
-	cert, err := a.cp.Network.ProvisionCert(r.Context(), domainID)
-	if err != nil {
-		writeError(w, errorStatus(err), err)
+	_ = ctx.JSON(http.StatusCreated, cert)
 
-		return
-	}
-
-	writeJSON(w, http.StatusCreated, cert)
+	//nolint:nilnil // response already written via ctx.JSON/ctx.NoContent.
+	return nil, nil
 }

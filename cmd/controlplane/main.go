@@ -1,16 +1,12 @@
 package main
 
 import (
-	"context"
-	"errors"
 	"log"
-	"net/http"
-	"os"
-	"os/signal"
-	"time"
 
-	"github.com/xraph/ctrlplane/api"
+	"github.com/xraph/forge"
+
 	"github.com/xraph/ctrlplane/app"
+	"github.com/xraph/ctrlplane/extension"
 	"github.com/xraph/ctrlplane/provider/docker"
 	"github.com/xraph/ctrlplane/store/memory"
 )
@@ -22,54 +18,34 @@ func main() {
 }
 
 func run() error {
-	memStore := memory.New()
-
-	cp, err := app.New(
-		app.WithStore(memStore),
-		app.WithProvider("docker", docker.New(docker.Config{})),
-		app.WithDefaultProvider("docker"),
+	// Create the Forge app
+	forgeApp := forge.New(
+		forge.WithAppName("ctrlplane"),
+		forge.WithAppVersion("0.1.0"),
+		forge.WithAppRouterOptions(forge.WithOpenAPI(forge.OpenAPIConfig{
+			Title:       "CtrlPlane API",
+			Description: "API for managing cloud infrastructure and deployments with CtrlPlane",
+			Version:     "0.1.0",
+			UIPath:      "/docs",
+			SpecPath:    "/openapi.json",
+			UIEnabled:   true,
+			SpecEnabled: true,
+			PrettyJSON:  true,
+		})),
 	)
-	if err != nil {
+
+	// Register CtrlPlane as a Forge extension
+	cpExt := extension.New(
+		extension.WithStore(app.WithStore(memory.New())),
+		extension.WithProvider("docker", docker.New(docker.Config{})),
+		extension.WithBasePath("/api/cp"),
+	)
+
+	// Use the extension with Forge
+	if err := forgeApp.RegisterExtension(cpExt); err != nil {
 		return err
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
-
-	if err := cp.Start(ctx); err != nil {
-		return err
-	}
-
-	handler := api.New(cp).Handler()
-
-	addr := ":8080"
-	if port := os.Getenv("PORT"); port != "" {
-		addr = ":" + port
-	}
-
-	srv := &http.Server{
-		Addr:              addr,
-		Handler:           handler,
-		ReadHeaderTimeout: 10 * time.Second,
-	}
-
-	go func() {
-		<-ctx.Done()
-
-		if shutdownErr := cp.Stop(context.Background()); shutdownErr != nil {
-			log.Printf("shutdown error: %v", shutdownErr)
-		}
-
-		if closeErr := srv.Close(); closeErr != nil {
-			log.Printf("server close error: %v", closeErr)
-		}
-	}()
-
-	log.Printf("ctrlplane listening on %s", addr)
-
-	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return err
-	}
-
-	return nil
+	// Run the Forge app (handles lifecycle, signals, and HTTP server)
+	return forgeApp.Run()
 }

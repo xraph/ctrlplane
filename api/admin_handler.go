@@ -3,207 +3,149 @@ package api
 import (
 	"net/http"
 
+	"github.com/xraph/forge"
+
 	"github.com/xraph/ctrlplane/admin"
 )
 
-// SystemStats handles GET /v1/admin/stats.
-func (a *API) SystemStats(w http.ResponseWriter, r *http.Request) {
-	stats, err := a.cp.Admin.SystemStats(r.Context())
+// systemStats handles GET /v1/admin/stats.
+func (a *API) systemStats(ctx forge.Context, _ *EmptyRequest) (*admin.SystemStats, error) {
+	stats, err := a.cp.Admin.SystemStats(ctx.Context())
 	if err != nil {
-		writeError(w, errorStatus(err), err)
-
-		return
+		return nil, mapError(err)
 	}
 
-	writeJSON(w, http.StatusOK, stats)
+	return stats, nil
 }
 
-// ListProviders handles GET /v1/admin/providers.
-func (a *API) ListProviders(w http.ResponseWriter, r *http.Request) {
-	providers, err := a.cp.Admin.ListProviders(r.Context())
+// listProviders handles GET /v1/admin/providers.
+func (a *API) listProviders(ctx forge.Context, _ *EmptyRequest) ([]admin.ProviderStatus, error) {
+	providers, err := a.cp.Admin.ListProviders(ctx.Context())
 	if err != nil {
-		writeError(w, errorStatus(err), err)
-
-		return
+		return nil, mapError(err)
 	}
 
-	writeJSON(w, http.StatusOK, providers)
+	return providers, nil
 }
 
-// CreateTenant handles POST /v1/admin/tenants.
-func (a *API) CreateTenant(w http.ResponseWriter, r *http.Request) {
-	var req admin.CreateTenantRequest
-
-	if err := readJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, err)
-
-		return
-	}
-
-	tenant, err := a.cp.Admin.CreateTenant(r.Context(), req)
+// createTenant handles POST /v1/admin/tenants.
+func (a *API) createTenant(ctx forge.Context, req *CreateTenantAPIRequest) (*admin.Tenant, error) {
+	tenant, err := a.cp.Admin.CreateTenant(ctx.Context(), req.CreateTenantRequest)
 	if err != nil {
-		writeError(w, errorStatus(err), err)
-
-		return
+		return nil, mapError(err)
 	}
 
-	writeJSON(w, http.StatusCreated, tenant)
+	_ = ctx.JSON(http.StatusCreated, tenant)
+
+	//nolint:nilnil // response already written via ctx.JSON/ctx.NoContent.
+	return nil, nil
 }
 
-// ListTenants handles GET /v1/admin/tenants.
-func (a *API) ListTenants(w http.ResponseWriter, r *http.Request) {
+// listTenants handles GET /v1/admin/tenants.
+func (a *API) listTenants(ctx forge.Context, req *ListTenantsAPIRequest) (*admin.TenantListResult, error) {
+	limit := req.Limit
+	if limit == 0 {
+		limit = 50
+	}
+
 	opts := admin.ListTenantsOptions{
-		Status: r.URL.Query().Get("status"),
-		Cursor: r.URL.Query().Get("cursor"),
-		Limit:  parseIntQuery(r, "limit", 50),
+		Status: req.Status,
+		Cursor: req.Cursor,
+		Limit:  limit,
 	}
 
-	result, err := a.cp.Admin.ListTenants(r.Context(), opts)
+	result, err := a.cp.Admin.ListTenants(ctx.Context(), opts)
 	if err != nil {
-		writeError(w, errorStatus(err), err)
-
-		return
+		return nil, mapError(err)
 	}
 
-	writeJSON(w, http.StatusOK, result)
+	return result, nil
 }
 
-// GetTenant handles GET /v1/admin/tenants/{tenantID}.
-func (a *API) GetTenant(w http.ResponseWriter, r *http.Request) {
-	tenantID := r.PathValue("tenantID")
-
-	tenant, err := a.cp.Admin.GetTenant(r.Context(), tenantID)
+// getTenant handles GET /v1/admin/tenants/:tenantID.
+func (a *API) getTenant(ctx forge.Context, req *TenantPathRequest) (*admin.Tenant, error) {
+	tenant, err := a.cp.Admin.GetTenant(ctx.Context(), req.TenantID)
 	if err != nil {
-		writeError(w, errorStatus(err), err)
-
-		return
+		return nil, mapError(err)
 	}
 
-	writeJSON(w, http.StatusOK, tenant)
+	return tenant, nil
 }
 
-// UpdateTenant handles PATCH /v1/admin/tenants/{tenantID}.
-func (a *API) UpdateTenant(w http.ResponseWriter, r *http.Request) {
-	tenantID := r.PathValue("tenantID")
-
-	var req admin.UpdateTenantRequest
-
-	if err := readJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, err)
-
-		return
-	}
-
-	tenant, err := a.cp.Admin.UpdateTenant(r.Context(), tenantID, req)
+// updateTenant handles PATCH /v1/admin/tenants/:tenantID.
+func (a *API) updateTenant(ctx forge.Context, req *UpdateTenantAPIRequest) (*admin.Tenant, error) {
+	tenant, err := a.cp.Admin.UpdateTenant(ctx.Context(), req.TenantID, req.UpdateTenantRequest)
 	if err != nil {
-		writeError(w, errorStatus(err), err)
-
-		return
+		return nil, mapError(err)
 	}
 
-	writeJSON(w, http.StatusOK, tenant)
+	return tenant, nil
 }
 
-// SuspendTenant handles POST /v1/admin/tenants/{tenantID}/suspend.
-func (a *API) SuspendTenant(w http.ResponseWriter, r *http.Request) {
-	tenantID := r.PathValue("tenantID")
-
-	var body struct {
-		Reason string `json:"reason"`
+// suspendTenant handles POST /v1/admin/tenants/:tenantID/suspend.
+func (a *API) suspendTenant(ctx forge.Context, req *SuspendTenantAPIRequest) (*admin.Tenant, error) {
+	if err := a.cp.Admin.SuspendTenant(ctx.Context(), req.TenantID, req.Reason); err != nil {
+		return nil, mapError(err)
 	}
 
-	if err := readJSON(r, &body); err != nil {
-		writeError(w, http.StatusBadRequest, err)
+	_ = ctx.NoContent(http.StatusNoContent)
 
-		return
-	}
-
-	if err := a.cp.Admin.SuspendTenant(r.Context(), tenantID, body.Reason); err != nil {
-		writeError(w, errorStatus(err), err)
-
-		return
-	}
-
-	w.WriteHeader(http.StatusNoContent)
+	//nolint:nilnil // response already written via ctx.JSON/ctx.NoContent.
+	return nil, nil
 }
 
-// UnsuspendTenant handles POST /v1/admin/tenants/{tenantID}/unsuspend.
-func (a *API) UnsuspendTenant(w http.ResponseWriter, r *http.Request) {
-	tenantID := r.PathValue("tenantID")
-
-	if err := a.cp.Admin.UnsuspendTenant(r.Context(), tenantID); err != nil {
-		writeError(w, errorStatus(err), err)
-
-		return
+// unsuspendTenant handles POST /v1/admin/tenants/:tenantID/unsuspend.
+func (a *API) unsuspendTenant(ctx forge.Context, req *TenantPathRequest) (*admin.Tenant, error) {
+	if err := a.cp.Admin.UnsuspendTenant(ctx.Context(), req.TenantID); err != nil {
+		return nil, mapError(err)
 	}
 
-	w.WriteHeader(http.StatusNoContent)
+	_ = ctx.NoContent(http.StatusNoContent)
+
+	//nolint:nilnil // response already written via ctx.JSON/ctx.NoContent.
+	return nil, nil
 }
 
-// DeleteTenant handles DELETE /v1/admin/tenants/{tenantID}.
-func (a *API) DeleteTenant(w http.ResponseWriter, r *http.Request) {
-	tenantID := r.PathValue("tenantID")
-
-	if err := a.cp.Admin.DeleteTenant(r.Context(), tenantID); err != nil {
-		writeError(w, errorStatus(err), err)
-
-		return
+// deleteTenant handles DELETE /v1/admin/tenants/:tenantID.
+func (a *API) deleteTenant(ctx forge.Context, req *TenantPathRequest) (*admin.Tenant, error) {
+	if err := a.cp.Admin.DeleteTenant(ctx.Context(), req.TenantID); err != nil {
+		return nil, mapError(err)
 	}
 
-	w.WriteHeader(http.StatusNoContent)
+	_ = ctx.NoContent(http.StatusNoContent)
+
+	//nolint:nilnil // response already written via ctx.JSON/ctx.NoContent.
+	return nil, nil
 }
 
-// GetQuota handles GET /v1/admin/tenants/{tenantID}/quota.
-func (a *API) GetQuota(w http.ResponseWriter, r *http.Request) {
-	tenantID := r.PathValue("tenantID")
-
-	usage, err := a.cp.Admin.GetQuota(r.Context(), tenantID)
+// getQuota handles GET /v1/admin/tenants/:tenantID/quota.
+func (a *API) getQuota(ctx forge.Context, req *TenantPathRequest) (*admin.QuotaUsage, error) {
+	usage, err := a.cp.Admin.GetQuota(ctx.Context(), req.TenantID)
 	if err != nil {
-		writeError(w, errorStatus(err), err)
-
-		return
+		return nil, mapError(err)
 	}
 
-	writeJSON(w, http.StatusOK, usage)
+	return usage, nil
 }
 
-// SetQuota handles PUT /v1/admin/tenants/{tenantID}/quota.
-func (a *API) SetQuota(w http.ResponseWriter, r *http.Request) {
-	tenantID := r.PathValue("tenantID")
-
-	var quota admin.Quota
-
-	if err := readJSON(r, &quota); err != nil {
-		writeError(w, http.StatusBadRequest, err)
-
-		return
+// setQuota handles PUT /v1/admin/tenants/:tenantID/quota.
+func (a *API) setQuota(ctx forge.Context, req *SetQuotaAPIRequest) (*admin.Tenant, error) {
+	if err := a.cp.Admin.SetQuota(ctx.Context(), req.TenantID, req.Quota); err != nil {
+		return nil, mapError(err)
 	}
 
-	if err := a.cp.Admin.SetQuota(r.Context(), tenantID, quota); err != nil {
-		writeError(w, errorStatus(err), err)
+	_ = ctx.NoContent(http.StatusNoContent)
 
-		return
-	}
-
-	w.WriteHeader(http.StatusNoContent)
+	//nolint:nilnil // response already written via ctx.JSON/ctx.NoContent.
+	return nil, nil
 }
 
-// QueryAuditLog handles GET /v1/admin/audit.
-func (a *API) QueryAuditLog(w http.ResponseWriter, r *http.Request) {
-	var q admin.AuditQuery
-
-	if err := readJSON(r, &q); err != nil {
-		writeError(w, http.StatusBadRequest, err)
-
-		return
-	}
-
-	result, err := a.cp.Admin.QueryAuditLog(r.Context(), q)
+// queryAuditLog handles POST /v1/admin/audit.
+func (a *API) queryAuditLog(ctx forge.Context, req *QueryAuditLogAPIRequest) (*admin.AuditResult, error) {
+	result, err := a.cp.Admin.QueryAuditLog(ctx.Context(), req.AuditQuery)
 	if err != nil {
-		writeError(w, errorStatus(err), err)
-
-		return
+		return nil, mapError(err)
 	}
 
-	writeJSON(w, http.StatusOK, result)
+	return result, nil
 }

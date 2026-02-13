@@ -3,168 +3,114 @@ package api
 import (
 	"net/http"
 
+	"github.com/xraph/forge"
+
 	"github.com/xraph/ctrlplane/deploy"
-	"github.com/xraph/ctrlplane/id"
 )
 
-// Deploy handles POST /v1/instances/{instanceID}/deploy.
-func (a *API) Deploy(w http.ResponseWriter, r *http.Request) {
-	instanceID, err := parseID(r, "instanceID")
+// deployInstance handles POST /v1/instances/:instanceID/deploy.
+func (a *API) deployInstance(ctx forge.Context, req *DeployAPIRequest) (*deploy.Deployment, error) {
+	domainReq := deploy.DeployRequest{
+		InstanceID: req.InstanceID,
+		Image:      req.Image,
+		Env:        req.Env,
+		Strategy:   req.Strategy,
+		Notes:      req.Notes,
+		CommitSHA:  req.CommitSHA,
+	}
+
+	deployment, err := a.cp.Deploys.Deploy(ctx.Context(), domainReq)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-
-		return
+		return nil, mapError(err)
 	}
 
-	var req deploy.DeployRequest
+	_ = ctx.JSON(http.StatusCreated, deployment)
 
-	if err := readJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, err)
-
-		return
-	}
-
-	req.InstanceID = instanceID
-
-	deployment, err := a.cp.Deploys.Deploy(r.Context(), req)
-	if err != nil {
-		writeError(w, errorStatus(err), err)
-
-		return
-	}
-
-	writeJSON(w, http.StatusCreated, deployment)
+	//nolint:nilnil // response already written via ctx.JSON/ctx.NoContent.
+	return nil, nil
 }
 
-// ListDeployments handles GET /v1/instances/{instanceID}/deployments.
-func (a *API) ListDeployments(w http.ResponseWriter, r *http.Request) {
-	instanceID, err := parseID(r, "instanceID")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-
-		return
+// listDeployments handles GET /v1/instances/:instanceID/deployments.
+func (a *API) listDeployments(ctx forge.Context, req *ListDeploymentsRequest) (*deploy.DeployListResult, error) {
+	limit := req.Limit
+	if limit == 0 {
+		limit = 20
 	}
 
 	opts := deploy.ListOptions{
-		Cursor: r.URL.Query().Get("cursor"),
-		Limit:  parseIntQuery(r, "limit", 20),
+		Cursor: req.Cursor,
+		Limit:  limit,
 	}
 
-	result, err := a.cp.Deploys.ListDeployments(r.Context(), instanceID, opts)
+	result, err := a.cp.Deploys.ListDeployments(ctx.Context(), req.InstanceID, opts)
 	if err != nil {
-		writeError(w, errorStatus(err), err)
-
-		return
+		return nil, mapError(err)
 	}
 
-	writeJSON(w, http.StatusOK, result)
+	return result, nil
 }
 
-// GetDeployment handles GET /v1/deployments/{deploymentID}.
-func (a *API) GetDeployment(w http.ResponseWriter, r *http.Request) {
-	deploymentID, err := parseID(r, "deploymentID")
+// getDeployment handles GET /v1/deployments/:deploymentID.
+func (a *API) getDeployment(ctx forge.Context, req *GetDeploymentRequest) (*deploy.Deployment, error) {
+	deployment, err := a.cp.Deploys.GetDeployment(ctx.Context(), req.DeploymentID)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-
-		return
+		return nil, mapError(err)
 	}
 
-	deployment, err := a.cp.Deploys.GetDeployment(r.Context(), deploymentID)
-	if err != nil {
-		writeError(w, errorStatus(err), err)
-
-		return
-	}
-
-	writeJSON(w, http.StatusOK, deployment)
+	return deployment, nil
 }
 
-// CancelDeployment handles POST /v1/deployments/{deploymentID}/cancel.
-func (a *API) CancelDeployment(w http.ResponseWriter, r *http.Request) {
-	deploymentID, err := parseID(r, "deploymentID")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-
-		return
+// cancelDeployment handles POST /v1/deployments/:deploymentID/cancel.
+func (a *API) cancelDeployment(ctx forge.Context, req *CancelDeploymentRequest) (*deploy.Deployment, error) {
+	if err := a.cp.Deploys.Cancel(ctx.Context(), req.DeploymentID); err != nil {
+		return nil, mapError(err)
 	}
 
-	if err := a.cp.Deploys.Cancel(r.Context(), deploymentID); err != nil {
-		writeError(w, errorStatus(err), err)
+	_ = ctx.NoContent(http.StatusNoContent)
 
-		return
-	}
-
-	w.WriteHeader(http.StatusNoContent)
+	//nolint:nilnil // response already written via ctx.JSON/ctx.NoContent.
+	return nil, nil
 }
 
-// Rollback handles POST /v1/instances/{instanceID}/rollback.
-func (a *API) Rollback(w http.ResponseWriter, r *http.Request) {
-	instanceID, err := parseID(r, "instanceID")
+// rollback handles POST /v1/instances/:instanceID/rollback.
+func (a *API) rollback(ctx forge.Context, req *RollbackRequest) (*deploy.Deployment, error) {
+	deployment, err := a.cp.Deploys.Rollback(ctx.Context(), req.InstanceID, req.ReleaseID)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-
-		return
+		return nil, mapError(err)
 	}
 
-	var body struct {
-		ReleaseID id.ID `json:"release_id"`
-	}
+	_ = ctx.JSON(http.StatusCreated, deployment)
 
-	if err := readJSON(r, &body); err != nil {
-		writeError(w, http.StatusBadRequest, err)
-
-		return
-	}
-
-	deployment, err := a.cp.Deploys.Rollback(r.Context(), instanceID, body.ReleaseID)
-	if err != nil {
-		writeError(w, errorStatus(err), err)
-
-		return
-	}
-
-	writeJSON(w, http.StatusCreated, deployment)
+	//nolint:nilnil // response already written via ctx.JSON/ctx.NoContent.
+	return nil, nil
 }
 
-// ListReleases handles GET /v1/instances/{instanceID}/releases.
-func (a *API) ListReleases(w http.ResponseWriter, r *http.Request) {
-	instanceID, err := parseID(r, "instanceID")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-
-		return
+// listReleases handles GET /v1/instances/:instanceID/releases.
+func (a *API) listReleases(ctx forge.Context, req *ListReleasesRequest) (*deploy.ReleaseListResult, error) {
+	limit := req.Limit
+	if limit == 0 {
+		limit = 20
 	}
 
 	opts := deploy.ListOptions{
-		Cursor: r.URL.Query().Get("cursor"),
-		Limit:  parseIntQuery(r, "limit", 20),
+		Cursor: req.Cursor,
+		Limit:  limit,
 	}
 
-	result, err := a.cp.Deploys.ListReleases(r.Context(), instanceID, opts)
+	result, err := a.cp.Deploys.ListReleases(ctx.Context(), req.InstanceID, opts)
 	if err != nil {
-		writeError(w, errorStatus(err), err)
-
-		return
+		return nil, mapError(err)
 	}
 
-	writeJSON(w, http.StatusOK, result)
+	return result, nil
 }
 
-// GetRelease handles GET /v1/releases/{releaseID}.
-func (a *API) GetRelease(w http.ResponseWriter, r *http.Request) {
-	releaseID, err := parseID(r, "releaseID")
+// getRelease handles GET /v1/releases/:releaseID.
+func (a *API) getRelease(ctx forge.Context, req *GetReleaseRequest) (*deploy.Release, error) {
+	release, err := a.cp.Deploys.GetRelease(ctx.Context(), req.ReleaseID)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-
-		return
+		return nil, mapError(err)
 	}
 
-	release, err := a.cp.Deploys.GetRelease(r.Context(), releaseID)
-	if err != nil {
-		writeError(w, errorStatus(err), err)
-
-		return
-	}
-
-	writeJSON(w, http.StatusOK, release)
+	return release, nil
 }
