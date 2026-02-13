@@ -1,4 +1,4 @@
-import Link from 'next/link';
+import Link from "next/link";
 import {
   Activity,
   ArrowRight,
@@ -14,11 +14,11 @@ import {
   Shield,
   Terminal,
   Zap,
-} from 'lucide-react';
-import { cn } from '@/lib/cn';
-import { buttonVariants } from 'fumadocs-ui/components/ui/button';
-import type { LucideProps } from 'lucide-react';
-import type { ComponentType } from 'react';
+} from "lucide-react";
+import { cn } from "@/lib/cn";
+import { buttonVariants } from "fumadocs-ui/components/ui/button";
+import type { LucideProps } from "lucide-react";
+import type { ComponentType } from "react";
 
 /* ─── Syntax highlight helpers ─── */
 
@@ -33,9 +33,7 @@ function Str({ children }: { children: React.ReactNode }) {
 }
 
 function Cm({ children }: { children: React.ReactNode }) {
-  return (
-    <span className="italic text-fd-muted-foreground/60">{children}</span>
-  );
+  return <span className="italic text-fd-muted-foreground/60">{children}</span>;
 }
 
 function Fn({ children }: { children: React.ReactNode }) {
@@ -53,119 +51,119 @@ const features: {
 }[] = [
   {
     icon: Box,
-    title: 'Instance Lifecycle',
+    title: "Instance Lifecycle",
     description:
-      'Provision, start, stop, scale, and destroy tenant instances with a declarative state machine.',
+      "Provision, start, stop, scale, and destroy tenant instances with a declarative state machine.",
   },
   {
     icon: Rocket,
-    title: 'Zero-Downtime Deploys',
+    title: "Zero-Downtime Deploys",
     description:
-      'Rolling, blue-green, and canary strategies. Ship without dropping a single request.',
+      "Rolling, blue-green, and canary strategies. Ship without dropping a single request.",
   },
   {
     icon: Shield,
-    title: 'Multi-Tenant Isolation',
+    title: "Multi-Tenant Isolation",
     description:
-      'Every query scoped by tenant. Resource quotas, audit trails, and admin controls built in.',
+      "Every query scoped by tenant. Resource quotas, audit trails, and admin controls built in.",
   },
   {
     icon: Cloud,
-    title: 'Provider Agnostic',
+    title: "Provider Agnostic",
     description:
-      'Kubernetes, Docker, AWS ECS, Fly.io, Nomad, or bring your own with a single interface.',
+      "Kubernetes, Docker, AWS ECS, Fly.io, Nomad, or bring your own with a single interface.",
   },
   {
     icon: Activity,
-    title: 'Health Monitoring',
+    title: "Health Monitoring",
     description:
-      'HTTP, TCP, gRPC, and command checks with automatic recovery and status tracking.',
+      "HTTP, TCP, gRPC, and command checks with automatic recovery and status tracking.",
   },
   {
     icon: Globe,
-    title: 'Networking & TLS',
+    title: "Networking & TLS",
     description:
-      'Custom domains, automatic TLS certificates, route management, and traffic splitting.',
+      "Custom domains, automatic TLS certificates, route management, and traffic splitting.",
   },
   {
     icon: Lock,
-    title: 'Secrets Management',
+    title: "Secrets Management",
     description:
-      'Pluggable vault interface for secure storage. Inject secrets as environment variables at deploy time.',
+      "Pluggable vault interface for secure storage. Inject secrets as environment variables at deploy time.",
   },
   {
     icon: Zap,
-    title: 'Event System',
+    title: "Event System",
     description:
-      'Publish and subscribe event bus for lifecycle hooks. In-memory, NATS, or Redis backends.',
+      "Publish and subscribe event bus for lifecycle hooks. In-memory, NATS, or Redis backends.",
   },
 ];
 
 const principles: { number: string; title: string; description: string }[] = [
   {
-    number: '01',
-    title: 'Library, not framework',
+    number: "01",
+    title: "Library, not framework",
     description:
-      'A collection of Go packages you import. No binaries to deploy, no runtime to manage, no opinions forced on your architecture.',
+      "A collection of Go packages you import. No binaries to deploy, no runtime to manage, no opinions forced on your architecture.",
   },
   {
-    number: '02',
-    title: 'Provider agnostic',
+    number: "02",
+    title: "Provider agnostic",
     description:
-      'Define infrastructure through a unified interface. Switch from Docker in development to Kubernetes in production without changing application code.',
+      "Define infrastructure through a unified interface. Switch from Docker in development to Kubernetes in production without changing application code.",
   },
   {
-    number: '03',
-    title: 'Multi-tenant by default',
+    number: "03",
+    title: "Multi-tenant by default",
     description:
-      'Tenant isolation is not bolted on. Every store query is scoped, every resource is quota-tracked, and every action is audit-logged from day one.',
+      "Tenant isolation is not bolted on. Every store query is scoped, every resource is quota-tracked, and every action is audit-logged from day one.",
   },
   {
-    number: '04',
-    title: 'Composable interfaces',
+    number: "04",
+    title: "Composable interfaces",
     description:
-      'Every subsystem is defined by a Go interface. Use the built-in implementations or bring your own. Mix and match to fit your exact requirements.',
+      "Every subsystem is defined by a Go interface. Use the built-in implementations or bring your own. Mix and match to fit your exact requirements.",
   },
 ];
 
 const services = [
-  'Instances',
-  'Deploys',
-  'Health',
-  'Telemetry',
-  'Network',
-  'Secrets',
-  'Admin',
-  'Events',
+  "Instances",
+  "Deploys",
+  "Health",
+  "Telemetry",
+  "Network",
+  "Secrets",
+  "Admin",
+  "Events",
 ];
 
 const providers = [
-  'Kubernetes',
-  'Docker',
-  'AWS',
-  'Fly.io',
-  'Nomad',
-  'GCP',
-  'Azure',
-  'Custom',
+  "Kubernetes",
+  "Docker",
+  "AWS",
+  "Fly.io",
+  "Nomad",
+  "GCP",
+  "Azure",
+  "Custom",
 ];
 
 const quickLinks = [
-  { label: 'Architecture', href: '/docs/architecture' },
-  { label: 'Concepts', href: '/docs/concepts/entities' },
-  { label: 'Providers', href: '/docs/concepts/providers' },
-  { label: 'Deploy Strategies', href: '/docs/guides/deploy-strategies' },
-  { label: 'API Reference', href: '/docs/api-reference/http-api' },
+  { label: "Architecture", href: "/docs/architecture" },
+  { label: "Concepts", href: "/docs/concepts/entities" },
+  { label: "Providers", href: "/docs/concepts/providers" },
+  { label: "Deploy Strategies", href: "/docs/guides/deploy-strategies" },
+  { label: "API Reference", href: "/docs/api-reference/http-api" },
 ];
 
 const highlights: { icon: ComponentType<LucideProps>; text: string }[] = [
-  { icon: Check, text: 'Automatic OpenAPI spec generation' },
-  { icon: Check, text: 'Built-in health checks and lifecycle hooks' },
+  { icon: Check, text: "Automatic OpenAPI spec generation" },
+  { icon: Check, text: "Built-in health checks and lifecycle hooks" },
   {
     icon: Check,
-    text: 'Zero-config Docker, Kubernetes, AWS, or custom providers',
+    text: "Zero-config Docker, Kubernetes, AWS, or custom providers",
   },
-  { icon: Check, text: 'Multi-tenant isolation out of the box' },
+  { icon: Check, text: "Multi-tenant isolation out of the box" },
 ];
 
 export default function HomePage() {
@@ -193,8 +191,8 @@ export default function HomePage() {
             <Link
               href="/docs/getting-started"
               className={cn(
-                buttonVariants({ variant: 'primary' }),
-                'gap-2 px-6 py-2.5',
+                buttonVariants({ variant: "primary" }),
+                "gap-2 px-6 py-2.5",
               )}
             >
               Get Started
@@ -203,8 +201,8 @@ export default function HomePage() {
             <Link
               href="https://github.com/xraph/ctrlplane"
               className={cn(
-                buttonVariants({ variant: 'outline' }),
-                'gap-2 px-6 py-2.5',
+                buttonVariants({ variant: "outline" }),
+                "gap-2 px-6 py-2.5",
               )}
             >
               <Github className="size-4" />
@@ -281,74 +279,73 @@ export default function HomePage() {
             <div className="overflow-x-auto p-5">
               <pre className="font-mono text-[13px] leading-relaxed text-fd-foreground/90">
                 <code>
-                  <Kw>package</Kw> main{'\n'}
-                  {'\n'}
-                  <Kw>import</Kw> ({'\n'}
-                  {'    '}
+                  <Kw>package</Kw> main{"\n"}
+                  {"\n"}
+                  <Kw>import</Kw> ({"\n"}
+                  {"    "}
                   <Str>&quot;log&quot;</Str>
-                  {'\n'}
-                  {'\n'}
-                  {'    '}
+                  {"\n"}
+                  {"\n"}
+                  {"    "}
                   <Str>&quot;github.com/xraph/forge&quot;</Str>
-                  {'\n'}
-                  {'\n'}
-                  {'    '}
+                  {"\n"}
+                  {"\n"}
+                  {"    "}
                   <Str>&quot;github.com/xraph/ctrlplane/app&quot;</Str>
-                  {'\n'}
-                  {'    '}
+                  {"\n"}
+                  {"    "}
                   <Str>&quot;github.com/xraph/ctrlplane/extension&quot;</Str>
-                  {'\n'}
-                  {'    '}
+                  {"\n"}
+                  {"    "}
                   <Str>
                     &quot;github.com/xraph/ctrlplane/provider/docker&quot;
                   </Str>
-                  {'\n'}
-                  {'    '}
+                  {"\n"}
+                  {"    "}
                   <Str>&quot;github.com/xraph/ctrlplane/store/memory&quot;</Str>
-                  {'\n'}){'\n'}
-                  {'\n'}
-                  <Kw>func</Kw> <Fn>main</Fn>() {'{'}
-                  {'\n'}
-                  {'    '}
+                  {"\n"}){"\n"}
+                  {"\n"}
+                  <Kw>func</Kw> <Fn>main</Fn>() {"{"}
+                  {"\n"}
+                  {"    "}
                   <Cm>// Create a Forge app with OpenAPI docs</Cm>
-                  {'\n'}
-                  {'    '}forgeApp := forge.
-                  <Fn>New</Fn>({'\n'}
-                  {'        '}forge.
-                  <Fn>WithAppName</Fn>(<Str>&quot;ctrlplane&quot;</Str>),{'\n'}
-                  {'        '}forge.
-                  <Fn>WithAppVersion</Fn>(<Str>&quot;0.1.0&quot;</Str>),{'\n'}
-                  {'    '}){'\n'}
-                  {'\n'}
-                  {'    '}
+                  {"\n"}
+                  {"    "}forgeApp := forge.
+                  <Fn>New</Fn>({"\n"}
+                  {"        "}forge.
+                  <Fn>WithAppName</Fn>(<Str>&quot;ctrlplane&quot;</Str>),{"\n"}
+                  {"        "}forge.
+                  <Fn>WithAppVersion</Fn>(<Str>&quot;0.1.0&quot;</Str>),{"\n"}
+                  {"    "}){"\n"}
+                  {"\n"}
+                  {"    "}
                   <Cm>// Register Ctrl Plane as an extension</Cm>
-                  {'\n'}
-                  {'    '}cpExt := extension.
-                  <Fn>New</Fn>({'\n'}
-                  {'        '}extension.
-                  <Fn>WithStore</Fn>({'\n'}
-                  {'            '}app.
+                  {"\n"}
+                  {"    "}cpExt := extension.
+                  <Fn>New</Fn>({"\n"}
+                  {"        "}extension.
+                  <Fn>WithStore</Fn>({"\n"}
+                  {"            "}app.
                   <Fn>WithStore</Fn>(memory.
-                  <Fn>New</Fn>()),{'\n'}
-                  {'        '}),{'\n'}
-                  {'        '}extension.
-                  <Fn>WithProvider</Fn>({'\n'}
-                  {'            '}
-                  <Str>&quot;docker&quot;</Str>,{'\n'}
-                  {'            '}docker.
-                  <Fn>New</Fn>(docker.Config{'{}'})
-                  ,{'\n'}
-                  {'        '}),{'\n'}
-                  {'    '}){'\n'}
-                  {'\n'}
-                  {'    '}forgeApp.
+                  <Fn>New</Fn>()),{"\n"}
+                  {"        "}),{"\n"}
+                  {"        "}extension.
+                  <Fn>WithProvider</Fn>({"\n"}
+                  {"            "}
+                  <Str>&quot;docker&quot;</Str>,{"\n"}
+                  {"            "}docker.
+                  <Fn>New</Fn>(docker.Config{"{}"}) ,{"\n"}
+                  {"        "}),{"\n"}
+                  {"    "}){"\n"}
+                  {"\n"}
+                  {"    "}forgeApp.
                   <Fn>RegisterExtension</Fn>(cpExt)
-                  {'\n'}
-                  {'    '}log.
+                  {"\n"}
+                  {"    "}log.
                   <Fn>Fatal</Fn>(forgeApp.
                   <Fn>Run</Fn>())
-                  {'\n'}
-                  {'}'}
+                  {"\n"}
+                  {"}"}
                 </code>
               </pre>
             </div>
@@ -499,8 +496,8 @@ export default function HomePage() {
             <Link
               href="/docs/getting-started"
               className={cn(
-                buttonVariants({ variant: 'primary' }),
-                'gap-2 px-6 py-2.5',
+                buttonVariants({ variant: "primary" }),
+                "gap-2 px-6 py-2.5",
               )}
             >
               Quick Start
@@ -509,8 +506,8 @@ export default function HomePage() {
             <Link
               href="/docs"
               className={cn(
-                buttonVariants({ variant: 'outline' }),
-                'px-6 py-2.5',
+                buttonVariants({ variant: "outline" }),
+                "px-6 py-2.5",
               )}
             >
               Documentation

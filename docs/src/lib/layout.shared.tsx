@@ -1,22 +1,22 @@
-import type { BaseLayoutProps } from 'fumadocs-ui/layouts/shared';
+import type { BaseLayoutProps } from "fumadocs-ui/layouts/shared";
 
 export const gitConfig = {
-  user: 'xraph',
-  repo: 'ctrlplane',
-  branch: 'main',
+  user: "xraph",
+  repo: "ctrlplane",
+  branch: "main",
 };
 
 export function baseOptions(): BaseLayoutProps {
   return {
     nav: {
-      title: 'Ctrl Plane',
+      title: "Ctrl Plane",
     },
     githubUrl: `https://github.com/${gitConfig.user}/${gitConfig.repo}`,
     links: [
       {
-        text: 'Documentation',
-        url: '/docs',
-        active: 'nested-url',
+        text: "Documentation",
+        url: "/docs",
+        active: "nested-url",
       },
     ],
   };
