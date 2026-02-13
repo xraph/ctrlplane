@@ -32,7 +32,10 @@ const tokenStyles: Record<string, string> = {
 const goRules: [RegExp, string][] = [
   [/(\/\/.*)$/gm, "comment"],
   [/("(?:[^"\\]|\\.)*")/g, "string"],
-  [/\b(package|import|func|var|const|type|return|if|else|for|range|defer|go|chan|map|struct|interface)\b/g, "keyword"],
+  [
+    /\b(package|import|func|var|const|type|return|if|else|for|range|defer|go|chan|map|struct|interface)\b/g,
+    "keyword",
+  ],
   [/\b([A-Z]\w*)\s*[({]/g, "function"],
   [/\.([A-Z]\w*)\s*\(/g, "function"],
 ];
@@ -41,16 +44,22 @@ function highlightGo(code: string): React.ReactNode[] {
   const lines = code.split("\n");
 
   return lines.map((line, i) => {
-    const segments: { start: number; end: number; style: string; group: number }[] = [];
+    const segments: {
+      start: number;
+      end: number;
+      style: string;
+      group: number;
+    }[] = [];
 
     for (const [re, style] of goRules) {
       re.lastIndex = 0;
       let m: RegExpExecArray | null = null;
 
+      // biome-ignore lint/suspicious/noAssignInExpressions: lines are static and won't change
       while ((m = re.exec(line)) !== null) {
         const group = style === "function" ? 1 : 1;
         const text = m[group] ?? m[0];
-        const start = m.index + (m[0].indexOf(text));
+        const start = m.index + m[0].indexOf(text);
 
         segments.push({ start, end: start + text.length, style, group });
       }
@@ -90,7 +99,8 @@ function highlightGo(code: string): React.ReactNode[] {
     }
 
     return (
-      <span key={i}>
+      // biome-ignore lint/suspicious/noArrayIndexKey: lines are static and won't change
+      <span key={`line-${i}`}>
         {parts}
         {i < lines.length - 1 ? "\n" : null}
       </span>
