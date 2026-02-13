@@ -1,0 +1,240 @@
+---
+title: Full Example
+description: Build a complete SaaS management server with Ctrl Plane and Forge.
+---
+
+This guide walks through the **SaaS Platform** example — a single-file Go server that demonstrates every major Ctrl Plane subsystem working together. By the end, you will have a running API with multi-tenant management, instance lifecycle, deployments, health checks, event subscriptions, and custom platform routes.
+
+The complete source is at `examples/saas-platform/main.go`.
+
+## Prerequisites
+
+- **Go 1.25+**
+- **Docker** (optional, for the Docker provider)
+- A database only if you choose a persistent store (PostgreSQL, MongoDB, or Badger)
+
+## Project structure
+
+```
+examples/saas-platform/
+  main.go         # All-in-one server (~450 lines)
+  .env.example    # Environment variable template
+  README.md       # Quick-start instructions
+```
+
+The example lives inside the Ctrl Plane module, so no separate `go.mod` is needed.
+
+## Step 1: Store selection
+
+The example supports all four store backends via a single environment variable:
+
+```go
+func initStore(storeType string) (store.Store, error) {
+    switch strings.ToLower(storeType) {
+    case "bun":
+        return bunstore.New(bunstore.Config{
+            Driver: bunstore.Driver(envOrDefault("CP_BUN_DRIVER", "postgres")),
+            DSN:    envOrDefault("CP_BUN_DSN", "..."),
+        })
+    case "badger":
+        return badger.New(badger.Config{
+            Path: envOrDefault("CP_BADGER_PATH", "./data/badger"),
+        })
+    case "mongo":
+        return mongo.New(mongo.Config{
+            URI:      envOrDefault("CP_MONGO_URI", "mongodb://localhost:27017"),
+            Database: envOrDefault("CP_MONGO_DATABASE", "ctrlplane"),
+        })
+    case "memory", "":
+        return memory.New(), nil
+    }
+}
+```
+
+After creating the store, call `Migrate` and `Ping` to ensure the schema exists and the connection is healthy:
+
+```go
+dataStore.Migrate(ctx)
+dataStore.Ping(ctx)
+```
+
+See the [Memory](/docs/stores/memory), [Badger](/docs/stores/badger), [Bun](/docs/stores/bun), and [MongoDB](/docs/stores/mongo) store pages for configuration details.
+
+## Step 2: Forge application
+
+Create a Forge app with OpenAPI documentation enabled:
+
+```go
+forgeApp := forge.New(
+    forge.WithAppName("saas-platform"),
+    forge.WithAppVersion("1.0.0"),
+    forge.WithAppRouterOptions(forge.WithOpenAPI(forge.OpenAPIConfig{
+        Title:       "SaaS Platform API",
+        Description: "Complete SaaS management API",
+        Version:     "1.0.0",
+        UIPath:      "/docs",
+        SpecPath:    "/openapi.json",
+        UIEnabled:   true,
+        SpecEnabled: true,
+    })),
+)
+```
+
+This gives you interactive Swagger UI at `/docs` and a machine-readable spec at `/openapi.json`.
+
+## Step 3: Ctrl Plane extension
+
+Register the Ctrl Plane extension with a store, provider, and auth:
+
+```go
+cpExt := extension.New(
+    extension.WithStore(app.WithStore(dataStore)),
+    extension.WithProvider("docker", docker.New(docker.Config{
+        Host:    dockerHost,
+        Network: dockerNetwork,
+    })),
+    extension.WithBasePath("/api/cp"),
+    extension.WithAuthProvider(&auth.NoopProvider{
+        DefaultTenantID: "default",
+        DefaultClaims:   &auth.Claims{
+            SubjectID: "dev-admin",
+            TenantID:  "default",
+            Roles:     []string{"system:admin"},
+        },
+    }),
+)
+
+forgeApp.RegisterExtension(cpExt)
+```
+
+The extension mounts all 50+ Ctrl Plane API routes under `/api/cp` and starts background workers for reconciliation, health checks, and telemetry collection.
+
+## Step 4: Event subscriptions
+
+Subscribe to lifecycle events for logging, alerting, or webhook dispatch:
+
+```go
+cpExt.CtrlPlane().Events().Subscribe(
+    func(_ context.Context, evt *event.Event) error {
+        slog.Info("instance event",
+            "type", evt.Type,
+            "tenant_id", evt.TenantID,
+        )
+        return nil
+    },
+    event.InstanceCreated,
+    event.InstanceStarted,
+    event.InstanceStopped,
+)
+```
+
+The event bus supports 21 event types across instances, deployments, health, networking, and admin operations. See the [Architecture](/docs/architecture) page for the full list.
+
+## Step 5: Custom platform routes
+
+Add routes alongside the Ctrl Plane API using the Forge router:
+
+```go
+g := router.Group("/api/platform", forge.WithGroupTags("platform"))
+
+g.GET("/status", func(_ forge.Context, _ *struct{}) (*PlatformStatus, error) {
+    stats, _ := cp.Admin.SystemStats(context.Background())
+    providers, _ := cp.Admin.ListProviders(context.Background())
+    return &PlatformStatus{
+        Stats:     stats,
+        Providers: providers,
+        Uptime:    time.Since(startedAt).String(),
+    }, nil
+},
+    forge.WithSummary("Platform status"),
+    forge.WithOperationID("platformStatus"),
+)
+```
+
+The example adds three custom endpoints:
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/api/platform/status` | System dashboard with stats and providers |
+| `GET` | `/api/platform/health` | Lightweight health probe for load balancers |
+| `POST` | `/api/platform/webhooks/events` | External webhook receiver |
+
+These appear alongside the Ctrl Plane routes in the OpenAPI documentation.
+
+## Step 6: Seed data
+
+When `CP_SEED=true` (the default), the example creates two demo tenants with quotas:
+
+```go
+cp.Admin.CreateTenant(ctx, admin.CreateTenantRequest{
+    Name: "Acme Corp",
+    Plan: "pro",
+    Quota: &admin.Quota{
+        MaxInstances: 50,
+        MaxCPUMillis: 100000,
+        MaxMemoryMB:  204800,
+    },
+})
+```
+
+This makes the API immediately usable without manual setup.
+
+## Running the example
+
+### Memory store (zero dependencies)
+
+```bash
+go run ./examples/saas-platform
+```
+
+### PostgreSQL
+
+```bash
+CP_STORE=bun \
+CP_BUN_DSN="postgres://user:pass@localhost:5432/ctrlplane?sslmode=disable" \
+go run ./examples/saas-platform
+```
+
+### MongoDB
+
+```bash
+CP_STORE=mongo \
+CP_MONGO_URI="mongodb://localhost:27017" \
+go run ./examples/saas-platform
+```
+
+### Badger (embedded)
+
+```bash
+CP_STORE=badger go run ./examples/saas-platform
+```
+
+## API walkthrough
+
+Once the server is running, try these commands:
+
+```bash
+# Platform status
+curl -s http://localhost:8080/api/platform/status | jq
+
+# List seeded tenants
+curl -s http://localhost:8080/api/cp/v1/admin/tenants | jq
+
+# Create an instance
+curl -s -X POST http://localhost:8080/api/cp/v1/instances \
+  -H "Content-Type: application/json" \
+  -d '{"name":"my-app","provider":"docker","config":{"image":"nginx:alpine"}}' | jq
+
+# List instances
+curl -s http://localhost:8080/api/cp/v1/instances | jq
+
+# Health check
+curl -s http://localhost:8080/api/platform/health | jq
+```
+
+## Next steps
+
+- [Custom Provider](/docs/guides/custom-provider) — implement your own infrastructure provider.
+- [Deploy Strategies](/docs/guides/deploy-strategies) — rolling, blue-green, canary deployments.
+- [Store Documentation](/docs/stores/memory) — choose the right store for your use case.
+- [Provider Documentation](/docs/providers/docker) — configure Docker, Kubernetes, and more.

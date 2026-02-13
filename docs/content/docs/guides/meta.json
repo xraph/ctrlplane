@@ -1,4 +1,9 @@
 {
   "title": "Guides",
-  "pages": ["forge-extension", "custom-provider", "deploy-strategies"]
+  "pages": [
+    "forge-extension",
+    "full-example",
+    "custom-provider",
+    "deploy-strategies"
+  ]
 }
