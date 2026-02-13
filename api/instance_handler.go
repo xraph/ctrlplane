@@ -44,7 +44,7 @@ func (a *API) listInstances(ctx forge.Context, req *ListInstancesRequest) (*inst
 	return result, nil
 }
 
-// getInstance handles GET /v1/instances/:instanceID.
+// getInstance handles GET /v1/instances/:instanceId.
 func (a *API) getInstance(ctx forge.Context, req *GetInstanceRequest) (*instance.Instance, error) {
 	inst, err := a.cp.Instances.Get(ctx.Context(), req.InstanceID)
 	if err != nil {
@@ -54,7 +54,7 @@ func (a *API) getInstance(ctx forge.Context, req *GetInstanceRequest) (*instance
 	return inst, nil
 }
 
-// updateInstance handles PATCH /v1/instances/:instanceID.
+// updateInstance handles PATCH /v1/instances/:instanceId.
 func (a *API) updateInstance(ctx forge.Context, req *UpdateInstanceRequest) (*instance.Instance, error) {
 	inst, err := a.cp.Instances.Update(ctx.Context(), req.InstanceID, req.UpdateRequest)
 	if err != nil {
@@ -64,7 +64,7 @@ func (a *API) updateInstance(ctx forge.Context, req *UpdateInstanceRequest) (*in
 	return inst, nil
 }
 
-// deleteInstance handles DELETE /v1/instances/:instanceID.
+// deleteInstance handles DELETE /v1/instances/:instanceId.
 func (a *API) deleteInstance(ctx forge.Context, req *DeleteInstanceRequest) (*instance.Instance, error) {
 	if err := a.cp.Instances.Delete(ctx.Context(), req.InstanceID); err != nil {
 		return nil, mapError(err)
@@ -76,7 +76,7 @@ func (a *API) deleteInstance(ctx forge.Context, req *DeleteInstanceRequest) (*in
 	return nil, nil
 }
 
-// startInstance handles POST /v1/instances/:instanceID/start.
+// startInstance handles POST /v1/instances/:instanceId/start.
 func (a *API) startInstance(ctx forge.Context, req *InstanceActionRequest) (*instance.Instance, error) {
 	if err := a.cp.Instances.Start(ctx.Context(), req.InstanceID); err != nil {
 		return nil, mapError(err)
@@ -88,7 +88,7 @@ func (a *API) startInstance(ctx forge.Context, req *InstanceActionRequest) (*ins
 	return nil, nil
 }
 
-// stopInstance handles POST /v1/instances/:instanceID/stop.
+// stopInstance handles POST /v1/instances/:instanceId/stop.
 func (a *API) stopInstance(ctx forge.Context, req *InstanceActionRequest) (*instance.Instance, error) {
 	if err := a.cp.Instances.Stop(ctx.Context(), req.InstanceID); err != nil {
 		return nil, mapError(err)
@@ -100,7 +100,7 @@ func (a *API) stopInstance(ctx forge.Context, req *InstanceActionRequest) (*inst
 	return nil, nil
 }
 
-// restartInstance handles POST /v1/instances/:instanceID/restart.
+// restartInstance handles POST /v1/instances/:instanceId/restart.
 func (a *API) restartInstance(ctx forge.Context, req *InstanceActionRequest) (*instance.Instance, error) {
 	if err := a.cp.Instances.Restart(ctx.Context(), req.InstanceID); err != nil {
 		return nil, mapError(err)
@@ -112,7 +112,7 @@ func (a *API) restartInstance(ctx forge.Context, req *InstanceActionRequest) (*i
 	return nil, nil
 }
 
-// scaleInstance handles POST /v1/instances/:instanceID/scale.
+// scaleInstance handles POST /v1/instances/:instanceId/scale.
 func (a *API) scaleInstance(ctx forge.Context, req *ScaleInstanceRequest) (*instance.Instance, error) {
 	if err := a.cp.Instances.Scale(ctx.Context(), req.InstanceID, req.ScaleRequest); err != nil {
 		return nil, mapError(err)
@@ -124,7 +124,7 @@ func (a *API) scaleInstance(ctx forge.Context, req *ScaleInstanceRequest) (*inst
 	return nil, nil
 }
 
-// suspendInstance handles POST /v1/instances/:instanceID/suspend.
+// suspendInstance handles POST /v1/instances/:instanceId/suspend.
 func (a *API) suspendInstance(ctx forge.Context, req *SuspendInstanceRequest) (*instance.Instance, error) {
 	if err := a.cp.Instances.Suspend(ctx.Context(), req.InstanceID, req.Reason); err != nil {
 		return nil, mapError(err)
@@ -136,7 +136,7 @@ func (a *API) suspendInstance(ctx forge.Context, req *SuspendInstanceRequest) (*
 	return nil, nil
 }
 
-// unsuspendInstance handles POST /v1/instances/:instanceID/unsuspend.
+// unsuspendInstance handles POST /v1/instances/:instanceId/unsuspend.
 func (a *API) unsuspendInstance(ctx forge.Context, req *InstanceActionRequest) (*instance.Instance, error) {
 	if err := a.cp.Instances.Unsuspend(ctx.Context(), req.InstanceID); err != nil {
 		return nil, mapError(err)

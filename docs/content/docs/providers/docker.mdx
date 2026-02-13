@@ -1,0 +1,74 @@
+---
+title: Docker
+description: Local and single-host container orchestration using the Docker daemon.
+---
+
+The Docker provider connects Ctrl Plane to a Docker daemon for container lifecycle management. It is the default provider for local development and single-host deployments.
+
+## Status
+
+**Implemented** — available in `provider/docker`.
+
+## Configuration
+
+```go
+import "github.com/xraph/ctrlplane/provider/docker"
+
+prov := docker.New(docker.Config{
+    Host:     "unix:///var/run/docker.sock",
+    Network:  "bridge",
+    Registry: "ghcr.io/myorg",
+})
+```
+
+| Field | Env | Default | Description |
+|-------|-----|---------|-------------|
+| `Host` | `CP_DOCKER_HOST` | — | Docker daemon address |
+| `Network` | `CP_DOCKER_NETWORK` | `bridge` | Network to attach containers to |
+| `Registry` | `CP_DOCKER_REGISTRY` | — | Default image registry prefix |
+
+## Capabilities
+
+The Docker provider declares these capabilities:
+
+| Capability | Supported |
+|------------|-----------|
+| `deploy` | Yes |
+| `scale` | Yes |
+| `logs` | Yes |
+| `exec` | Yes |
+| `provision` | Via container creation |
+| `volumes` | Planned |
+| `gpu` | Planned |
+
+## Registration
+
+```go
+cp, err := app.New(
+    app.WithProvider("docker", prov),
+    app.WithDefaultProvider("docker"),
+)
+```
+
+## How it works
+
+1. **Provision** creates a container reference using the instance ID.
+2. **Deploy** pulls the requested image and creates/replaces the container.
+3. **Scale** adjusts container resource limits via the Docker API.
+4. **Start/Stop/Restart** map directly to Docker container lifecycle commands.
+5. **Status** queries the container state and maps it to Ctrl Plane states.
+6. **Exec** runs commands inside the container using the Docker exec API.
+
+## When to use
+
+- Local development and testing
+- Single-host deployments
+- CI/CD pipelines that need real containers
+- Prototyping before moving to Kubernetes or cloud providers
+
+## Notes
+
+- The Docker provider connects to the Docker daemon via the configured host socket.
+- Container names follow the pattern `ctrlplane-{instance-id}`.
+- Environment variables and port mappings from the instance spec are passed through to the container.
+- For production multi-host deployments, consider the Kubernetes or cloud providers.

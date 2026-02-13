@@ -1,0 +1,70 @@
+---
+title: Fly.io
+description: Global edge deployment using Fly.io Machines.
+---
+
+The Fly.io provider deploys Ctrl Plane instances as Fly Machines, giving you global edge deployment with automatic placement close to users.
+
+## Status
+
+**Interface defined** — the package structure exists at `provider/fly` and implements the `provider.Provider` interface. Full implementation is in progress.
+
+## Configuration
+
+```go
+import "github.com/xraph/ctrlplane/provider/fly"
+
+prov, err := fly.New(fly.Config{
+    Token:  os.Getenv("FLY_API_TOKEN"),
+    OrgSlug: "my-org",
+    Region:  "iad",
+})
+```
+
+| Field | Env | Default | Description |
+|-------|-----|---------|-------------|
+| `Token` | `CP_FLY_TOKEN` | — | Fly.io API token |
+| `OrgSlug` | `CP_FLY_ORG` | — | Organization slug |
+| `Region` | `CP_FLY_REGION` | — | Primary region (e.g., `iad`, `lhr`, `nrt`) |
+| `AppPrefix` | `CP_FLY_APP_PREFIX` | `cp` | Prefix for Fly app names |
+
+## Capabilities
+
+| Capability | Supported |
+|------------|-----------|
+| `provision` | Yes |
+| `deploy` | Yes |
+| `scale` | Yes |
+| `logs` | Yes |
+| `exec` | Via SSH |
+| `custom_domains` | Yes |
+| `tls` | Yes (automatic) |
+| `rolling` | Yes |
+| `blue_green` | Yes |
+
+## Resource mapping
+
+| Ctrl Plane concept | Fly.io resource |
+|-------------------|----------------|
+| Instance | Fly App + Machine |
+| Environment variables | Machine env / Fly Secrets |
+| Ports | Service ports in fly.toml |
+| Resources (CPU/Memory) | Machine guest config |
+| Custom domains | Fly certificate + CNAME |
+| TLS certificates | Automatic via Fly |
+| Health checks | Machine HTTP checks |
+
+## How it works
+
+1. **Provision** creates a Fly App and an initial Machine in the configured region.
+2. **Deploy** updates the Machine image and restarts it. For blue-green, a new Machine is created before the old one is stopped.
+3. **Scale** adjusts the Machine guest configuration (CPU, memory) or adds machines in additional regions.
+4. **Custom domains** are added via the Fly certificates API with automatic TLS.
+5. **Logs** are streamed from the Fly Logs API.
+
+## When to use
+
+- Applications that need global edge distribution
+- Latency-sensitive workloads deployed close to end users
+- Projects that want automatic TLS and custom domain management
+- Rapid prototyping with simple deployment workflows

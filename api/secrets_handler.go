@@ -8,7 +8,7 @@ import (
 	"github.com/xraph/ctrlplane/secrets"
 )
 
-// setSecret handles POST /v1/instances/:instanceID/secrets.
+// setSecret handles POST /v1/instances/:instanceId/secrets.
 func (a *API) setSecret(ctx forge.Context, req *SetSecretAPIRequest) (*secrets.Secret, error) {
 	domainReq := secrets.SetRequest{
 		InstanceID: req.InstanceID,
@@ -28,7 +28,7 @@ func (a *API) setSecret(ctx forge.Context, req *SetSecretAPIRequest) (*secrets.S
 	return nil, nil
 }
 
-// listSecrets handles GET /v1/instances/:instanceID/secrets.
+// listSecrets handles GET /v1/instances/:instanceId/secrets.
 func (a *API) listSecrets(ctx forge.Context, req *ListSecretsRequest) ([]secrets.Secret, error) {
 	list, err := a.cp.Secrets.List(ctx.Context(), req.InstanceID)
 	if err != nil {
@@ -38,7 +38,7 @@ func (a *API) listSecrets(ctx forge.Context, req *ListSecretsRequest) ([]secrets
 	return list, nil
 }
 
-// deleteSecret handles DELETE /v1/instances/:instanceID/secrets/:key.
+// deleteSecret handles DELETE /v1/instances/:instanceId/secrets/:key.
 func (a *API) deleteSecret(ctx forge.Context, req *DeleteSecretRequest) (*secrets.Secret, error) {
 	if err := a.cp.Secrets.Delete(ctx.Context(), req.InstanceID, req.Key); err != nil {
 		return nil, mapError(err)

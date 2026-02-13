@@ -1,0 +1,75 @@
+---
+title: Kubernetes
+description: Production-grade container orchestration using Kubernetes Deployments and Services.
+---
+
+The Kubernetes provider maps Ctrl Plane operations to native Kubernetes resources — Deployments, Services, ConfigMaps, and Secrets — for production-grade container orchestration.
+
+## Status
+
+**Interface defined** — the package structure exists at `provider/kubernetes` and implements the `provider.Provider` interface. Full implementation is in progress.
+
+## Configuration
+
+```go
+import "github.com/xraph/ctrlplane/provider/kubernetes"
+
+prov, err := kubernetes.New(kubernetes.Config{
+    Kubeconfig: "/path/to/kubeconfig",
+    Namespace:  "ctrlplane",
+    InCluster:  false,
+})
+```
+
+| Field | Env | Default | Description |
+|-------|-----|---------|-------------|
+| `Kubeconfig` | `CP_K8S_KUBECONFIG` | — | Path to kubeconfig file |
+| `Namespace` | `CP_K8S_NAMESPACE` | `default` | Target namespace for resources |
+| `InCluster` | `CP_K8S_IN_CLUSTER` | `false` | Use in-cluster service account |
+| `Labels` | `CP_K8S_LABELS` | — | Default labels applied to all resources |
+
+## Capabilities
+
+| Capability | Supported |
+|------------|-----------|
+| `provision` | Yes |
+| `deploy` | Yes |
+| `scale` | Yes |
+| `logs` | Yes |
+| `exec` | Yes |
+| `volumes` | Yes |
+| `gpu` | Yes |
+| `rolling` | Yes |
+| `blue_green` | Yes |
+| `canary` | Yes |
+| `autoscale` | Yes |
+| `custom_domains` | Via Ingress |
+| `tls` | Via cert-manager |
+
+## Resource mapping
+
+| Ctrl Plane concept | Kubernetes resource |
+|-------------------|-------------------|
+| Instance | Deployment + Service |
+| Environment variables | ConfigMap + Secret |
+| Ports | Service ports |
+| Resources (CPU/Memory) | Resource requests/limits |
+| Custom domains | Ingress rules |
+| TLS certificates | cert-manager Certificate |
+| Health checks | Liveness/readiness probes |
+| Scaling | HPA (Horizontal Pod Autoscaler) |
+
+## Deployment strategies
+
+The Kubernetes provider supports all three deployment strategies:
+
+- **Rolling** — maps to Kubernetes `RollingUpdate` strategy with configurable `maxSurge` and `maxUnavailable`.
+- **Blue-Green** — creates a new Deployment, verifies health, then switches the Service selector.
+- **Canary** — runs the new version alongside the old with weighted traffic splitting.
+
+## When to use
+
+- Production multi-node deployments
+- Environments that need auto-scaling, self-healing, and rolling updates
+- Teams already running Kubernetes clusters
+- Workloads requiring GPU access or persistent volumes

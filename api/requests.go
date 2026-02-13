@@ -27,38 +27,38 @@ type ListInstancesRequest struct {
 	Limit    int    `description:"Page size (default 20)"   query:"limit"`
 }
 
-// GetInstanceRequest binds the path for GET /v1/instances/:instanceID.
+// GetInstanceRequest binds the path for GET /v1/instances/:instanceId.
 type GetInstanceRequest struct {
-	InstanceID id.ID `description:"Instance identifier" path:"instanceID"`
+	InstanceID id.ID `description:"Instance identifier" path:"instanceId"`
 }
 
-// UpdateInstanceRequest binds path + body for PATCH /v1/instances/:instanceID.
+// UpdateInstanceRequest binds path + body for PATCH /v1/instances/:instanceId.
 type UpdateInstanceRequest struct {
 	instance.UpdateRequest
 
-	InstanceID id.ID `description:"Instance identifier" path:"instanceID"`
+	InstanceID id.ID `description:"Instance identifier" path:"instanceId"`
 }
 
-// DeleteInstanceRequest binds the path for DELETE /v1/instances/:instanceID.
+// DeleteInstanceRequest binds the path for DELETE /v1/instances/:instanceId.
 type DeleteInstanceRequest struct {
-	InstanceID id.ID `description:"Instance identifier" path:"instanceID"`
+	InstanceID id.ID `description:"Instance identifier" path:"instanceId"`
 }
 
 // InstanceActionRequest binds the path for action endpoints (start, stop, restart, unsuspend).
 type InstanceActionRequest struct {
-	InstanceID id.ID `description:"Instance identifier" path:"instanceID"`
+	InstanceID id.ID `description:"Instance identifier" path:"instanceId"`
 }
 
-// ScaleInstanceRequest binds path + body for POST /v1/instances/:instanceID/scale.
+// ScaleInstanceRequest binds path + body for POST /v1/instances/:instanceId/scale.
 type ScaleInstanceRequest struct {
 	instance.ScaleRequest
 
-	InstanceID id.ID `description:"Instance identifier" path:"instanceID"`
+	InstanceID id.ID `description:"Instance identifier" path:"instanceId"`
 }
 
-// SuspendInstanceRequest binds path + body for POST /v1/instances/:instanceID/suspend.
+// SuspendInstanceRequest binds path + body for POST /v1/instances/:instanceId/suspend.
 type SuspendInstanceRequest struct {
-	InstanceID id.ID  `description:"Instance identifier" path:"instanceID"`
+	InstanceID id.ID  `description:"Instance identifier" path:"instanceId"`
 	Reason     string `description:"Suspension reason"   json:"reason"`
 }
 
@@ -66,11 +66,11 @@ type SuspendInstanceRequest struct {
 // Deploy requests
 // ---------------------------------------------------------------------------
 
-// DeployAPIRequest binds path + body for POST /v1/instances/:instanceID/deploy.
+// DeployAPIRequest binds path + body for POST /v1/instances/:instanceId/deploy.
 // Body fields are replicated because deploy.DeployRequest has a conflicting
 // InstanceID json tag.
 type DeployAPIRequest struct {
-	InstanceID id.ID             `description:"Instance identifier"   path:"instanceID"`
+	InstanceID id.ID             `description:"Instance identifier"   path:"instanceId"`
 	Image      string            `description:"Container image"       json:"image"`
 	Env        map[string]string `description:"Environment overrides" json:"env,omitempty"`
 	Strategy   string            `description:"Deploy strategy"       json:"strategy,omitempty"`
@@ -78,32 +78,32 @@ type DeployAPIRequest struct {
 	CommitSHA  string            `description:"Git commit SHA"        json:"commit_sha,omitempty"`
 }
 
-// ListDeploymentsRequest binds path + query for GET /v1/instances/:instanceID/deployments.
+// ListDeploymentsRequest binds path + query for GET /v1/instances/:instanceId/deployments.
 type ListDeploymentsRequest struct {
-	InstanceID id.ID  `description:"Instance identifier"    path:"instanceID"`
+	InstanceID id.ID  `description:"Instance identifier"    path:"instanceId"`
 	Cursor     string `description:"Pagination cursor"      query:"cursor"`
 	Limit      int    `description:"Page size (default 20)" query:"limit"`
 }
 
-// GetDeploymentRequest binds the path for GET /v1/deployments/:deploymentID.
+// GetDeploymentRequest binds the path for GET /v1/deployments/:deploymentId.
 type GetDeploymentRequest struct {
-	DeploymentID id.ID `description:"Deployment identifier" path:"deploymentID"`
+	DeploymentID id.ID `description:"Deployment identifier" path:"deploymentId"`
 }
 
-// CancelDeploymentRequest binds the path for POST /v1/deployments/:deploymentID/cancel.
+// CancelDeploymentRequest binds the path for POST /v1/deployments/:deploymentId/cancel.
 type CancelDeploymentRequest struct {
-	DeploymentID id.ID `description:"Deployment identifier" path:"deploymentID"`
+	DeploymentID id.ID `description:"Deployment identifier" path:"deploymentId"`
 }
 
-// RollbackRequest binds path + body for POST /v1/instances/:instanceID/rollback.
+// RollbackRequest binds path + body for POST /v1/instances/:instanceId/rollback.
 type RollbackRequest struct {
-	InstanceID id.ID `description:"Instance identifier"    path:"instanceID"`
+	InstanceID id.ID `description:"Instance identifier"    path:"instanceId"`
 	ReleaseID  id.ID `description:"Release to rollback to" json:"release_id"`
 }
 
-// ListReleasesRequest binds path + query for GET /v1/instances/:instanceID/releases.
+// ListReleasesRequest binds path + query for GET /v1/instances/:instanceId/releases.
 type ListReleasesRequest struct {
-	InstanceID id.ID  `description:"Instance identifier"    path:"instanceID"`
+	InstanceID id.ID  `description:"Instance identifier"    path:"instanceId"`
 	Cursor     string `description:"Pagination cursor"      query:"cursor"`
 	Limit      int    `description:"Page size (default 20)" query:"limit"`
 }
@@ -117,11 +117,11 @@ type GetReleaseRequest struct {
 // Health requests
 // ---------------------------------------------------------------------------
 
-// ConfigureHealthCheckAPIRequest binds path + body for POST /v1/instances/:instanceID/health/checks.
+// ConfigureHealthCheckAPIRequest binds path + body for POST /v1/instances/:instanceId/health/checks.
 // Body fields are replicated because health.ConfigureRequest has a conflicting
 // InstanceID json tag.
 type ConfigureHealthCheckAPIRequest struct {
-	InstanceID id.ID         `description:"Instance identifier"                   path:"instanceID"`
+	InstanceID id.ID         `description:"Instance identifier"                   path:"instanceId"`
 	Name       string        `description:"Health check name"                     json:"name"`
 	Type       string        `description:"Check type (http, tcp, grpc, command)" json:"type"`
 	Target     string        `description:"Check target (URL, host:port, etc.)"   json:"target"`
@@ -130,24 +130,24 @@ type ConfigureHealthCheckAPIRequest struct {
 	Retries    int           `description:"Number of retries"                     json:"retries"`
 }
 
-// GetInstanceHealthRequest binds the path for GET /v1/instances/:instanceID/health.
+// GetInstanceHealthRequest binds the path for GET /v1/instances/:instanceId/health.
 type GetInstanceHealthRequest struct {
-	InstanceID id.ID `description:"Instance identifier" path:"instanceID"`
+	InstanceID id.ID `description:"Instance identifier" path:"instanceId"`
 }
 
-// ListHealthChecksRequest binds the path for GET /v1/instances/:instanceID/health/checks.
+// ListHealthChecksRequest binds the path for GET /v1/instances/:instanceId/health/checks.
 type ListHealthChecksRequest struct {
-	InstanceID id.ID `description:"Instance identifier" path:"instanceID"`
+	InstanceID id.ID `description:"Instance identifier" path:"instanceId"`
 }
 
-// RunHealthCheckRequest binds the path for POST /v1/health/checks/:checkID/run.
+// RunHealthCheckRequest binds the path for POST /v1/health/checks/:checkId/run.
 type RunHealthCheckRequest struct {
-	CheckID id.ID `description:"Health check identifier" path:"checkID"`
+	CheckID id.ID `description:"Health check identifier" path:"checkId"`
 }
 
-// RemoveHealthCheckRequest binds the path for DELETE /v1/health/checks/:checkID.
+// RemoveHealthCheckRequest binds the path for DELETE /v1/health/checks/:checkId.
 type RemoveHealthCheckRequest struct {
-	CheckID id.ID `description:"Health check identifier" path:"checkID"`
+	CheckID id.ID `description:"Health check identifier" path:"checkId"`
 }
 
 // ---------------------------------------------------------------------------
@@ -156,93 +156,93 @@ type RemoveHealthCheckRequest struct {
 
 // InstanceTelemetryRequest binds the path for GET telemetry endpoints.
 type InstanceTelemetryRequest struct {
-	InstanceID id.ID `description:"Instance identifier" path:"instanceID"`
+	InstanceID id.ID `description:"Instance identifier" path:"instanceId"`
 }
 
 // ---------------------------------------------------------------------------
 // Network requests
 // ---------------------------------------------------------------------------
 
-// AddDomainAPIRequest binds path + body for POST /v1/instances/:instanceID/domains.
+// AddDomainAPIRequest binds path + body for POST /v1/instances/:instanceId/domains.
 // Body fields are replicated because network.AddDomainRequest has a conflicting
 // InstanceID json tag.
 type AddDomainAPIRequest struct {
-	InstanceID id.ID  `description:"Instance identifier"         path:"instanceID"`
+	InstanceID id.ID  `description:"Instance identifier"         path:"instanceId"`
 	Hostname   string `description:"Fully-qualified domain name" json:"hostname"`
 	TLSEnabled bool   `description:"Enable TLS for this domain"  json:"tls_enabled"`
 }
 
-// ListDomainsRequest binds the path for GET /v1/instances/:instanceID/domains.
+// ListDomainsRequest binds the path for GET /v1/instances/:instanceId/domains.
 type ListDomainsRequest struct {
-	InstanceID id.ID `description:"Instance identifier" path:"instanceID"`
+	InstanceID id.ID `description:"Instance identifier" path:"instanceId"`
 }
 
-// VerifyDomainRequest binds the path for POST /v1/domains/:domainID/verify.
+// VerifyDomainRequest binds the path for POST /v1/domains/:domainId/verify.
 type VerifyDomainRequest struct {
-	DomainID id.ID `description:"Domain identifier" path:"domainID"`
+	DomainID id.ID `description:"Domain identifier" path:"domainId"`
 }
 
-// RemoveDomainRequest binds the path for DELETE /v1/domains/:domainID.
+// RemoveDomainRequest binds the path for DELETE /v1/domains/:domainId.
 type RemoveDomainRequest struct {
-	DomainID id.ID `description:"Domain identifier" path:"domainID"`
+	DomainID id.ID `description:"Domain identifier" path:"domainId"`
 }
 
-// AddRouteAPIRequest binds path + body for POST /v1/instances/:instanceID/routes.
+// AddRouteAPIRequest binds path + body for POST /v1/instances/:instanceId/routes.
 // Body fields are replicated because network.AddRouteRequest has a conflicting
 // InstanceID json tag.
 type AddRouteAPIRequest struct {
-	InstanceID id.ID  `description:"Instance identifier"    path:"instanceID"`
+	InstanceID id.ID  `description:"Instance identifier"    path:"instanceId"`
 	Path       string `description:"Route path pattern"     json:"path"`
 	Port       int    `description:"Target port"            json:"port"`
 	Protocol   string `description:"Protocol (http, grpc)"  json:"protocol"`
 	Weight     int    `description:"Traffic weight (0-100)" json:"weight"`
 }
 
-// ListRoutesRequest binds the path for GET /v1/instances/:instanceID/routes.
+// ListRoutesRequest binds the path for GET /v1/instances/:instanceId/routes.
 type ListRoutesRequest struct {
-	InstanceID id.ID `description:"Instance identifier" path:"instanceID"`
+	InstanceID id.ID `description:"Instance identifier" path:"instanceId"`
 }
 
-// UpdateRouteAPIRequest binds path + body for PATCH /v1/routes/:routeID.
+// UpdateRouteAPIRequest binds path + body for PATCH /v1/routes/:routeId.
 type UpdateRouteAPIRequest struct {
-	RouteID     id.ID   `description:"Route identifier"   path:"routeID"`
+	RouteID     id.ID   `description:"Route identifier"   path:"routeId"`
 	Path        *string `description:"Route path pattern" json:"path,omitempty"`
 	Weight      *int    `description:"Traffic weight"     json:"weight,omitempty"`
 	StripPrefix *bool   `description:"Strip path prefix"  json:"strip_prefix,omitempty"`
 }
 
-// RemoveRouteRequest binds the path for DELETE /v1/routes/:routeID.
+// RemoveRouteRequest binds the path for DELETE /v1/routes/:routeId.
 type RemoveRouteRequest struct {
-	RouteID id.ID `description:"Route identifier" path:"routeID"`
+	RouteID id.ID `description:"Route identifier" path:"routeId"`
 }
 
-// ProvisionCertRequest binds the path for POST /v1/domains/:domainID/cert.
+// ProvisionCertRequest binds the path for POST /v1/domains/:domainId/cert.
 type ProvisionCertRequest struct {
-	DomainID id.ID `description:"Domain identifier" path:"domainID"`
+	DomainID id.ID `description:"Domain identifier" path:"domainId"`
 }
 
 // ---------------------------------------------------------------------------
 // Secrets requests
 // ---------------------------------------------------------------------------
 
-// SetSecretAPIRequest binds path + body for POST /v1/instances/:instanceID/secrets.
+// SetSecretAPIRequest binds path + body for POST /v1/instances/:instanceId/secrets.
 // Body fields are replicated because secrets.SetRequest has a conflicting
 // InstanceID json tag.
 type SetSecretAPIRequest struct {
-	InstanceID id.ID  `description:"Instance identifier"          path:"instanceID"`
+	InstanceID id.ID  `description:"Instance identifier"          path:"instanceId"`
 	Key        string `description:"Secret key"                   json:"key"`
 	Value      string `description:"Secret value"                 json:"value"`
 	Type       string `description:"Secret type (env, file, tls)" json:"type"`
 }
 
-// ListSecretsRequest binds the path for GET /v1/instances/:instanceID/secrets.
+// ListSecretsRequest binds the path for GET /v1/instances/:instanceId/secrets.
 type ListSecretsRequest struct {
-	InstanceID id.ID `description:"Instance identifier" path:"instanceID"`
+	InstanceID id.ID `description:"Instance identifier" path:"instanceId"`
 }
 
-// DeleteSecretRequest binds the path for DELETE /v1/instances/:instanceID/secrets/:key.
+// DeleteSecretRequest binds the path for DELETE /v1/instances/:instanceId/secrets/:key.
 type DeleteSecretRequest struct {
-	InstanceID id.ID  `description:"Instance identifier" path:"instanceID"`
+	InstanceID id.ID  `description:"Instance identifier" path:"instanceId"`
 	Key        string `description:"Secret key"          path:"key"`
 }
 
@@ -267,27 +267,27 @@ type ListTenantsAPIRequest struct {
 
 // TenantPathRequest binds the path for tenant endpoints.
 type TenantPathRequest struct {
-	TenantID string `description:"Tenant identifier" path:"tenantID"`
+	TenantID string `description:"Tenant identifier" path:"tenantId"`
 }
 
-// UpdateTenantAPIRequest binds path + body for PATCH /v1/admin/tenants/:tenantID.
+// UpdateTenantAPIRequest binds path + body for PATCH /v1/admin/tenants/:tenantId.
 type UpdateTenantAPIRequest struct {
 	admin.UpdateTenantRequest
 
-	TenantID string `description:"Tenant identifier" path:"tenantID"`
+	TenantID string `description:"Tenant identifier" path:"tenantId"`
 }
 
-// SuspendTenantAPIRequest binds path + body for POST /v1/admin/tenants/:tenantID/suspend.
+// SuspendTenantAPIRequest binds path + body for POST /v1/admin/tenants/:tenantId/suspend.
 type SuspendTenantAPIRequest struct {
-	TenantID string `description:"Tenant identifier" path:"tenantID"`
+	TenantID string `description:"Tenant identifier" path:"tenantId"`
 	Reason   string `description:"Suspension reason" json:"reason"`
 }
 
-// SetQuotaAPIRequest binds path + body for PUT /v1/admin/tenants/:tenantID/quota.
+// SetQuotaAPIRequest binds path + body for PUT /v1/admin/tenants/:tenantId/quota.
 type SetQuotaAPIRequest struct {
 	admin.Quota
 
-	TenantID string `description:"Tenant identifier" path:"tenantID"`
+	TenantID string `description:"Tenant identifier" path:"tenantId"`
 }
 
 // QueryAuditLogAPIRequest binds the body for POST /v1/admin/audit.

@@ -1,0 +1,110 @@
+---
+title: Bun Store
+description: SQL store using Bun ORM with PostgreSQL and SQLite support.
+---
+
+The Bun store uses the [Bun](https://bun.uptrace.dev/) ORM to persist data in PostgreSQL or SQLite. It is the recommended store for production SQL deployments.
+
+## When to use
+
+- **Production deployments** — battle-tested SQL databases with ACID transactions.
+- **PostgreSQL environments** — full query power, JSON operators, CTEs.
+- **SQLite for development** — single-file database, no server needed.
+- **Teams familiar with SQL** — leverage existing database expertise.
+
+## Configuration
+
+```go
+import "github.com/xraph/ctrlplane/store/bun"
+
+s, err := bun.New(bun.Config{
+    Driver: bun.DriverPostgreSQL,
+    DSN:    "postgres://user:pass@localhost:5432/ctrlplane?sslmode=disable",
+})
+```
+
+| Field | Env | Default | Description |
+|-------|-----|---------|-------------|
+| `Driver` | `CP_BUN_DRIVER` | `postgres` | Database driver (`postgres` or `sqlite`) |
+| `DSN` | `CP_BUN_DSN` | — | Connection string |
+| `MaxOpenConns` | `CP_BUN_MAX_OPEN_CONNS` | `25` | Maximum open connections |
+| `MaxIdleConns` | `CP_BUN_MAX_IDLE_CONNS` | `5` | Maximum idle connections |
+| `ConnMaxLifetime` | `CP_BUN_CONN_MAX_LIFETIME` | `5m` | Connection max lifetime |
+| `ConnMaxIdleTime` | `CP_BUN_CONN_MAX_IDLE_TIME` | `1m` | Connection max idle time |
+
+### PostgreSQL
+
+```go
+s, err := bun.New(bun.Config{
+    Driver:       bun.DriverPostgreSQL,
+    DSN:          "postgres://localhost:5432/ctrlplane?sslmode=disable",
+    MaxOpenConns: 25,
+})
+```
+
+### SQLite
+
+```go
+s, err := bun.New(bun.Config{
+    Driver: bun.DriverSQLite,
+    DSN:    "file:ctrlplane.db?cache=shared&_pragma=journal_mode(WAL)",
+})
+```
+
+### With the app
+
+```go
+cp, err := app.New(
+    app.WithStore(s),
+)
+```
+
+## Internals
+
+| Aspect | Detail |
+|--------|--------|
+| **ORM** | Bun v1 with struct-based models |
+| **Migrations** | Bun migrator with Go-defined migrations |
+| **Serialization** | Bun model structs with `db:` tags |
+| **Transactions** | Database-level ACID transactions |
+| **Migrate** | Creates tables, indexes, constraints |
+| **Ping** | `db.PingContext(ctx)` |
+| **Close** | Closes the connection pool |
+
+### Model structs
+
+Each entity has a Bun model struct with `db:` tags that map to database columns:
+
+```go
+type instanceModel struct {
+    bun.BaseModel `bun:"table:instances,alias:i"`
+
+    ID           string `bun:"id,pk"`
+    TenantID     string `bun:"tenant_id,notnull"`
+    Name         string `bun:"name,notnull"`
+    Slug         string `bun:"slug,notnull"`
+    // ...
+}
+```
+
+Conversion functions (`toInstanceModel` / `fromInstanceModel`) translate between domain entities and database models.
+
+### Connection pooling
+
+The Bun store configures the `database/sql` connection pool with the settings from `Config`. For PostgreSQL, use connection pooling (PgBouncer) in production for high-concurrency workloads.
+
+## Limitations
+
+- **External dependency** — requires a running PostgreSQL or SQLite database.
+- **Schema migrations** — must run `Migrate()` before first use.
+- **SQLite concurrency** — SQLite has limited write concurrency (WAL mode helps).
+
+## Comparison
+
+| Feature | Memory | Badger | Bun | MongoDB |
+|---------|--------|--------|-----|---------|
+| Setup | None | Path only | DSN | URI |
+| Persistence | No | Yes | Yes | Yes |
+| Multi-process | No | No | Yes | Yes |
+| Query flexibility | Low | Low | High | High |
+| Best for | Tests | Embedded | Production SQL | Production NoSQL |

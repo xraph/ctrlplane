@@ -1,0 +1,75 @@
+---
+title: AWS ECS/Fargate
+description: Serverless container hosting on AWS using ECS and Fargate.
+---
+
+The AWS provider runs Ctrl Plane instances on Amazon ECS with Fargate, providing serverless container hosting without managing EC2 instances.
+
+## Status
+
+**Interface defined** — the package structure exists at `provider/aws` and implements the `provider.Provider` interface. Full implementation is in progress.
+
+## Configuration
+
+```go
+import "github.com/xraph/ctrlplane/provider/aws"
+
+prov, err := aws.New(aws.Config{
+    Region:     "us-east-1",
+    Cluster:    "ctrlplane-prod",
+    SubnetIDs:  []string{"subnet-abc", "subnet-def"},
+    SecurityGroups: []string{"sg-123"},
+    ExecutionRoleARN: "arn:aws:iam::123:role/ecsTaskExecution",
+    TaskRoleARN: "arn:aws:iam::123:role/ecsTask",
+})
+```
+
+| Field | Env | Default | Description |
+|-------|-----|---------|-------------|
+| `Region` | `CP_AWS_REGION` | — | AWS region |
+| `Cluster` | `CP_AWS_ECS_CLUSTER` | — | ECS cluster name or ARN |
+| `SubnetIDs` | `CP_AWS_SUBNET_IDS` | — | VPC subnet IDs for tasks |
+| `SecurityGroups` | `CP_AWS_SECURITY_GROUPS` | — | Security group IDs |
+| `ExecutionRoleARN` | `CP_AWS_EXEC_ROLE_ARN` | — | ECS task execution IAM role |
+| `TaskRoleARN` | `CP_AWS_TASK_ROLE_ARN` | — | IAM role for the running task |
+
+## Capabilities
+
+| Capability | Supported |
+|------------|-----------|
+| `provision` | Yes |
+| `deploy` | Yes |
+| `scale` | Yes |
+| `logs` | Via CloudWatch |
+| `exec` | Via ECS Exec |
+| `rolling` | Yes |
+| `autoscale` | Via Application Auto Scaling |
+| `custom_domains` | Via ALB + Route53 |
+| `tls` | Via ACM |
+
+## Resource mapping
+
+| Ctrl Plane concept | AWS resource |
+|-------------------|-------------|
+| Instance | ECS Service + Task Definition |
+| Environment variables | Task Definition environment |
+| Ports | Target Group + ALB listener |
+| Resources (CPU/Memory) | Fargate task size |
+| Custom domains | Route53 record + ALB rule |
+| TLS certificates | ACM certificate |
+| Scaling | Application Auto Scaling policy |
+
+## How it works
+
+1. **Provision** creates an ECS Service with a Fargate task definition.
+2. **Deploy** registers a new task definition revision and updates the service.
+3. **Scale** updates the service desired count and task resource limits.
+4. **Logs** streams from CloudWatch Logs using the task log group.
+5. **Exec** uses ECS Exec to open a session to the running container.
+
+## When to use
+
+- Teams already on AWS infrastructure
+- Serverless container workloads without cluster management
+- Applications that need tight AWS service integration (RDS, SQS, S3)
+- Environments where managed auto-scaling is required

@@ -8,7 +8,7 @@ import (
 	"github.com/xraph/ctrlplane/health"
 )
 
-// configureHealthCheck handles POST /v1/instances/:instanceID/health/checks.
+// configureHealthCheck handles POST /v1/instances/:instanceId/health/checks.
 func (a *API) configureHealthCheck(ctx forge.Context, req *ConfigureHealthCheckAPIRequest) (*health.HealthCheck, error) {
 	domainReq := health.ConfigureRequest{
 		InstanceID: req.InstanceID,
@@ -31,7 +31,7 @@ func (a *API) configureHealthCheck(ctx forge.Context, req *ConfigureHealthCheckA
 	return nil, nil
 }
 
-// getInstanceHealth handles GET /v1/instances/:instanceID/health.
+// getInstanceHealth handles GET /v1/instances/:instanceId/health.
 func (a *API) getInstanceHealth(ctx forge.Context, req *GetInstanceHealthRequest) (*health.InstanceHealth, error) {
 	ih, err := a.cp.Health.GetHealth(ctx.Context(), req.InstanceID)
 	if err != nil {
@@ -41,7 +41,7 @@ func (a *API) getInstanceHealth(ctx forge.Context, req *GetInstanceHealthRequest
 	return ih, nil
 }
 
-// listHealthChecks handles GET /v1/instances/:instanceID/health/checks.
+// listHealthChecks handles GET /v1/instances/:instanceId/health/checks.
 func (a *API) listHealthChecks(ctx forge.Context, req *ListHealthChecksRequest) ([]health.HealthCheck, error) {
 	checks, err := a.cp.Health.ListChecks(ctx.Context(), req.InstanceID)
 	if err != nil {

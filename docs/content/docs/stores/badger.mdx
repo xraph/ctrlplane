@@ -1,0 +1,94 @@
+---
+title: Badger Store
+description: Embedded key-value store using BadgerDB for single-node persistence.
+---
+
+The Badger store uses [BadgerDB](https://github.com/dgraph-io/badger) for embedded key-value persistence. It gives you durable storage without an external database process.
+
+## When to use
+
+- **Single-node deployments** — embedded database with no external dependencies.
+- **Edge/IoT** — lightweight persistence for resource-constrained environments.
+- **Desktop applications** — local data storage without a database server.
+- **Testing with persistence** — faster than PostgreSQL, data survives restarts.
+
+## Configuration
+
+```go
+import "github.com/xraph/ctrlplane/store/badger"
+
+s, err := badger.New(badger.Config{
+    Path:       "./data/badger",
+    InMemory:   false,
+    SyncWrites: false,
+})
+```
+
+| Field | Env | Default | Description |
+|-------|-----|---------|-------------|
+| `Path` | `CP_BADGER_PATH` | `./data/badger` | Directory for data files |
+| `InMemory` | `CP_BADGER_IN_MEMORY` | `false` | Run in memory (for testing) |
+| `SyncWrites` | `CP_BADGER_SYNC_WRITES` | `false` | Fsync on every write (slower, safer) |
+
+Or use it with the app:
+
+```go
+s, err := badger.New(badger.Config{Path: "./data"})
+
+cp, err := app.New(
+    app.WithStore(s),
+)
+```
+
+## Internals
+
+| Aspect | Detail |
+|--------|--------|
+| **Storage** | LSM tree + value log (BadgerDB v4) |
+| **Serialization** | JSON encoding for all values |
+| **Key scheme** | `{prefix}{tenant_id}:{entity_id}` |
+| **Migrate** | No-op (no schema) |
+| **Ping** | Opens a read-only transaction to verify access |
+| **Close** | Closes the BadgerDB instance |
+
+### Key prefixes
+
+Each entity type has a dedicated prefix for efficient iteration:
+
+```
+inst:  — instances          depl:  — deployments
+rels:  — releases           hchk:  — health checks
+hrsl:  — health results     metr:  — metrics
+logs:  — log entries        trac:  — traces
+rsna:  — resource snapshots doma:  — domains
+rout:  — routes             cert:  — certificates
+secr:  — secrets            tent:  — tenants
+audt:  — audit entries
+```
+
+Secondary indexes use additional prefixes (`islg:` for instance slugs, `tslg:` for tenant slugs).
+
+### Operations
+
+- **Insert** — JSON-marshal the entity and set with the key.
+- **Get** — Direct key lookup, JSON-unmarshal.
+- **List** — Prefix scan with BadgerDB iterator, filter by tenant and criteria.
+- **Update** — Overwrite the key with the new value.
+- **Delete** — Remove the key.
+
+## Limitations
+
+- **Single process** — BadgerDB holds a directory lock; only one process can open the database at a time.
+- **No SQL queries** — filtering is done in application code during iteration.
+- **No multi-node** — not suitable for distributed deployments.
+- **JSON overhead** — serialization adds some latency compared to binary formats.
+
+## Comparison
+
+| Feature | Memory | Badger | Bun | MongoDB |
+|---------|--------|--------|-----|---------|
+| Setup | None | Path only | DSN | URI |
+| Persistence | No | Yes | Yes | Yes |
+| Multi-process | No | No | Yes | Yes |
+| Query flexibility | Low | Low | High | High |
+| Best for | Tests | Embedded | Production SQL | Production NoSQL |

@@ -62,7 +62,7 @@ func (a *API) listTenants(ctx forge.Context, req *ListTenantsAPIRequest) (*admin
 	return result, nil
 }
 
-// getTenant handles GET /v1/admin/tenants/:tenantID.
+// getTenant handles GET /v1/admin/tenants/:tenantId.
 func (a *API) getTenant(ctx forge.Context, req *TenantPathRequest) (*admin.Tenant, error) {
 	tenant, err := a.cp.Admin.GetTenant(ctx.Context(), req.TenantID)
 	if err != nil {
@@ -72,7 +72,7 @@ func (a *API) getTenant(ctx forge.Context, req *TenantPathRequest) (*admin.Tenan
 	return tenant, nil
 }
 
-// updateTenant handles PATCH /v1/admin/tenants/:tenantID.
+// updateTenant handles PATCH /v1/admin/tenants/:tenantId.
 func (a *API) updateTenant(ctx forge.Context, req *UpdateTenantAPIRequest) (*admin.Tenant, error) {
 	tenant, err := a.cp.Admin.UpdateTenant(ctx.Context(), req.TenantID, req.UpdateTenantRequest)
 	if err != nil {
@@ -82,7 +82,7 @@ func (a *API) updateTenant(ctx forge.Context, req *UpdateTenantAPIRequest) (*adm
 	return tenant, nil
 }
 
-// suspendTenant handles POST /v1/admin/tenants/:tenantID/suspend.
+// suspendTenant handles POST /v1/admin/tenants/:tenantId/suspend.
 func (a *API) suspendTenant(ctx forge.Context, req *SuspendTenantAPIRequest) (*admin.Tenant, error) {
 	if err := a.cp.Admin.SuspendTenant(ctx.Context(), req.TenantID, req.Reason); err != nil {
 		return nil, mapError(err)
@@ -94,7 +94,7 @@ func (a *API) suspendTenant(ctx forge.Context, req *SuspendTenantAPIRequest) (*a
 	return nil, nil
 }
 
-// unsuspendTenant handles POST /v1/admin/tenants/:tenantID/unsuspend.
+// unsuspendTenant handles POST /v1/admin/tenants/:tenantId/unsuspend.
 func (a *API) unsuspendTenant(ctx forge.Context, req *TenantPathRequest) (*admin.Tenant, error) {
 	if err := a.cp.Admin.UnsuspendTenant(ctx.Context(), req.TenantID); err != nil {
 		return nil, mapError(err)
@@ -106,7 +106,7 @@ func (a *API) unsuspendTenant(ctx forge.Context, req *TenantPathRequest) (*admin
 	return nil, nil
 }
 
-// deleteTenant handles DELETE /v1/admin/tenants/:tenantID.
+// deleteTenant handles DELETE /v1/admin/tenants/:tenantId.
 func (a *API) deleteTenant(ctx forge.Context, req *TenantPathRequest) (*admin.Tenant, error) {
 	if err := a.cp.Admin.DeleteTenant(ctx.Context(), req.TenantID); err != nil {
 		return nil, mapError(err)
@@ -118,7 +118,7 @@ func (a *API) deleteTenant(ctx forge.Context, req *TenantPathRequest) (*admin.Te
 	return nil, nil
 }
 
-// getQuota handles GET /v1/admin/tenants/:tenantID/quota.
+// getQuota handles GET /v1/admin/tenants/:tenantId/quota.
 func (a *API) getQuota(ctx forge.Context, req *TenantPathRequest) (*admin.QuotaUsage, error) {
 	usage, err := a.cp.Admin.GetQuota(ctx.Context(), req.TenantID)
 	if err != nil {
@@ -128,7 +128,7 @@ func (a *API) getQuota(ctx forge.Context, req *TenantPathRequest) (*admin.QuotaU
 	return usage, nil
 }
 
-// setQuota handles PUT /v1/admin/tenants/:tenantID/quota.
+// setQuota handles PUT /v1/admin/tenants/:tenantId/quota.
 func (a *API) setQuota(ctx forge.Context, req *SetQuotaAPIRequest) (*admin.Tenant, error) {
 	if err := a.cp.Admin.SetQuota(ctx.Context(), req.TenantID, req.Quota); err != nil {
 		return nil, mapError(err)

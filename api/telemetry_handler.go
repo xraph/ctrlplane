@@ -6,7 +6,7 @@ import (
 	"github.com/xraph/ctrlplane/telemetry"
 )
 
-// queryMetrics handles GET /v1/instances/:instanceID/metrics.
+// queryMetrics handles GET /v1/instances/:instanceId/metrics.
 func (a *API) queryMetrics(ctx forge.Context, req *InstanceTelemetryRequest) ([]telemetry.Metric, error) {
 	q := telemetry.MetricQuery{
 		InstanceID: req.InstanceID,
@@ -20,7 +20,7 @@ func (a *API) queryMetrics(ctx forge.Context, req *InstanceTelemetryRequest) ([]
 	return metrics, nil
 }
 
-// queryLogs handles GET /v1/instances/:instanceID/logs.
+// queryLogs handles GET /v1/instances/:instanceId/logs.
 func (a *API) queryLogs(ctx forge.Context, req *InstanceTelemetryRequest) ([]telemetry.LogEntry, error) {
 	q := telemetry.LogQuery{
 		InstanceID: req.InstanceID,
@@ -34,7 +34,7 @@ func (a *API) queryLogs(ctx forge.Context, req *InstanceTelemetryRequest) ([]tel
 	return logs, nil
 }
 
-// queryTraces handles GET /v1/instances/:instanceID/traces.
+// queryTraces handles GET /v1/instances/:instanceId/traces.
 func (a *API) queryTraces(ctx forge.Context, req *InstanceTelemetryRequest) ([]telemetry.Trace, error) {
 	q := telemetry.TraceQuery{
 		InstanceID: req.InstanceID,
@@ -48,7 +48,7 @@ func (a *API) queryTraces(ctx forge.Context, req *InstanceTelemetryRequest) ([]t
 	return traces, nil
 }
 
-// getResources handles GET /v1/instances/:instanceID/resources.
+// getResources handles GET /v1/instances/:instanceId/resources.
 func (a *API) getResources(ctx forge.Context, req *InstanceTelemetryRequest) (*telemetry.ResourceSnapshot, error) {
 	snap, err := a.cp.Telemetry.GetCurrentResources(ctx.Context(), req.InstanceID)
 	if err != nil {
@@ -58,7 +58,7 @@ func (a *API) getResources(ctx forge.Context, req *InstanceTelemetryRequest) (*t
 	return snap, nil
 }
 
-// getDashboard handles GET /v1/instances/:instanceID/dashboard.
+// getDashboard handles GET /v1/instances/:instanceId/dashboard.
 func (a *API) getDashboard(ctx forge.Context, req *InstanceTelemetryRequest) (*telemetry.DashboardData, error) {
 	dash, err := a.cp.Telemetry.GetDashboard(ctx.Context(), req.InstanceID)
 	if err != nil {

@@ -8,7 +8,7 @@ import (
 	"github.com/xraph/ctrlplane/network"
 )
 
-// addDomain handles POST /v1/instances/:instanceID/domains.
+// addDomain handles POST /v1/instances/:instanceId/domains.
 func (a *API) addDomain(ctx forge.Context, req *AddDomainAPIRequest) (*network.Domain, error) {
 	domainReq := network.AddDomainRequest{
 		InstanceID: req.InstanceID,
@@ -27,7 +27,7 @@ func (a *API) addDomain(ctx forge.Context, req *AddDomainAPIRequest) (*network.D
 	return nil, nil
 }
 
-// listDomains handles GET /v1/instances/:instanceID/domains.
+// listDomains handles GET /v1/instances/:instanceId/domains.
 func (a *API) listDomains(ctx forge.Context, req *ListDomainsRequest) ([]network.Domain, error) {
 	domains, err := a.cp.Network.ListDomains(ctx.Context(), req.InstanceID)
 	if err != nil {
@@ -59,7 +59,7 @@ func (a *API) removeDomain(ctx forge.Context, req *RemoveDomainRequest) (*networ
 	return nil, nil
 }
 
-// addRoute handles POST /v1/instances/:instanceID/routes.
+// addRoute handles POST /v1/instances/:instanceId/routes.
 func (a *API) addRoute(ctx forge.Context, req *AddRouteAPIRequest) (*network.Route, error) {
 	routeReq := network.AddRouteRequest{
 		InstanceID: req.InstanceID,
@@ -80,7 +80,7 @@ func (a *API) addRoute(ctx forge.Context, req *AddRouteAPIRequest) (*network.Rou
 	return nil, nil
 }
 
-// listRoutes handles GET /v1/instances/:instanceID/routes.
+// listRoutes handles GET /v1/instances/:instanceId/routes.
 func (a *API) listRoutes(ctx forge.Context, req *ListRoutesRequest) ([]network.Route, error) {
 	routes, err := a.cp.Network.ListRoutes(ctx.Context(), req.InstanceID)
 	if err != nil {

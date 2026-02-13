@@ -1,0 +1,73 @@
+---
+title: HashiCorp Nomad
+description: Workload orchestration using HashiCorp Nomad jobs.
+---
+
+The Nomad provider deploys Ctrl Plane instances as Nomad jobs, supporting Docker, exec, and other Nomad task drivers.
+
+## Status
+
+**Interface defined** — the package structure exists at `provider/nomad` and implements the `provider.Provider` interface. Full implementation is in progress.
+
+## Configuration
+
+```go
+import "github.com/xraph/ctrlplane/provider/nomad"
+
+prov, err := nomad.New(nomad.Config{
+    Address:   "http://nomad.service.consul:4646",
+    Token:     os.Getenv("NOMAD_TOKEN"),
+    Region:    "global",
+    Namespace: "default",
+    Datacenter: "dc1",
+})
+```
+
+| Field | Env | Default | Description |
+|-------|-----|---------|-------------|
+| `Address` | `CP_NOMAD_ADDR` | `http://127.0.0.1:4646` | Nomad API address |
+| `Token` | `CP_NOMAD_TOKEN` | — | ACL token for authentication |
+| `Region` | `CP_NOMAD_REGION` | `global` | Nomad region |
+| `Namespace` | `CP_NOMAD_NAMESPACE` | `default` | Nomad namespace |
+| `Datacenter` | `CP_NOMAD_DATACENTER` | `dc1` | Target datacenter |
+
+## Capabilities
+
+| Capability | Supported |
+|------------|-----------|
+| `provision` | Yes |
+| `deploy` | Yes |
+| `scale` | Yes |
+| `logs` | Yes |
+| `exec` | Yes |
+| `rolling` | Yes |
+| `canary` | Yes |
+| `volumes` | Via CSI plugins |
+
+## Resource mapping
+
+| Ctrl Plane concept | Nomad resource |
+|-------------------|---------------|
+| Instance | Job (service type) |
+| Environment variables | Task env block |
+| Ports | Network port mapping |
+| Resources (CPU/Memory) | Task resources block |
+| Health checks | Service check stanza |
+| Scaling | Task group count |
+| Canary deploy | Update stanza with canary |
+
+## How it works
+
+1. **Provision** creates a Nomad service job with a Docker task driver.
+2. **Deploy** updates the job specification with the new image and triggers a deployment.
+3. **Scale** adjusts the task group count.
+4. **Canary** deployments use Nomad's native canary support in the update stanza.
+5. **Logs** streams from the Nomad allocation filesystem.
+6. **Exec** uses the Nomad alloc exec API.
+
+## When to use
+
+- Teams using the HashiCorp ecosystem (Consul, Vault, Nomad)
+- Mixed workloads (containers, JVM, binaries) on the same scheduler
+- Environments where Kubernetes is too heavyweight
+- Multi-datacenter deployments with Nomad federation

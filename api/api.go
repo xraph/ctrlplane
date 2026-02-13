@@ -76,7 +76,7 @@ func (a *API) registerInstanceRoutes(router forge.Router) {
 		forge.WithErrorResponses(),
 	)
 
-	_ = g.GET("/instances/:instanceID", a.getInstance,
+	_ = g.GET("/instances/:instanceId", a.getInstance,
 		forge.WithSummary("Get instance"),
 		forge.WithDescription("Returns details of a specific instance."),
 		forge.WithOperationID("getInstance"),
@@ -84,7 +84,7 @@ func (a *API) registerInstanceRoutes(router forge.Router) {
 		forge.WithErrorResponses(),
 	)
 
-	_ = g.PATCH("/instances/:instanceID", a.updateInstance,
+	_ = g.PATCH("/instances/:instanceId", a.updateInstance,
 		forge.WithSummary("Update instance"),
 		forge.WithDescription("Updates mutable fields of an instance."),
 		forge.WithOperationID("updateInstance"),
@@ -93,7 +93,7 @@ func (a *API) registerInstanceRoutes(router forge.Router) {
 		forge.WithErrorResponses(),
 	)
 
-	_ = g.DELETE("/instances/:instanceID", a.deleteInstance,
+	_ = g.DELETE("/instances/:instanceId", a.deleteInstance,
 		forge.WithSummary("Delete instance"),
 		forge.WithDescription("Destroys an instance and its resources."),
 		forge.WithOperationID("deleteInstance"),
@@ -101,7 +101,7 @@ func (a *API) registerInstanceRoutes(router forge.Router) {
 		forge.WithErrorResponses(),
 	)
 
-	_ = g.POST("/instances/:instanceID/start", a.startInstance,
+	_ = g.POST("/instances/:instanceId/start", a.startInstance,
 		forge.WithSummary("Start instance"),
 		forge.WithDescription("Starts a stopped instance."),
 		forge.WithOperationID("startInstance"),
@@ -109,7 +109,7 @@ func (a *API) registerInstanceRoutes(router forge.Router) {
 		forge.WithErrorResponses(),
 	)
 
-	_ = g.POST("/instances/:instanceID/stop", a.stopInstance,
+	_ = g.POST("/instances/:instanceId/stop", a.stopInstance,
 		forge.WithSummary("Stop instance"),
 		forge.WithDescription("Stops a running instance."),
 		forge.WithOperationID("stopInstance"),
@@ -117,7 +117,7 @@ func (a *API) registerInstanceRoutes(router forge.Router) {
 		forge.WithErrorResponses(),
 	)
 
-	_ = g.POST("/instances/:instanceID/restart", a.restartInstance,
+	_ = g.POST("/instances/:instanceId/restart", a.restartInstance,
 		forge.WithSummary("Restart instance"),
 		forge.WithDescription("Restarts a running instance."),
 		forge.WithOperationID("restartInstance"),
@@ -125,7 +125,7 @@ func (a *API) registerInstanceRoutes(router forge.Router) {
 		forge.WithErrorResponses(),
 	)
 
-	_ = g.POST("/instances/:instanceID/scale", a.scaleInstance,
+	_ = g.POST("/instances/:instanceId/scale", a.scaleInstance,
 		forge.WithSummary("Scale instance"),
 		forge.WithDescription("Adjusts CPU, memory, or replica count."),
 		forge.WithOperationID("scaleInstance"),
@@ -134,7 +134,7 @@ func (a *API) registerInstanceRoutes(router forge.Router) {
 		forge.WithErrorResponses(),
 	)
 
-	_ = g.POST("/instances/:instanceID/suspend", a.suspendInstance,
+	_ = g.POST("/instances/:instanceId/suspend", a.suspendInstance,
 		forge.WithSummary("Suspend instance"),
 		forge.WithDescription("Suspends an instance with a reason."),
 		forge.WithOperationID("suspendInstance"),
@@ -143,7 +143,7 @@ func (a *API) registerInstanceRoutes(router forge.Router) {
 		forge.WithErrorResponses(),
 	)
 
-	_ = g.POST("/instances/:instanceID/unsuspend", a.unsuspendInstance,
+	_ = g.POST("/instances/:instanceId/unsuspend", a.unsuspendInstance,
 		forge.WithSummary("Unsuspend instance"),
 		forge.WithDescription("Resumes a suspended instance."),
 		forge.WithOperationID("unsuspendInstance"),
@@ -156,7 +156,7 @@ func (a *API) registerInstanceRoutes(router forge.Router) {
 func (a *API) registerDeployRoutes(router forge.Router) {
 	g := router.Group("/v1", forge.WithGroupTags("deployments"))
 
-	_ = g.POST("/instances/:instanceID/deploy", a.deployInstance,
+	_ = g.POST("/instances/:instanceId/deploy", a.deployInstance,
 		forge.WithSummary("Deploy to instance"),
 		forge.WithDescription("Creates a new deployment for an instance."),
 		forge.WithOperationID("deployInstance"),
@@ -165,7 +165,7 @@ func (a *API) registerDeployRoutes(router forge.Router) {
 		forge.WithErrorResponses(),
 	)
 
-	_ = g.GET("/instances/:instanceID/deployments", a.listDeployments,
+	_ = g.GET("/instances/:instanceId/deployments", a.listDeployments,
 		forge.WithSummary("List deployments"),
 		forge.WithDescription("Returns a paginated list of deployments for an instance."),
 		forge.WithOperationID("listDeployments"),
@@ -174,7 +174,7 @@ func (a *API) registerDeployRoutes(router forge.Router) {
 		forge.WithErrorResponses(),
 	)
 
-	_ = g.GET("/deployments/:deploymentID", a.getDeployment,
+	_ = g.GET("/deployments/:deploymentId", a.getDeployment,
 		forge.WithSummary("Get deployment"),
 		forge.WithDescription("Returns details of a specific deployment."),
 		forge.WithOperationID("getDeployment"),
@@ -182,7 +182,7 @@ func (a *API) registerDeployRoutes(router forge.Router) {
 		forge.WithErrorResponses(),
 	)
 
-	_ = g.POST("/deployments/:deploymentID/cancel", a.cancelDeployment,
+	_ = g.POST("/deployments/:deploymentId/cancel", a.cancelDeployment,
 		forge.WithSummary("Cancel deployment"),
 		forge.WithDescription("Cancels an in-progress deployment."),
 		forge.WithOperationID("cancelDeployment"),
@@ -190,7 +190,7 @@ func (a *API) registerDeployRoutes(router forge.Router) {
 		forge.WithErrorResponses(),
 	)
 
-	_ = g.POST("/instances/:instanceID/rollback", a.rollback,
+	_ = g.POST("/instances/:instanceId/rollback", a.rollback,
 		forge.WithSummary("Rollback instance"),
 		forge.WithDescription("Rolls back an instance to a previous release."),
 		forge.WithOperationID("rollbackInstance"),
@@ -199,7 +199,7 @@ func (a *API) registerDeployRoutes(router forge.Router) {
 		forge.WithErrorResponses(),
 	)
 
-	_ = g.GET("/instances/:instanceID/releases", a.listReleases,
+	_ = g.GET("/instances/:instanceId/releases", a.listReleases,
 		forge.WithSummary("List releases"),
 		forge.WithDescription("Returns a paginated list of releases for an instance."),
 		forge.WithOperationID("listReleases"),
@@ -208,7 +208,7 @@ func (a *API) registerDeployRoutes(router forge.Router) {
 		forge.WithErrorResponses(),
 	)
 
-	_ = g.GET("/releases/:releaseID", a.getRelease,
+	_ = g.GET("/releases/:releaseId", a.getRelease,
 		forge.WithSummary("Get release"),
 		forge.WithDescription("Returns details of a specific release."),
 		forge.WithOperationID("getRelease"),
@@ -221,7 +221,7 @@ func (a *API) registerDeployRoutes(router forge.Router) {
 func (a *API) registerHealthRoutes(router forge.Router) {
 	g := router.Group("/v1", forge.WithGroupTags("health"))
 
-	_ = g.POST("/instances/:instanceID/health/checks", a.configureHealthCheck,
+	_ = g.POST("/instances/:instanceId/health/checks", a.configureHealthCheck,
 		forge.WithSummary("Configure health check"),
 		forge.WithDescription("Adds or updates a health check for an instance."),
 		forge.WithOperationID("configureHealthCheck"),
@@ -230,7 +230,7 @@ func (a *API) registerHealthRoutes(router forge.Router) {
 		forge.WithErrorResponses(),
 	)
 
-	_ = g.GET("/instances/:instanceID/health", a.getInstanceHealth,
+	_ = g.GET("/instances/:instanceId/health", a.getInstanceHealth,
 		forge.WithSummary("Get instance health"),
 		forge.WithDescription("Returns the aggregate health status of an instance."),
 		forge.WithOperationID("getInstanceHealth"),
@@ -238,7 +238,7 @@ func (a *API) registerHealthRoutes(router forge.Router) {
 		forge.WithErrorResponses(),
 	)
 
-	_ = g.GET("/instances/:instanceID/health/checks", a.listHealthChecks,
+	_ = g.GET("/instances/:instanceId/health/checks", a.listHealthChecks,
 		forge.WithSummary("List health checks"),
 		forge.WithDescription("Returns all health checks configured for an instance."),
 		forge.WithOperationID("listHealthChecks"),
@@ -267,7 +267,7 @@ func (a *API) registerHealthRoutes(router forge.Router) {
 func (a *API) registerTelemetryRoutes(router forge.Router) {
 	g := router.Group("/v1", forge.WithGroupTags("telemetry"))
 
-	_ = g.GET("/instances/:instanceID/metrics", a.queryMetrics,
+	_ = g.GET("/instances/:instanceId/metrics", a.queryMetrics,
 		forge.WithSummary("Query metrics"),
 		forge.WithDescription("Returns metric data points for an instance."),
 		forge.WithOperationID("queryMetrics"),
@@ -275,7 +275,7 @@ func (a *API) registerTelemetryRoutes(router forge.Router) {
 		forge.WithErrorResponses(),
 	)
 
-	_ = g.GET("/instances/:instanceID/logs", a.queryLogs,
+	_ = g.GET("/instances/:instanceId/logs", a.queryLogs,
 		forge.WithSummary("Query logs"),
 		forge.WithDescription("Returns log entries for an instance."),
 		forge.WithOperationID("queryLogs"),
@@ -283,7 +283,7 @@ func (a *API) registerTelemetryRoutes(router forge.Router) {
 		forge.WithErrorResponses(),
 	)
 
-	_ = g.GET("/instances/:instanceID/traces", a.queryTraces,
+	_ = g.GET("/instances/:instanceId/traces", a.queryTraces,
 		forge.WithSummary("Query traces"),
 		forge.WithDescription("Returns trace spans for an instance."),
 		forge.WithOperationID("queryTraces"),
@@ -291,7 +291,7 @@ func (a *API) registerTelemetryRoutes(router forge.Router) {
 		forge.WithErrorResponses(),
 	)
 
-	_ = g.GET("/instances/:instanceID/resources", a.getResources,
+	_ = g.GET("/instances/:instanceId/resources", a.getResources,
 		forge.WithSummary("Get resources"),
 		forge.WithDescription("Returns the current resource snapshot for an instance."),
 		forge.WithOperationID("getResources"),
@@ -299,7 +299,7 @@ func (a *API) registerTelemetryRoutes(router forge.Router) {
 		forge.WithErrorResponses(),
 	)
 
-	_ = g.GET("/instances/:instanceID/dashboard", a.getDashboard,
+	_ = g.GET("/instances/:instanceId/dashboard", a.getDashboard,
 		forge.WithSummary("Get dashboard"),
 		forge.WithDescription("Returns the telemetry dashboard for an instance."),
 		forge.WithOperationID("getDashboard"),
@@ -312,7 +312,7 @@ func (a *API) registerTelemetryRoutes(router forge.Router) {
 func (a *API) registerNetworkRoutes(router forge.Router) {
 	g := router.Group("/v1", forge.WithGroupTags("network"))
 
-	_ = g.POST("/instances/:instanceID/domains", a.addDomain,
+	_ = g.POST("/instances/:instanceId/domains", a.addDomain,
 		forge.WithSummary("Add domain"),
 		forge.WithDescription("Registers a custom domain for an instance."),
 		forge.WithOperationID("addDomain"),
@@ -321,7 +321,7 @@ func (a *API) registerNetworkRoutes(router forge.Router) {
 		forge.WithErrorResponses(),
 	)
 
-	_ = g.GET("/instances/:instanceID/domains", a.listDomains,
+	_ = g.GET("/instances/:instanceId/domains", a.listDomains,
 		forge.WithSummary("List domains"),
 		forge.WithDescription("Returns all domains for an instance."),
 		forge.WithOperationID("listDomains"),
@@ -329,7 +329,7 @@ func (a *API) registerNetworkRoutes(router forge.Router) {
 		forge.WithErrorResponses(),
 	)
 
-	_ = g.POST("/domains/:domainID/verify", a.verifyDomain,
+	_ = g.POST("/domains/:domainId/verify", a.verifyDomain,
 		forge.WithSummary("Verify domain"),
 		forge.WithDescription("Confirms DNS ownership of a domain."),
 		forge.WithOperationID("verifyDomain"),
@@ -337,7 +337,7 @@ func (a *API) registerNetworkRoutes(router forge.Router) {
 		forge.WithErrorResponses(),
 	)
 
-	_ = g.DELETE("/domains/:domainID", a.removeDomain,
+	_ = g.DELETE("/domains/:domainId", a.removeDomain,
 		forge.WithSummary("Remove domain"),
 		forge.WithDescription("Removes a custom domain."),
 		forge.WithOperationID("removeDomain"),
@@ -345,7 +345,7 @@ func (a *API) registerNetworkRoutes(router forge.Router) {
 		forge.WithErrorResponses(),
 	)
 
-	_ = g.POST("/instances/:instanceID/routes", a.addRoute,
+	_ = g.POST("/instances/:instanceId/routes", a.addRoute,
 		forge.WithSummary("Add route"),
 		forge.WithDescription("Creates a traffic route to an instance."),
 		forge.WithOperationID("addRoute"),
@@ -354,7 +354,7 @@ func (a *API) registerNetworkRoutes(router forge.Router) {
 		forge.WithErrorResponses(),
 	)
 
-	_ = g.GET("/instances/:instanceID/routes", a.listRoutes,
+	_ = g.GET("/instances/:instanceId/routes", a.listRoutes,
 		forge.WithSummary("List routes"),
 		forge.WithDescription("Returns all routes for an instance."),
 		forge.WithOperationID("listRoutes"),
@@ -362,7 +362,7 @@ func (a *API) registerNetworkRoutes(router forge.Router) {
 		forge.WithErrorResponses(),
 	)
 
-	_ = g.PATCH("/routes/:routeID", a.updateRoute,
+	_ = g.PATCH("/routes/:routeId", a.updateRoute,
 		forge.WithSummary("Update route"),
 		forge.WithDescription("Modifies an existing route."),
 		forge.WithOperationID("updateRoute"),
@@ -371,7 +371,7 @@ func (a *API) registerNetworkRoutes(router forge.Router) {
 		forge.WithErrorResponses(),
 	)
 
-	_ = g.DELETE("/routes/:routeID", a.removeRoute,
+	_ = g.DELETE("/routes/:routeId", a.removeRoute,
 		forge.WithSummary("Remove route"),
 		forge.WithDescription("Removes a traffic route."),
 		forge.WithOperationID("removeRoute"),
@@ -379,7 +379,7 @@ func (a *API) registerNetworkRoutes(router forge.Router) {
 		forge.WithErrorResponses(),
 	)
 
-	_ = g.POST("/domains/:domainID/cert", a.provisionCert,
+	_ = g.POST("/domains/:domainId/cert", a.provisionCert,
 		forge.WithSummary("Provision certificate"),
 		forge.WithDescription("Obtains or renews a TLS certificate for a domain."),
 		forge.WithOperationID("provisionCert"),
@@ -392,7 +392,7 @@ func (a *API) registerNetworkRoutes(router forge.Router) {
 func (a *API) registerSecretsRoutes(router forge.Router) {
 	g := router.Group("/v1", forge.WithGroupTags("secrets"))
 
-	_ = g.POST("/instances/:instanceID/secrets", a.setSecret,
+	_ = g.POST("/instances/:instanceId/secrets", a.setSecret,
 		forge.WithSummary("Set secret"),
 		forge.WithDescription("Creates or updates a secret for an instance."),
 		forge.WithOperationID("setSecret"),
@@ -401,7 +401,7 @@ func (a *API) registerSecretsRoutes(router forge.Router) {
 		forge.WithErrorResponses(),
 	)
 
-	_ = g.GET("/instances/:instanceID/secrets", a.listSecrets,
+	_ = g.GET("/instances/:instanceId/secrets", a.listSecrets,
 		forge.WithSummary("List secrets"),
 		forge.WithDescription("Returns all secrets for an instance (metadata only)."),
 		forge.WithOperationID("listSecrets"),
@@ -409,7 +409,7 @@ func (a *API) registerSecretsRoutes(router forge.Router) {
 		forge.WithErrorResponses(),
 	)
 
-	_ = g.DELETE("/instances/:instanceID/secrets/:key", a.deleteSecret,
+	_ = g.DELETE("/instances/:instanceId/secrets/:key", a.deleteSecret,
 		forge.WithSummary("Delete secret"),
 		forge.WithDescription("Removes a secret from an instance."),
 		forge.WithOperationID("deleteSecret"),
@@ -456,7 +456,7 @@ func (a *API) registerAdminRoutes(router forge.Router) {
 		forge.WithErrorResponses(),
 	)
 
-	_ = g.GET("/tenants/:tenantID", a.getTenant,
+	_ = g.GET("/tenants/:tenantId", a.getTenant,
 		forge.WithSummary("Get tenant"),
 		forge.WithDescription("Returns details of a specific tenant."),
 		forge.WithOperationID("getTenant"),
@@ -464,7 +464,7 @@ func (a *API) registerAdminRoutes(router forge.Router) {
 		forge.WithErrorResponses(),
 	)
 
-	_ = g.PATCH("/tenants/:tenantID", a.updateTenant,
+	_ = g.PATCH("/tenants/:tenantId", a.updateTenant,
 		forge.WithSummary("Update tenant"),
 		forge.WithDescription("Updates mutable fields of a tenant."),
 		forge.WithOperationID("updateTenant"),
@@ -473,7 +473,7 @@ func (a *API) registerAdminRoutes(router forge.Router) {
 		forge.WithErrorResponses(),
 	)
 
-	_ = g.POST("/tenants/:tenantID/suspend", a.suspendTenant,
+	_ = g.POST("/tenants/:tenantId/suspend", a.suspendTenant,
 		forge.WithSummary("Suspend tenant"),
 		forge.WithDescription("Suspends a tenant with a reason."),
 		forge.WithOperationID("suspendTenant"),
@@ -482,7 +482,7 @@ func (a *API) registerAdminRoutes(router forge.Router) {
 		forge.WithErrorResponses(),
 	)
 
-	_ = g.POST("/tenants/:tenantID/unsuspend", a.unsuspendTenant,
+	_ = g.POST("/tenants/:tenantId/unsuspend", a.unsuspendTenant,
 		forge.WithSummary("Unsuspend tenant"),
 		forge.WithDescription("Resumes a suspended tenant."),
 		forge.WithOperationID("unsuspendTenant"),
@@ -490,7 +490,7 @@ func (a *API) registerAdminRoutes(router forge.Router) {
 		forge.WithErrorResponses(),
 	)
 
-	_ = g.DELETE("/tenants/:tenantID", a.deleteTenant,
+	_ = g.DELETE("/tenants/:tenantId", a.deleteTenant,
 		forge.WithSummary("Delete tenant"),
 		forge.WithDescription("Permanently deletes a tenant."),
 		forge.WithOperationID("deleteTenant"),
@@ -498,7 +498,7 @@ func (a *API) registerAdminRoutes(router forge.Router) {
 		forge.WithErrorResponses(),
 	)
 
-	_ = g.GET("/tenants/:tenantID/quota", a.getQuota,
+	_ = g.GET("/tenants/:tenantId/quota", a.getQuota,
 		forge.WithSummary("Get quota"),
 		forge.WithDescription("Returns the quota and usage for a tenant."),
 		forge.WithOperationID("getQuota"),
@@ -506,7 +506,7 @@ func (a *API) registerAdminRoutes(router forge.Router) {
 		forge.WithErrorResponses(),
 	)
 
-	_ = g.PUT("/tenants/:tenantID/quota", a.setQuota,
+	_ = g.PUT("/tenants/:tenantId/quota", a.setQuota,
 		forge.WithSummary("Set quota"),
 		forge.WithDescription("Sets the resource quota for a tenant."),
 		forge.WithOperationID("setQuota"),

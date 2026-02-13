@@ -8,7 +8,7 @@ import (
 	"github.com/xraph/ctrlplane/deploy"
 )
 
-// deployInstance handles POST /v1/instances/:instanceID/deploy.
+// deployInstance handles POST /v1/instances/:instanceId/deploy.
 func (a *API) deployInstance(ctx forge.Context, req *DeployAPIRequest) (*deploy.Deployment, error) {
 	domainReq := deploy.DeployRequest{
 		InstanceID: req.InstanceID,
@@ -30,7 +30,7 @@ func (a *API) deployInstance(ctx forge.Context, req *DeployAPIRequest) (*deploy.
 	return nil, nil
 }
 
-// listDeployments handles GET /v1/instances/:instanceID/deployments.
+// listDeployments handles GET /v1/instances/:instanceId/deployments.
 func (a *API) listDeployments(ctx forge.Context, req *ListDeploymentsRequest) (*deploy.DeployListResult, error) {
 	limit := req.Limit
 	if limit == 0 {
@@ -50,7 +50,7 @@ func (a *API) listDeployments(ctx forge.Context, req *ListDeploymentsRequest) (*
 	return result, nil
 }
 
-// getDeployment handles GET /v1/deployments/:deploymentID.
+// getDeployment handles GET /v1/deployments/:deploymentId.
 func (a *API) getDeployment(ctx forge.Context, req *GetDeploymentRequest) (*deploy.Deployment, error) {
 	deployment, err := a.cp.Deploys.GetDeployment(ctx.Context(), req.DeploymentID)
 	if err != nil {
@@ -60,7 +60,7 @@ func (a *API) getDeployment(ctx forge.Context, req *GetDeploymentRequest) (*depl
 	return deployment, nil
 }
 
-// cancelDeployment handles POST /v1/deployments/:deploymentID/cancel.
+// cancelDeployment handles POST /v1/deployments/:deploymentId/cancel.
 func (a *API) cancelDeployment(ctx forge.Context, req *CancelDeploymentRequest) (*deploy.Deployment, error) {
 	if err := a.cp.Deploys.Cancel(ctx.Context(), req.DeploymentID); err != nil {
 		return nil, mapError(err)
@@ -72,7 +72,7 @@ func (a *API) cancelDeployment(ctx forge.Context, req *CancelDeploymentRequest) 
 	return nil, nil
 }
 
-// rollback handles POST /v1/instances/:instanceID/rollback.
+// rollback handles POST /v1/instances/:instanceId/rollback.
 func (a *API) rollback(ctx forge.Context, req *RollbackRequest) (*deploy.Deployment, error) {
 	deployment, err := a.cp.Deploys.Rollback(ctx.Context(), req.InstanceID, req.ReleaseID)
 	if err != nil {
@@ -85,7 +85,7 @@ func (a *API) rollback(ctx forge.Context, req *RollbackRequest) (*deploy.Deploym
 	return nil, nil
 }
 
-// listReleases handles GET /v1/instances/:instanceID/releases.
+// listReleases handles GET /v1/instances/:instanceId/releases.
 func (a *API) listReleases(ctx forge.Context, req *ListReleasesRequest) (*deploy.ReleaseListResult, error) {
 	limit := req.Limit
 	if limit == 0 {
