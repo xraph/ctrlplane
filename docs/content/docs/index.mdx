@@ -32,44 +32,37 @@ Ctrl Plane was built with a few principles in mind:
 
 ## Quick look
 
+Use Ctrl Plane as a Forge extension for the simplest setup:
+
 ```go
 package main
 
 import (
-    "context"
     "log"
-    "net/http"
 
-    "github.com/xraph/ctrlplane/api"
+    "github.com/xraph/forge"
+
     "github.com/xraph/ctrlplane/app"
+    "github.com/xraph/ctrlplane/extension"
     "github.com/xraph/ctrlplane/provider/docker"
     "github.com/xraph/ctrlplane/store/memory"
 )
 
 func main() {
-    ctx := context.Background()
-
-    memStore := memory.New()
-    dockerProv, _ := docker.New(docker.Config{
-        Host: "unix:///var/run/docker.sock",
-    })
-
-    cp, err := app.New(
-        app.WithStore(memStore),
-        app.WithProvider("docker", dockerProv),
-        app.WithDefaultProvider("docker"),
+    // Create a Forge app with OpenAPI docs
+    forgeApp := forge.New(
+        forge.WithAppName("ctrlplane"),
+        forge.WithAppVersion("0.1.0"),
     )
-    if err != nil {
-        log.Fatal(err)
-    }
 
-    if err := cp.Start(ctx); err != nil {
-        log.Fatal(err)
-    }
+    // Register Ctrl Plane as an extension
+    cpExt := extension.New(
+        extension.WithStore(app.WithStore(memory.New())),
+        extension.WithProvider("docker", docker.New(docker.Config{})),
+    )
 
-    handler := api.New(cp).Handler()
-    log.Println("listening on :8080")
-    log.Fatal(http.ListenAndServe(":8080", handler))
+    forgeApp.RegisterExtension(cpExt)
+    log.Fatal(forgeApp.Run())
 }
 ```
 

@@ -3,6 +3,7 @@ import {
   Activity,
   ArrowRight,
   Box,
+  Check,
   ChevronDown,
   Cloud,
   Github,
@@ -11,13 +12,45 @@ import {
   Package,
   Rocket,
   Shield,
+  Terminal,
   Zap,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { buttonVariants } from 'fumadocs-ui/components/ui/button';
-import type { LucideIcon } from 'lucide-react';
+import type { LucideProps } from 'lucide-react';
+import type { ComponentType } from 'react';
 
-const features: { icon: LucideIcon; title: string; description: string }[] = [
+/* ─── Syntax highlight helpers ─── */
+
+function Kw({ children }: { children: React.ReactNode }) {
+  return <span className="font-semibold text-fd-primary">{children}</span>;
+}
+
+function Str({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="text-emerald-600 dark:text-emerald-400">{children}</span>
+  );
+}
+
+function Cm({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="italic text-fd-muted-foreground/60">{children}</span>
+  );
+}
+
+function Fn({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="text-violet-600 dark:text-violet-400">{children}</span>
+  );
+}
+
+/* ─── Data ─── */
+
+const features: {
+  icon: ComponentType<LucideProps>;
+  title: string;
+  description: string;
+}[] = [
   {
     icon: Box,
     title: 'Instance Lifecycle',
@@ -125,37 +158,15 @@ const quickLinks = [
   { label: 'API Reference', href: '/docs/api-reference/http-api' },
 ];
 
-const codeExample = `package main
-
-import (
-    "context"
-    "log"
-    "net/http"
-
-    "github.com/xraph/ctrlplane/api"
-    "github.com/xraph/ctrlplane/app"
-    "github.com/xraph/ctrlplane/provider/docker"
-    "github.com/xraph/ctrlplane/store/memory"
-)
-
-func main() {
-    ctx := context.Background()
-    store := memory.New()
-    prov, _ := docker.New(docker.Config{})
-
-    cp, err := app.New(
-        app.WithStore(store),
-        app.WithProvider("docker", prov),
-        app.WithDefaultProvider("docker"),
-    )
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    cp.Start(ctx)
-    log.Fatal(http.ListenAndServe(":8080",
-        api.New(cp).Handler()))
-}`;
+const highlights: { icon: ComponentType<LucideProps>; text: string }[] = [
+  { icon: Check, text: 'Automatic OpenAPI spec generation' },
+  { icon: Check, text: 'Built-in health checks and lifecycle hooks' },
+  {
+    icon: Check,
+    text: 'Zero-config Docker, Kubernetes, AWS, or custom providers',
+  },
+  { icon: Check, text: 'Multi-tenant isolation out of the box' },
+];
 
 export default function HomePage() {
   return (
@@ -206,20 +217,56 @@ export default function HomePage() {
       {/* ─── Code Example ─── */}
       <section className="px-6 py-24">
         <div className="mx-auto grid max-w-6xl grid-cols-1 items-center gap-12 lg:grid-cols-2 lg:gap-16">
-          <div className="flex flex-col">
-            <p className="text-sm font-medium uppercase tracking-wide text-fd-muted-foreground">
-              Quick Start
-            </p>
-            <h2 className="mt-4 text-3xl font-bold tracking-tight text-fd-foreground sm:text-4xl">
-              Up and running
-              <br />
-              in minutes
-            </h2>
-            <p className="mt-4 max-w-md leading-relaxed text-fd-muted-foreground">
-              Import the packages you need, wire up a provider, and start
-              serving. No YAML. No config files. No CLI. Just Go.
-            </p>
+          {/* Left column — enriched with gradient, highlights, and CTA */}
+          <div className="relative flex flex-col">
+            {/* Gradient accent blob */}
+            <div className="pointer-events-none absolute -left-16 -top-16 size-64 rounded-full bg-fd-primary/[0.06] blur-3xl" />
+
+            <div className="relative">
+              <div className="mb-4 inline-flex items-center gap-2 rounded-lg bg-fd-muted px-3 py-1.5">
+                <Terminal className="size-4 text-fd-muted-foreground" />
+                <span className="text-sm font-medium uppercase tracking-wide text-fd-muted-foreground">
+                  Quick Start
+                </span>
+              </div>
+              <h2 className="text-3xl font-bold tracking-tight text-fd-foreground sm:text-4xl">
+                Up and running
+                <br />
+                in minutes
+              </h2>
+              <p className="mt-4 max-w-md leading-relaxed text-fd-muted-foreground">
+                Mount Ctrl Plane as a Forge extension, register your provider,
+                and you have a production-ready control plane with OpenAPI docs,
+                health checks, and background workers.
+              </p>
+
+              {/* Feature highlights */}
+              <ul className="mt-8 flex flex-col gap-3">
+                {highlights.map((item) => (
+                  <li
+                    key={item.text}
+                    className="flex items-start gap-3 text-sm text-fd-muted-foreground"
+                  >
+                    <item.icon className="mt-0.5 size-4 shrink-0 text-fd-primary" />
+                    {item.text}
+                  </li>
+                ))}
+              </ul>
+
+              {/* Quick start link */}
+              <div className="mt-8">
+                <Link
+                  href="/docs/getting-started"
+                  className="inline-flex items-center gap-1.5 text-sm font-medium text-fd-primary transition-colors hover:text-fd-primary/80"
+                >
+                  Read the full guide
+                  <ArrowRight className="size-3.5" />
+                </Link>
+              </div>
+            </div>
           </div>
+
+          {/* Right column — code window with Forge-style example + syntax highlighting */}
           <div className="overflow-hidden rounded-xl border border-fd-border bg-fd-card shadow-sm">
             <div className="flex items-center gap-2 border-b border-fd-border bg-fd-muted/50 px-4 py-3">
               <div className="flex gap-1.5">
@@ -233,7 +280,76 @@ export default function HomePage() {
             </div>
             <div className="overflow-x-auto p-5">
               <pre className="font-mono text-[13px] leading-relaxed text-fd-foreground/90">
-                <code>{codeExample}</code>
+                <code>
+                  <Kw>package</Kw> main{'\n'}
+                  {'\n'}
+                  <Kw>import</Kw> ({'\n'}
+                  {'    '}
+                  <Str>&quot;log&quot;</Str>
+                  {'\n'}
+                  {'\n'}
+                  {'    '}
+                  <Str>&quot;github.com/xraph/forge&quot;</Str>
+                  {'\n'}
+                  {'\n'}
+                  {'    '}
+                  <Str>&quot;github.com/xraph/ctrlplane/app&quot;</Str>
+                  {'\n'}
+                  {'    '}
+                  <Str>&quot;github.com/xraph/ctrlplane/extension&quot;</Str>
+                  {'\n'}
+                  {'    '}
+                  <Str>
+                    &quot;github.com/xraph/ctrlplane/provider/docker&quot;
+                  </Str>
+                  {'\n'}
+                  {'    '}
+                  <Str>&quot;github.com/xraph/ctrlplane/store/memory&quot;</Str>
+                  {'\n'}){'\n'}
+                  {'\n'}
+                  <Kw>func</Kw> <Fn>main</Fn>() {'{'}
+                  {'\n'}
+                  {'    '}
+                  <Cm>// Create a Forge app with OpenAPI docs</Cm>
+                  {'\n'}
+                  {'    '}forgeApp := forge.
+                  <Fn>New</Fn>({'\n'}
+                  {'        '}forge.
+                  <Fn>WithAppName</Fn>(<Str>&quot;ctrlplane&quot;</Str>),{'\n'}
+                  {'        '}forge.
+                  <Fn>WithAppVersion</Fn>(<Str>&quot;0.1.0&quot;</Str>),{'\n'}
+                  {'    '}){'\n'}
+                  {'\n'}
+                  {'    '}
+                  <Cm>// Register Ctrl Plane as an extension</Cm>
+                  {'\n'}
+                  {'    '}cpExt := extension.
+                  <Fn>New</Fn>({'\n'}
+                  {'        '}extension.
+                  <Fn>WithStore</Fn>({'\n'}
+                  {'            '}app.
+                  <Fn>WithStore</Fn>(memory.
+                  <Fn>New</Fn>()),{'\n'}
+                  {'        '}),{'\n'}
+                  {'        '}extension.
+                  <Fn>WithProvider</Fn>({'\n'}
+                  {'            '}
+                  <Str>&quot;docker&quot;</Str>,{'\n'}
+                  {'            '}docker.
+                  <Fn>New</Fn>(docker.Config{'{}'})
+                  ,{'\n'}
+                  {'        '}),{'\n'}
+                  {'    '}){'\n'}
+                  {'\n'}
+                  {'    '}forgeApp.
+                  <Fn>RegisterExtension</Fn>(cpExt)
+                  {'\n'}
+                  {'    '}log.
+                  <Fn>Fatal</Fn>(forgeApp.
+                  <Fn>Run</Fn>())
+                  {'\n'}
+                  {'}'}
+                </code>
               </pre>
             </div>
           </div>
@@ -345,7 +461,7 @@ export default function HomePage() {
 
       {/* ─── Principles ─── */}
       <section className="border-t border-fd-border px-6 py-24">
-        <div className="mx-auto max-w-5xl">
+        <div className="mx-auto max-w-6xl">
           <h2 className="text-center text-3xl font-bold tracking-tight text-fd-foreground sm:text-4xl">
             Built on principles
           </h2>
