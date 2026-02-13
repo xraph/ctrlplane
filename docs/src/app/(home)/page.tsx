@@ -1,4 +1,5 @@
-import Link from "next/link";
+import { buttonVariants } from "fumadocs-ui/components/ui/button";
+import type { LucideProps } from "lucide-react";
 import {
   Activity,
   ArrowRight,
@@ -15,32 +16,122 @@ import {
   Terminal,
   Zap,
 } from "lucide-react";
-import { cn } from "@/lib/cn";
-import { buttonVariants } from "fumadocs-ui/components/ui/button";
-import type { LucideProps } from "lucide-react";
+import Link from "next/link";
 import type { ComponentType } from "react";
+import { cn } from "@/lib/cn";
 
 /* ─── Syntax highlight helpers ─── */
 
-function Kw({ children }: { children: React.ReactNode }) {
-  return <span className="font-semibold text-fd-primary">{children}</span>;
+const tokenStyles: Record<string, string> = {
+  keyword: "font-semibold text-fd-primary",
+  string: "text-emerald-600 dark:text-emerald-400",
+  comment: "italic text-fd-muted-foreground/60",
+  function: "text-violet-600 dark:text-violet-400",
+};
+
+const goRules: [RegExp, string][] = [
+  [/(\/\/.*)$/gm, "comment"],
+  [/("(?:[^"\\]|\\.)*")/g, "string"],
+  [/\b(package|import|func|var|const|type|return|if|else|for|range|defer|go|chan|map|struct|interface)\b/g, "keyword"],
+  [/\b([A-Z]\w*)\s*[({]/g, "function"],
+  [/\.([A-Z]\w*)\s*\(/g, "function"],
+];
+
+function highlightGo(code: string): React.ReactNode[] {
+  const lines = code.split("\n");
+
+  return lines.map((line, i) => {
+    const segments: { start: number; end: number; style: string; group: number }[] = [];
+
+    for (const [re, style] of goRules) {
+      re.lastIndex = 0;
+      let m: RegExpExecArray | null = null;
+
+      while ((m = re.exec(line)) !== null) {
+        const group = style === "function" ? 1 : 1;
+        const text = m[group] ?? m[0];
+        const start = m.index + (m[0].indexOf(text));
+
+        segments.push({ start, end: start + text.length, style, group });
+      }
+    }
+
+    segments.sort((a, b) => a.start - b.start);
+
+    // Remove overlaps — earlier rules win
+    const filtered: typeof segments = [];
+
+    for (const seg of segments) {
+      if (filtered.every((f) => seg.start >= f.end || seg.end <= f.start)) {
+        filtered.push(seg);
+      }
+    }
+
+    filtered.sort((a, b) => a.start - b.start);
+
+    const parts: React.ReactNode[] = [];
+    let cursor = 0;
+
+    for (const seg of filtered) {
+      if (seg.start > cursor) {
+        parts.push(line.slice(cursor, seg.start));
+      }
+
+      parts.push(
+        <span key={`${i}-${seg.start}`} className={tokenStyles[seg.style]}>
+          {line.slice(seg.start, seg.end)}
+        </span>,
+      );
+      cursor = seg.end;
+    }
+
+    if (cursor < line.length) {
+      parts.push(line.slice(cursor));
+    }
+
+    return (
+      <span key={i}>
+        {parts}
+        {i < lines.length - 1 ? "\n" : null}
+      </span>
+    );
+  });
 }
 
-function Str({ children }: { children: React.ReactNode }) {
-  return (
-    <span className="text-emerald-600 dark:text-emerald-400">{children}</span>
-  );
-}
+const codeExample = `package main
 
-function Cm({ children }: { children: React.ReactNode }) {
-  return <span className="italic text-fd-muted-foreground/60">{children}</span>;
-}
+import (
+    "log"
 
-function Fn({ children }: { children: React.ReactNode }) {
-  return (
-    <span className="text-violet-600 dark:text-violet-400">{children}</span>
-  );
-}
+    "github.com/xraph/forge"
+
+    "github.com/xraph/ctrlplane/app"
+    "github.com/xraph/ctrlplane/extension"
+    "github.com/xraph/ctrlplane/provider/docker"
+    "github.com/xraph/ctrlplane/store/memory"
+)
+
+func main() {
+    // Create a Forge app with OpenAPI docs
+    forgeApp := forge.New(
+        forge.WithAppName("ctrlplane"),
+        forge.WithAppVersion("0.1.0"),
+    )
+
+    // Register Ctrl Plane as an extension
+    cpExt := extension.New(
+        extension.WithStore(
+            app.WithStore(memory.New()),
+        ),
+        extension.WithProvider(
+            "docker",
+            docker.New(docker.Config{}),
+        ),
+    )
+
+    forgeApp.RegisterExtension(cpExt)
+    log.Fatal(forgeApp.Run())
+}`;
 
 /* ─── Data ─── */
 
@@ -278,75 +369,7 @@ export default function HomePage() {
             </div>
             <div className="overflow-x-auto p-5">
               <pre className="font-mono text-[13px] leading-relaxed text-fd-foreground/90">
-                <code>
-                  <Kw>package</Kw> main{"\n"}
-                  {"\n"}
-                  <Kw>import</Kw> ({"\n"}
-                  {"    "}
-                  <Str>&quot;log&quot;</Str>
-                  {"\n"}
-                  {"\n"}
-                  {"    "}
-                  <Str>&quot;github.com/xraph/forge&quot;</Str>
-                  {"\n"}
-                  {"\n"}
-                  {"    "}
-                  <Str>&quot;github.com/xraph/ctrlplane/app&quot;</Str>
-                  {"\n"}
-                  {"    "}
-                  <Str>&quot;github.com/xraph/ctrlplane/extension&quot;</Str>
-                  {"\n"}
-                  {"    "}
-                  <Str>
-                    &quot;github.com/xraph/ctrlplane/provider/docker&quot;
-                  </Str>
-                  {"\n"}
-                  {"    "}
-                  <Str>&quot;github.com/xraph/ctrlplane/store/memory&quot;</Str>
-                  {"\n"}){"\n"}
-                  {"\n"}
-                  <Kw>func</Kw> <Fn>main</Fn>() {"{"}
-                  {"\n"}
-                  {"    "}
-                  <Cm>// Create a Forge app with OpenAPI docs</Cm>
-                  {"\n"}
-                  {"    "}forgeApp := forge.
-                  <Fn>New</Fn>({"\n"}
-                  {"        "}forge.
-                  <Fn>WithAppName</Fn>(<Str>&quot;ctrlplane&quot;</Str>),{"\n"}
-                  {"        "}forge.
-                  <Fn>WithAppVersion</Fn>(<Str>&quot;0.1.0&quot;</Str>),{"\n"}
-                  {"    "}){"\n"}
-                  {"\n"}
-                  {"    "}
-                  <Cm>// Register Ctrl Plane as an extension</Cm>
-                  {"\n"}
-                  {"    "}cpExt := extension.
-                  <Fn>New</Fn>({"\n"}
-                  {"        "}extension.
-                  <Fn>WithStore</Fn>({"\n"}
-                  {"            "}app.
-                  <Fn>WithStore</Fn>(memory.
-                  <Fn>New</Fn>()),{"\n"}
-                  {"        "}),{"\n"}
-                  {"        "}extension.
-                  <Fn>WithProvider</Fn>({"\n"}
-                  {"            "}
-                  <Str>&quot;docker&quot;</Str>,{"\n"}
-                  {"            "}docker.
-                  <Fn>New</Fn>(docker.Config{"{}"}) ,{"\n"}
-                  {"        "}),{"\n"}
-                  {"    "}){"\n"}
-                  {"\n"}
-                  {"    "}forgeApp.
-                  <Fn>RegisterExtension</Fn>(cpExt)
-                  {"\n"}
-                  {"    "}log.
-                  <Fn>Fatal</Fn>(forgeApp.
-                  <Fn>Run</Fn>())
-                  {"\n"}
-                  {"}"}
-                </code>
+                <code>{highlightGo(codeExample)}</code>
               </pre>
             </div>
           </div>
