@@ -182,8 +182,8 @@ export default function HomePage() {
             <Link
               href="/docs/getting-started"
               className={cn(
-                buttonVariants({ variant: 'default', size: 'lg' }),
-                'gap-2',
+                buttonVariants({ variant: 'primary' }),
+                'gap-2 px-6 py-2.5',
               )}
             >
               Get Started
@@ -192,8 +192,8 @@ export default function HomePage() {
             <Link
               href="https://github.com/xraph/ctrlplane"
               className={cn(
-                buttonVariants({ variant: 'outline', size: 'lg' }),
-                'gap-2',
+                buttonVariants({ variant: 'outline' }),
+                'gap-2 px-6 py-2.5',
               )}
             >
               <Github className="size-4" />
@@ -383,8 +383,8 @@ export default function HomePage() {
             <Link
               href="/docs/getting-started"
               className={cn(
-                buttonVariants({ variant: 'default', size: 'lg' }),
-                'gap-2',
+                buttonVariants({ variant: 'primary' }),
+                'gap-2 px-6 py-2.5',
               )}
             >
               Quick Start
@@ -393,7 +393,8 @@ export default function HomePage() {
             <Link
               href="/docs"
               className={cn(
-                buttonVariants({ variant: 'outline', size: 'lg' }),
+                buttonVariants({ variant: 'outline' }),
+                'px-6 py-2.5',
               )}
             >
               Documentation
