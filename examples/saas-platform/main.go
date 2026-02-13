@@ -106,11 +106,11 @@ func initStore(storeType string) (store.Store, error) {
 
 // PlatformStatus combines system stats, provider info, and runtime metadata.
 type PlatformStatus struct {
-	Stats     *admin.SystemStats    `json:"stats"`
+	Stats     *admin.SystemStats     `json:"stats"`
 	Providers []admin.ProviderStatus `json:"providers"`
-	StoreType string                `json:"store_type"`
-	Uptime    string                `json:"uptime"`
-	Version   string                `json:"version"`
+	StoreType string                 `json:"store_type"`
+	Uptime    string                 `json:"uptime"`
+	Version   string                 `json:"version"`
 }
 
 // PlatformHealth reports store connectivity and basic health.
