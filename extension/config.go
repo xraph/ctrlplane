@@ -16,6 +16,9 @@ type Config struct {
 	// AuthProvider is an explicitly configured auth provider.
 	// If nil, the extension auto-discovers from Forge's DI container.
 	AuthProvider auth.Provider `json:"-"`
+
+	// DisableRoutes disables the registration of routes.
+	DisableRoutes bool `default:"false" json:"disable_routes"`
 }
 
 // ToCtrlPlaneConfig returns the embedded ctrlplane config.

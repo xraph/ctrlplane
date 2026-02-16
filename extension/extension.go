@@ -111,7 +111,9 @@ func (e *Extension) Init(fapp forge.App) error {
 	}
 
 	e.api = api.New(e.cp, fapp.Router())
-	e.api.RegisterRoutes(fapp.Router())
+	if !e.config.DisableRoutes {
+		e.api.RegisterRoutes(fapp.Router())
+	}
 
 	return nil
 }
