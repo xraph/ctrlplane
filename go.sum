@@ -307,12 +307,12 @@ github.com/xdg-go/stringprep v1.0.4 h1:XLI/Ng3O1Atzq0oBs3TWm+5ZVgkq2aqdlvP9JtoZ6
 github.com/xdg-go/stringprep v1.0.4/go.mod h1:mPGuuIYwz7CmR2bT9j4GbQqutWS1zV24gijq1dTyGkM=
 github.com/xraph/confy v0.0.3 h1:IaTxV0wyQx61amDFdK/tJwfQDGT1z3lHRL8V+NDZxjU=
 github.com/xraph/confy v0.0.3/go.mod h1:/uhVfKibPR+kn7MI9LkVVekk84NP0sxsKZ9sFQoQ5Kc=
-github.com/xraph/forge v0.9.7 h1:pfYKRQyJIQ96FlvSCe6GZYxZdAI58a1G/y87HfZVEyo=
-github.com/xraph/forge v0.9.7/go.mod h1:zBx/VeEwD5Jl7vY6Kv3+QdRKUhUXSQHti97QkOD4WGQ=
+github.com/xraph/forge v0.9.9 h1:u9dWjwanOpLh7LOPqBScWeMLO87dehZUiSWF3SljI30=
+github.com/xraph/forge v0.9.9/go.mod h1:zBx/VeEwD5Jl7vY6Kv3+QdRKUhUXSQHti97QkOD4WGQ=
 github.com/xraph/go-utils v0.0.11 h1:9CT0l4yQ8RWIQJmFQcxjA1cb8Re2fHxJPDNmdmG8Vz8=
 github.com/xraph/go-utils v0.0.11/go.mod h1:yp+PD9dXSA7tA9Pxmuveg5E7Ht1iHIVov8yMvanMG7U=
-github.com/xraph/vessel v0.0.3 h1:h1ECL4ASRTbtI6diJ6MYM6gW5UTmIbq+lqs4c4tlqbY=
-github.com/xraph/vessel v0.0.3/go.mod h1:e1TQfzvBcAvCPdfYC0+9VoOW5SrKX07VNdaimENU8B0=
+github.com/xraph/vessel v0.0.5 h1:vA/H+lB6MzBkvesysBVHRaBFtHxgVLTExCfuwWMJbjs=
+github.com/xraph/vessel v0.0.5/go.mod h1:t7UbkGensTnqpvda2gOnH2/lnAwnUpa5oEDFHwIqQ+k=
 github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78 h1:ilQV1hzziu+LLM3zUTJ0trRztfwgjqKnBWNtSRkbmwM=
 github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78/go.mod h1:aL8wCCfTfSfmXjznFBSZNN13rSJjlIOI1fUNAtF7rmI=
 github.com/yuin/goldmark v1.4.13/go.mod h1:6yULJ656Px+3vBD8DxQVa3kxgyrAnzto9xy5taEt/CY=
