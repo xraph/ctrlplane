@@ -9,8 +9,8 @@ require (
 	github.com/uptrace/bun/dialect/sqlitedialect v1.2.16
 	github.com/uptrace/bun/driver/pgdriver v1.2.16
 	github.com/uptrace/bun/driver/sqliteshim v1.2.16
-	github.com/xraph/forge v0.9.7
-	github.com/xraph/vessel v0.0.3
+	github.com/xraph/forge v0.9.9
+	github.com/xraph/vessel v0.0.5
 	go.jetify.com/typeid/v2 v2.0.0-alpha.3
 	go.mongodb.org/mongo-driver/v2 v2.5.0
 )
