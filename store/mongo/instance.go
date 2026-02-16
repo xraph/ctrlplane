@@ -5,12 +5,13 @@ import (
 	"errors"
 	"fmt"
 
-	ctrlplane "github.com/xraph/ctrlplane"
-	"github.com/xraph/ctrlplane/id"
-	"github.com/xraph/ctrlplane/instance"
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
+
+	ctrlplane "github.com/xraph/ctrlplane"
+	"github.com/xraph/ctrlplane/id"
+	"github.com/xraph/ctrlplane/instance"
 )
 
 // Insert persists a new instance.

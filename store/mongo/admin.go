@@ -5,11 +5,12 @@ import (
 	"errors"
 	"fmt"
 
-	ctrlplane "github.com/xraph/ctrlplane"
-	"github.com/xraph/ctrlplane/admin"
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
+
+	ctrlplane "github.com/xraph/ctrlplane"
+	"github.com/xraph/ctrlplane/admin"
 )
 
 // InsertTenant persists a new tenant.

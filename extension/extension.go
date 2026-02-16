@@ -78,7 +78,7 @@ func (e *Extension) Register(fapp forge.App) error {
 		return err
 	}
 
-	if err := vessel.ProvideConstructor(fapp.Container(), func() (*app.CtrlPlane, error) {
+	if err := vessel.Provide(fapp.Container(), func() (*app.CtrlPlane, error) {
 		return e.cp, nil
 	}); err != nil {
 		return err
