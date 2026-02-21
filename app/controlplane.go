@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/xraph/ctrlplane/health"
 	"github.com/xraph/ctrlplane/instance"
 	"github.com/xraph/ctrlplane/network"
+	"github.com/xraph/ctrlplane/plugin"
 	"github.com/xraph/ctrlplane/provider"
 	"github.com/xraph/ctrlplane/secrets"
 	"github.com/xraph/ctrlplane/store"
@@ -23,12 +25,14 @@ import (
 
 // CtrlPlane is the root orchestrator that wires all subsystems together.
 type CtrlPlane struct {
-	config    ctrlplane.Config
-	store     store.Store
-	auth      auth.Provider
-	providers *provider.Registry
-	events    event.Bus
-	scheduler *worker.Scheduler
+	config      ctrlplane.Config
+	store       store.Store
+	auth        auth.Provider
+	providers   *provider.Registry
+	events      event.Bus
+	scheduler   *worker.Scheduler
+	extensions  *plugin.Registry
+	pendingExts []plugin.Extension
 
 	// Services are the public subsystem interfaces.
 	Instances instance.Service
@@ -53,6 +57,14 @@ func New(opts ...Option) (*CtrlPlane, error) {
 			return nil, err
 		}
 	}
+
+	// Wire up the plugin extension registry.
+	cp.extensions = plugin.NewRegistry(slog.Default())
+	for _, ext := range cp.pendingExts {
+		cp.extensions.Register(ext)
+	}
+
+	cp.pendingExts = nil
 
 	cp.wireServices()
 
@@ -79,6 +91,11 @@ func (cp *CtrlPlane) Events() event.Bus {
 	return cp.events
 }
 
+// Extensions returns the plugin registry.
+func (cp *CtrlPlane) Extensions() *plugin.Registry {
+	return cp.extensions
+}
+
 // Config returns the current configuration.
 func (cp *CtrlPlane) Config() ctrlplane.Config {
 	return cp.config
@@ -97,6 +114,11 @@ func (cp *CtrlPlane) Start(ctx context.Context) error {
 
 // Stop gracefully shuts down workers and flushes state.
 func (cp *CtrlPlane) Stop(ctx context.Context) error {
+	// Emit shutdown to all plugins first.
+	if cp.extensions != nil {
+		cp.extensions.EmitShutdown(ctx)
+	}
+
 	if err := cp.scheduler.Stop(ctx); err != nil {
 		return err
 	}
@@ -150,4 +172,10 @@ func (cp *CtrlPlane) wireServices() {
 	cp.scheduler.Register(worker.NewTelemetryCollector(cp.Telemetry, cp.providers, telemetryInterval))
 	cp.scheduler.Register(worker.NewGarbageCollector(cp.store, 5*time.Minute))
 	cp.scheduler.Register(worker.NewCertRenewer(cp.Network, cp.events, 12*time.Hour))
+
+	// Subscribe the plugin registry to all events on the bus.
+	// This bridges fire-and-forget events to plugin lifecycle hooks.
+	if cp.extensions != nil {
+		cp.events.Subscribe(cp.extensions.HandleEvent)
+	}
 }

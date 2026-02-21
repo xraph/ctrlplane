@@ -3,6 +3,7 @@ package extension
 import (
 	"github.com/xraph/ctrlplane/app"
 	"github.com/xraph/ctrlplane/auth"
+	"github.com/xraph/ctrlplane/plugin"
 	"github.com/xraph/ctrlplane/provider"
 )
 
@@ -41,5 +42,12 @@ func WithConfig(cfg Config) ExtOption {
 func WithStore(opt app.Option) ExtOption {
 	return func(e *Extension) {
 		e.opts = append(e.opts, opt)
+	}
+}
+
+// WithExtension registers a plugin extension (lifecycle hooks).
+func WithExtension(x plugin.Extension) ExtOption {
+	return func(e *Extension) {
+		e.opts = append(e.opts, app.WithExtension(x))
 	}
 }

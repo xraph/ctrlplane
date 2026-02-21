@@ -131,6 +131,11 @@ linters:
     - thelper
     - nonamedreturns
 
+  settings:
+    gosec:
+      excludes:
+        - G704 # Health check target URLs are stored config, not user-tainted input.
+
   exclusions:
     generated: lax
     warn-unused: true

@@ -4,6 +4,7 @@ import (
 	ctrlplane "github.com/xraph/ctrlplane"
 	"github.com/xraph/ctrlplane/auth"
 	"github.com/xraph/ctrlplane/event"
+	"github.com/xraph/ctrlplane/plugin"
 	"github.com/xraph/ctrlplane/provider"
 	"github.com/xraph/ctrlplane/store"
 )
@@ -60,6 +61,15 @@ func WithEventBus(b event.Bus) Option {
 func WithDefaultProvider(name string) Option {
 	return func(cp *CtrlPlane) error {
 		cp.providers.SetDefault(name)
+
+		return nil
+	}
+}
+
+// WithExtension registers a plugin extension with the control plane.
+func WithExtension(ext plugin.Extension) Option {
+	return func(cp *CtrlPlane) error {
+		cp.pendingExts = append(cp.pendingExts, ext)
 
 		return nil
 	}

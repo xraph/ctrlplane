@@ -9,7 +9,8 @@ require (
 	github.com/uptrace/bun/dialect/sqlitedialect v1.2.16
 	github.com/uptrace/bun/driver/pgdriver v1.2.16
 	github.com/uptrace/bun/driver/sqliteshim v1.2.16
-	github.com/xraph/forge v0.9.10
+	github.com/xraph/forge v0.9.12
+	github.com/xraph/go-utils v0.0.11
 	github.com/xraph/vessel v0.0.5
 	go.jetify.com/typeid/v2 v2.0.0-alpha.3
 	go.mongodb.org/mongo-driver/v2 v2.5.0
@@ -82,7 +83,6 @@ require (
 	github.com/xdg-go/scram v1.2.0 // indirect
 	github.com/xdg-go/stringprep v1.0.4 // indirect
 	github.com/xraph/confy v0.0.3 // indirect
-	github.com/xraph/go-utils v0.0.11 // indirect
 	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78 // indirect
 	go.opentelemetry.io/auto/sdk v1.1.0 // indirect
 	go.opentelemetry.io/otel v1.38.0 // indirect
