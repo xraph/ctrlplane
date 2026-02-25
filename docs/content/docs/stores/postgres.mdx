@@ -1,0 +1,68 @@
+---
+title: PostgreSQL Store
+description: Production-grade PostgreSQL store using Grove ORM with pgdriver.
+---
+
+The PostgreSQL store (`store/postgres`) uses the [Grove ORM](https://github.com/xraph/grove) with `pgdriver` to persist data in PostgreSQL. It is the recommended store for production SQL deployments.
+
+## When to use
+
+- **Production deployments** -- battle-tested SQL database with ACID transactions.
+- **PostgreSQL environments** -- full query power, JSON operators, CTEs.
+- **Multi-instance services** -- shared database for horizontal scaling.
+- **Teams familiar with SQL** -- leverage existing database expertise.
+
+## Configuration
+
+```go
+import (
+    "github.com/xraph/grove"
+    "github.com/xraph/grove/drivers/pgdriver"
+    "github.com/xraph/ctrlplane/store/postgres"
+)
+
+db, err := grove.Open(pgdriver.Open("postgres://user:pass@localhost:5432/ctrlplane?sslmode=disable"))
+if err != nil {
+    log.Fatal(err)
+}
+
+s := postgres.New(db)
+if err := s.Migrate(ctx); err != nil {
+    log.Fatal(err)
+}
+```
+
+### With the app
+
+```go
+cp, err := app.New(
+    app.WithStore(s),
+)
+```
+
+## Internals
+
+| Aspect | Detail |
+|--------|--------|
+| **Driver** | Grove ORM with `pgdriver` (PostgreSQL) |
+| **Migrations** | Grove migration orchestrator with programmatic migrations |
+| **Transactions** | PostgreSQL-level ACID transactions |
+| **Concurrency** | Full MVCC with row-level locking |
+| **Migrate** | Creates tables, indexes, constraints |
+| **Ping** | `db.Ping(ctx)` |
+| **Close** | Closes the database connection |
+
+## Limitations
+
+- **External dependency** -- requires a running PostgreSQL instance.
+- **Schema migrations** -- must run `Migrate()` before first use.
+
+## Comparison
+
+| Feature | Memory | Badger | PostgreSQL | SQLite | MongoDB |
+|---------|--------|--------|------------|--------|---------|
+| Setup | None | Path only | DSN | File path | URI |
+| Persistence | No | Yes | Yes | Yes | Yes |
+| Multi-process | No | No | Yes | No | Yes |
+| Query flexibility | Low | Low | High | Medium | High |
+| Best for | Tests | Embedded KV | Production SQL | Embedded SQL | Production NoSQL |

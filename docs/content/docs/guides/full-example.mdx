@@ -26,25 +26,36 @@ The example lives inside the Ctrl Plane module, so no separate `go.mod` is neede
 
 ## Step 1: Store selection
 
-The example supports all four store backends via a single environment variable:
+The example supports all five store backends via a single environment variable:
 
 ```go
 func initStore(storeType string) (store.Store, error) {
     switch strings.ToLower(storeType) {
-    case "bun":
-        return bunstore.New(bunstore.Config{
-            Driver: bunstore.Driver(envOrDefault("CP_BUN_DRIVER", "postgres")),
-            DSN:    envOrDefault("CP_BUN_DSN", "..."),
-        })
+    case "postgres":
+        db, err := grove.Open(pgdriver.Open(envOrDefault("CP_PG_DSN", "postgres://localhost:5432/ctrlplane?sslmode=disable")))
+        if err != nil {
+            return nil, err
+        }
+        return pgstore.New(db), nil
+    case "sqlite":
+        db, err := grove.Open(sqlitedriver.Open(envOrDefault("CP_SQLITE_PATH", "ctrlplane.db")))
+        if err != nil {
+            return nil, err
+        }
+        return sqlitestore.New(db), nil
     case "badger":
         return badger.New(badger.Config{
             Path: envOrDefault("CP_BADGER_PATH", "./data/badger"),
         })
     case "mongo":
-        return mongo.New(mongo.Config{
-            URI:      envOrDefault("CP_MONGO_URI", "mongodb://localhost:27017"),
-            Database: envOrDefault("CP_MONGO_DATABASE", "ctrlplane"),
-        })
+        db, err := grove.Open(mongodriver.Open(
+            envOrDefault("CP_MONGO_URI", "mongodb://localhost:27017"),
+            envOrDefault("CP_MONGO_DATABASE", "ctrlplane"),
+        ))
+        if err != nil {
+            return nil, err
+        }
+        return mongostore.New(db), nil
     case "memory", "":
         return memory.New(), nil
     }
@@ -58,7 +69,7 @@ dataStore.Migrate(ctx)
 dataStore.Ping(ctx)
 ```
 
-See the [Memory](/docs/stores/memory), [Badger](/docs/stores/badger), [Bun](/docs/stores/bun), and [MongoDB](/docs/stores/mongo) store pages for configuration details.
+See the [Memory](/docs/stores/memory), [Badger](/docs/stores/badger), [PostgreSQL](/docs/stores/postgres), [SQLite](/docs/stores/sqlite), and [MongoDB](/docs/stores/mongo) store pages for configuration details.
 
 ## Step 2: Forge application
 
@@ -190,8 +201,8 @@ go run ./examples/saas-platform
 ### PostgreSQL
 
 ```bash
-CP_STORE=bun \
-CP_BUN_DSN="postgres://user:pass@localhost:5432/ctrlplane?sslmode=disable" \
+CP_STORE=postgres \
+CP_PG_DSN="postgres://user:pass@localhost:5432/ctrlplane?sslmode=disable" \
 go run ./examples/saas-platform
 ```
 

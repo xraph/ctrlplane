@@ -85,10 +85,10 @@ Secondary indexes use additional prefixes (`islg:` for instance slugs, `tslg:` f
 
 ## Comparison
 
-| Feature | Memory | Badger | Bun | MongoDB |
-|---------|--------|--------|-----|---------|
-| Setup | None | Path only | DSN | URI |
-| Persistence | No | Yes | Yes | Yes |
-| Multi-process | No | No | Yes | Yes |
-| Query flexibility | Low | Low | High | High |
-| Best for | Tests | Embedded | Production SQL | Production NoSQL |
+| Feature | Memory | Badger | PostgreSQL | SQLite | MongoDB |
+|---------|--------|--------|------------|--------|---------|
+| Setup | None | Path only | DSN | File path | URI |
+| Persistence | No | Yes | Yes | Yes | Yes |
+| Multi-process | No | No | Yes | No | Yes |
+| Query flexibility | Low | Low | High | Medium | High |
+| Best for | Tests | Embedded KV | Production SQL | Embedded SQL | Production NoSQL |

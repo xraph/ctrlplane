@@ -57,10 +57,10 @@ cp, err := app.New(
 
 ## Comparison
 
-| Feature | Memory | Badger | SQLite | Bun (PostgreSQL) | MongoDB |
-|---------|--------|--------|--------|-------------------|---------|
-| Setup | None | Path only | File path | DSN | URI |
+| Feature | Memory | Badger | PostgreSQL | SQLite | MongoDB |
+|---------|--------|--------|------------|--------|---------|
+| Setup | None | Path only | DSN | File path | URI |
 | Persistence | No | Yes | Yes | Yes | Yes |
-| Multi-process | No | No | No | Yes | Yes |
-| Query flexibility | Low | Low | Medium | High | High |
-| Best for | Tests | Embedded KV | Embedded SQL | Production SQL | Production NoSQL |
+| Multi-process | No | No | Yes | No | Yes |
+| Query flexibility | Low | Low | High | Medium | High |
+| Best for | Tests | Embedded KV | Production SQL | Embedded SQL | Production NoSQL |
