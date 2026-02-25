@@ -1,44 +1,41 @@
 ---
 title: MongoDB Store
-description: Document store using MongoDB for flexible, scalable persistence.
+description: Document store using Grove ORM with mongodriver for MongoDB.
 ---
 
-The MongoDB store uses the [MongoDB Go Driver v2](https://github.com/mongodb/mongo-go-driver) to persist data in MongoDB. It is the recommended store for teams that prefer document databases or need horizontal scalability.
+The MongoDB store (`store/mongo`) uses the [Grove ORM](https://github.com/xraph/grove) with `mongodriver` to persist data in MongoDB. It is the recommended store for teams that prefer document databases or need horizontal scalability.
 
 ## When to use
 
-- **Document-oriented data** — flexible schemas that evolve with your application.
-- **Horizontal scaling** — MongoDB sharding for large-scale deployments.
-- **Cloud-native** — MongoDB Atlas for managed deployments.
-- **Teams familiar with MongoDB** — leverage existing document database expertise.
+- **Document-oriented data** -- flexible schemas that evolve with your application.
+- **Horizontal scaling** -- MongoDB sharding for large-scale deployments.
+- **Cloud-native** -- MongoDB Atlas for managed deployments.
+- **Teams familiar with MongoDB** -- leverage existing document database expertise.
 
 ## Configuration
 
 ```go
-import "github.com/xraph/ctrlplane/store/mongo"
+import (
+    "github.com/xraph/grove"
+    "github.com/xraph/grove/drivers/mongodriver"
+    "github.com/xraph/ctrlplane/store/mongo"
+)
 
-s, err := mongo.New(mongo.Config{
-    URI:      "mongodb://localhost:27017",
-    Database: "ctrlplane",
-})
+// Open a MongoDB connection via Grove's mongodriver.
+db := grove.Open(mongodriver.New(
+    mongodriver.WithURI("mongodb://localhost:27017"),
+    mongodriver.WithDatabase("ctrlplane"),
+))
+
+s := mongo.New(db)
+if err := s.Migrate(ctx); err != nil {
+    log.Fatal(err)
+}
 ```
-
-| Field | Env | Default | Description |
-|-------|-----|---------|-------------|
-| `URI` | `CP_MONGO_URI` | `mongodb://localhost:27017` | MongoDB connection URI |
-| `Database` | `CP_MONGO_DATABASE` | `ctrlplane` | Database name |
-| `MaxPoolSize` | `CP_MONGO_MAX_POOL_SIZE` | `100` | Maximum connection pool size |
-| `MinPoolSize` | `CP_MONGO_MIN_POOL_SIZE` | `10` | Minimum connection pool size |
-| `Timeout` | `CP_MONGO_TIMEOUT` | `10s` | Connection and operation timeout |
 
 ### With the app
 
 ```go
-s, err := mongo.New(mongo.Config{
-    URI:      "mongodb+srv://user:pass@cluster.mongodb.net",
-    Database: "ctrlplane",
-})
-
 cp, err := app.New(
     app.WithStore(s),
 )
@@ -50,86 +47,57 @@ The MongoDB store uses 15 collections:
 
 | Collection | Entity | Primary key |
 |------------|--------|-------------|
-| `instances` | Instance | TypeID string |
-| `deployments` | Deployment | TypeID string |
-| `releases` | Release | TypeID string |
-| `health_checks` | HealthCheck | TypeID string |
-| `health_results` | HealthResult | TypeID string |
-| `metrics` | Metric | TypeID string |
-| `logs` | LogEntry | TypeID string |
-| `traces` | Trace | TypeID string |
-| `resource_snapshots` | ResourceSnapshot | TypeID string |
-| `domains` | Domain | TypeID string |
-| `routes` | Route | TypeID string |
-| `certificates` | Certificate | TypeID string |
-| `secrets` | Secret | TypeID string |
-| `tenants` | Tenant | TypeID string |
-| `audit_entries` | AuditEntry | TypeID string |
+| `cp_instances` | Instance | TypeID string |
+| `cp_deployments` | Deployment | TypeID string |
+| `cp_releases` | Release | TypeID string |
+| `cp_health_checks` | HealthCheck | TypeID string |
+| `cp_health_results` | HealthResult | TypeID string |
+| `cp_metrics` | Metric | TypeID string |
+| `cp_logs` | LogEntry | TypeID string |
+| `cp_traces` | Trace | TypeID string |
+| `cp_resource_snapshots` | ResourceSnapshot | TypeID string |
+| `cp_domains` | Domain | TypeID string |
+| `cp_routes` | Route | TypeID string |
+| `cp_certificates` | Certificate | TypeID string |
+| `cp_secrets` | Secret | TypeID string |
+| `cp_tenants` | Tenant | TypeID string |
+| `cp_audit_entries` | AuditEntry | TypeID string |
 
 ## Internals
 
 | Aspect | Detail |
 |--------|--------|
-| **Driver** | MongoDB Go Driver v2 (`go.mongodb.org/mongo-driver/v2`) |
+| **Driver** | Grove ORM with `mongodriver` (MongoDB) |
 | **Serialization** | Intermediate BSON model structs with `bson:` tags |
 | **Identity** | TypeID strings stored as `_id` field |
-| **Migrate** | Creates indexes on all collections |
-| **Ping** | `client.Ping(ctx)` |
-| **Close** | `client.Disconnect(ctx)` |
-
-### BSON models
-
-Each entity has an intermediate BSON model struct that handles serialization:
-
-```go
-type instanceModel struct {
-    ID           string `bson:"_id"`
-    TenantID     string `bson:"tenant_id"`
-    Name         string `bson:"name"`
-    Slug         string `bson:"slug"`
-    // ...
-}
-```
-
-Conversion functions (`toInstanceModel` / `fromInstanceModel`) translate between domain entities and BSON models. TypeIDs are stored as strings and parsed back on read.
+| **Migrate** | Creates compound and unique indexes on all collections |
+| **Ping** | `db.Ping(ctx)` |
+| **Close** | `db.Close()` to disconnect |
 
 ### Indexes
 
 `Migrate()` creates compound indexes for efficient queries:
 
-- **All collections** — `(tenant_id, ...)` compound indexes for tenant-scoped queries.
-- **Instances** — unique `(tenant_id, slug)` index.
-- **Tenants** — unique `(slug)` index.
-- **Domains** — unique `(hostname)` index.
-- **Secrets** — unique `(tenant_id, instance_id, key)` index.
-- **Time-series** — `(tenant_id, instance_id, timestamp)` for metrics, logs, traces, and snapshots.
-- **Health results** — `(check_id, checked_at)` for latest-result queries.
-- **Audit entries** — `(tenant_id, created_at)` for chronological queries.
-
-### Error mapping
-
-| MongoDB error | Ctrl Plane error |
-|--------------|-----------------|
-| `mongo.ErrNoDocuments` | `ctrlplane.ErrNotFound` |
-| Duplicate key (code 11000) | `ctrlplane.ErrAlreadyExists` |
-
-### Security
-
-The `ListSecrets` method uses a MongoDB projection to exclude the `value` field from results, so secret values are never returned in list operations.
+- **All collections** -- `(tenant_id, ...)` compound indexes for tenant-scoped queries.
+- **Instances** -- unique `(tenant_id, slug)` index.
+- **Tenants** -- unique `(slug)` index.
+- **Domains** -- unique `(hostname)` index.
+- **Secrets** -- unique `(tenant_id, instance_id, key)` index.
+- **Time-series** -- `(tenant_id, instance_id, timestamp)` for metrics, logs, traces, and snapshots.
 
 ## Limitations
 
-- **External dependency** — requires a running MongoDB instance or Atlas cluster.
-- **No ACID transactions** — individual operations are atomic, but multi-document transactions require explicit sessions.
-- **Index management** — `Migrate()` must run before first use to create indexes.
+- **External dependency** -- requires a running MongoDB instance or Atlas cluster.
+- **No ACID transactions** -- individual operations are atomic, but multi-document transactions require explicit sessions.
+- **Index management** -- `Migrate()` must run before first use to create indexes.
 
 ## Comparison
 
-| Feature | Memory | Badger | Bun | MongoDB |
-|---------|--------|--------|-----|---------|
-| Setup | None | Path only | DSN | URI |
-| Persistence | No | Yes | Yes | Yes |
-| Multi-process | No | No | Yes | Yes |
-| Query flexibility | Low | Low | High | High |
-| Horizontal scaling | No | No | Read replicas | Sharding |
-| Best for | Tests | Embedded | Production SQL | Production NoSQL |
+| Feature | Memory | Badger | SQLite | Bun (PostgreSQL) | MongoDB |
+|---------|--------|--------|--------|-------------------|---------|
+| Setup | None | Path only | File path | DSN | URI |
+| Persistence | No | Yes | Yes | Yes | Yes |
+| Multi-process | No | No | No | Yes | Yes |
+| Query flexibility | Low | Low | Medium | High | High |
+| Horizontal scaling | No | No | No | Read replicas | Sharding |
+| Best for | Tests | Embedded KV | Embedded SQL | Production SQL | Production NoSQL |

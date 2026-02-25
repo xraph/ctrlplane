@@ -2,11 +2,9 @@ package mongo
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
-	"go.mongodb.org/mongo-driver/v2/mongo"
 
 	ctrlplane "github.com/xraph/ctrlplane"
 	"github.com/xraph/ctrlplane/id"
@@ -15,140 +13,108 @@ import (
 
 // ── Domains ─────────────────────────────────────────────────────────────────
 
-// InsertDomain persists a new domain.
 func (s *Store) InsertDomain(ctx context.Context, domain *network.Domain) error {
-	m := toDomainModel(domain)
+	model := toDomainModel(domain)
 
-	_, err := s.col(colDomains).InsertOne(ctx, m)
+	_, err := s.mdb.NewInsert(model).Exec(ctx)
 	if err != nil {
-		if isDuplicateKeyError(err) {
-			return fmt.Errorf("mongo: insert domain: %w: %s", ctrlplane.ErrAlreadyExists, m.Hostname)
-		}
-
-		return fmt.Errorf("mongo: insert domain: %w", err)
+		return fmt.Errorf("mongo: insert domain failed: %w", err)
 	}
 
 	return nil
 }
 
-// GetDomain retrieves a domain by ID.
 func (s *Store) GetDomain(ctx context.Context, tenantID string, domainID id.ID) (*network.Domain, error) {
-	filter := bson.D{
-		{Key: "_id", Value: idStr(domainID)},
-		{Key: "tenant_id", Value: tenantID},
-	}
+	var model domainModel
 
-	var m domainModel
-
-	err := s.col(colDomains).FindOne(ctx, filter).Decode(&m)
+	err := s.mdb.NewFind(&model).
+		Filter(bson.M{"_id": domainID.String(), "tenant_id": tenantID}).
+		Scan(ctx)
 	if err != nil {
-		if errors.Is(err, mongo.ErrNoDocuments) {
-			return nil, fmt.Errorf("mongo: get domain: %w: %s", ctrlplane.ErrNotFound, domainID)
+		if isNoDocuments(err) {
+			return nil, fmt.Errorf("%w: domain %s", ctrlplane.ErrNotFound, domainID)
 		}
 
-		return nil, fmt.Errorf("mongo: get domain: %w", err)
+		return nil, fmt.Errorf("mongo: get domain failed: %w", err)
 	}
 
-	return fromDomainModel(&m), nil
+	return fromDomainModel(&model), nil
 }
 
-// GetDomainByHostname retrieves a domain by its hostname.
 func (s *Store) GetDomainByHostname(ctx context.Context, hostname string) (*network.Domain, error) {
-	filter := bson.D{{Key: "hostname", Value: hostname}}
+	var model domainModel
 
-	var m domainModel
-
-	err := s.col(colDomains).FindOne(ctx, filter).Decode(&m)
+	err := s.mdb.NewFind(&model).
+		Filter(bson.M{"hostname": hostname}).
+		Scan(ctx)
 	if err != nil {
-		if errors.Is(err, mongo.ErrNoDocuments) {
-			return nil, fmt.Errorf("mongo: get domain by hostname: %w: %s", ctrlplane.ErrNotFound, hostname)
+		if isNoDocuments(err) {
+			return nil, fmt.Errorf("%w: hostname %s", ctrlplane.ErrNotFound, hostname)
 		}
 
-		return nil, fmt.Errorf("mongo: get domain by hostname: %w", err)
+		return nil, fmt.Errorf("mongo: get domain by hostname failed: %w", err)
 	}
 
-	return fromDomainModel(&m), nil
+	return fromDomainModel(&model), nil
 }
 
-// ListDomains returns all domains for an instance.
 func (s *Store) ListDomains(ctx context.Context, tenantID string, instanceID id.ID) ([]network.Domain, error) {
-	filter := bson.D{
-		{Key: "tenant_id", Value: tenantID},
-		{Key: "instance_id", Value: idStr(instanceID)},
-	}
+	var models []domainModel
 
-	cursor, err := s.col(colDomains).Find(ctx, filter)
+	err := s.mdb.NewFind(&models).
+		Filter(bson.M{"tenant_id": tenantID, "instance_id": instanceID.String()}).
+		Scan(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("mongo: list domains: %w", err)
-	}
-	defer cursor.Close(ctx)
-
-	items := make([]network.Domain, 0)
-
-	for cursor.Next(ctx) {
-		var m domainModel
-
-		if err := cursor.Decode(&m); err != nil {
-			return nil, fmt.Errorf("mongo: list domains decode: %w", err)
-		}
-
-		items = append(items, *fromDomainModel(&m))
+		return nil, fmt.Errorf("mongo: list domains failed: %w", err)
 	}
 
-	if err := cursor.Err(); err != nil {
-		return nil, fmt.Errorf("mongo: list domains cursor: %w", err)
+	items := make([]network.Domain, 0, len(models))
+	for i := range models {
+		items = append(items, *fromDomainModel(&models[i]))
 	}
 
 	return items, nil
 }
 
-// UpdateDomain persists changes to a domain.
 func (s *Store) UpdateDomain(ctx context.Context, domain *network.Domain) error {
 	domain.UpdatedAt = now()
-	m := toDomainModel(domain)
+	model := toDomainModel(domain)
 
-	result, err := s.col(colDomains).ReplaceOne(
-		ctx,
-		bson.D{{Key: "_id", Value: m.ID}},
-		m,
-	)
+	res, err := s.mdb.NewUpdate(model).
+		Filter(bson.M{"_id": model.ID}).
+		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("mongo: update domain: %w", err)
+		return fmt.Errorf("mongo: update domain failed: %w", err)
 	}
 
-	if result.MatchedCount == 0 {
-		return fmt.Errorf("mongo: update domain: %w: %s", ctrlplane.ErrNotFound, m.ID)
+	if res.MatchedCount() == 0 {
+		return fmt.Errorf("%w: domain %s", ctrlplane.ErrNotFound, domain.ID)
 	}
 
 	return nil
 }
 
-// DeleteDomain removes a domain.
 func (s *Store) DeleteDomain(ctx context.Context, tenantID string, domainID id.ID) error {
-	filter := bson.D{
-		{Key: "_id", Value: idStr(domainID)},
-		{Key: "tenant_id", Value: tenantID},
-	}
-
-	result, err := s.col(colDomains).DeleteOne(ctx, filter)
+	res, err := s.mdb.NewDelete((*domainModel)(nil)).
+		Filter(bson.M{"_id": domainID.String(), "tenant_id": tenantID}).
+		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("mongo: delete domain: %w", err)
+		return fmt.Errorf("mongo: delete domain failed: %w", err)
 	}
 
-	if result.DeletedCount == 0 {
-		return fmt.Errorf("mongo: delete domain: %w: %s", ctrlplane.ErrNotFound, domainID)
+	if res.DeletedCount() == 0 {
+		return fmt.Errorf("%w: domain %s", ctrlplane.ErrNotFound, domainID)
 	}
 
 	return nil
 }
 
-// CountDomainsByTenant returns the number of domains for a tenant.
 func (s *Store) CountDomainsByTenant(ctx context.Context, tenantID string) (int, error) {
-	filter := bson.D{{Key: "tenant_id", Value: tenantID}}
-
-	count, err := s.col(colDomains).CountDocuments(ctx, filter)
+	count, err := s.mdb.NewFind((*domainModel)(nil)).
+		Filter(bson.M{"tenant_id": tenantID}).
+		Count(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("mongo: count domains: %w", err)
+		return 0, fmt.Errorf("mongo: count domains by tenant failed: %w", err)
 	}
 
 	return int(count), nil
@@ -156,110 +122,80 @@ func (s *Store) CountDomainsByTenant(ctx context.Context, tenantID string) (int,
 
 // ── Routes ──────────────────────────────────────────────────────────────────
 
-// InsertRoute persists a new route.
 func (s *Store) InsertRoute(ctx context.Context, route *network.Route) error {
-	m := toRouteModel(route)
+	model := toRouteModel(route)
 
-	_, err := s.col(colRoutes).InsertOne(ctx, m)
+	_, err := s.mdb.NewInsert(model).Exec(ctx)
 	if err != nil {
-		if isDuplicateKeyError(err) {
-			return fmt.Errorf("mongo: insert route: %w: %s", ctrlplane.ErrAlreadyExists, m.ID)
-		}
-
-		return fmt.Errorf("mongo: insert route: %w", err)
+		return fmt.Errorf("mongo: insert route failed: %w", err)
 	}
 
 	return nil
 }
 
-// GetRoute retrieves a route by ID.
 func (s *Store) GetRoute(ctx context.Context, tenantID string, routeID id.ID) (*network.Route, error) {
-	filter := bson.D{
-		{Key: "_id", Value: idStr(routeID)},
-		{Key: "tenant_id", Value: tenantID},
-	}
+	var model routeModel
 
-	var m routeModel
-
-	err := s.col(colRoutes).FindOne(ctx, filter).Decode(&m)
+	err := s.mdb.NewFind(&model).
+		Filter(bson.M{"_id": routeID.String(), "tenant_id": tenantID}).
+		Scan(ctx)
 	if err != nil {
-		if errors.Is(err, mongo.ErrNoDocuments) {
-			return nil, fmt.Errorf("mongo: get route: %w: %s", ctrlplane.ErrNotFound, routeID)
+		if isNoDocuments(err) {
+			return nil, fmt.Errorf("%w: route %s", ctrlplane.ErrNotFound, routeID)
 		}
 
-		return nil, fmt.Errorf("mongo: get route: %w", err)
+		return nil, fmt.Errorf("mongo: get route failed: %w", err)
 	}
 
-	return fromRouteModel(&m), nil
+	return fromRouteModel(&model), nil
 }
 
-// ListRoutes returns all routes for an instance.
 func (s *Store) ListRoutes(ctx context.Context, tenantID string, instanceID id.ID) ([]network.Route, error) {
-	filter := bson.D{
-		{Key: "tenant_id", Value: tenantID},
-		{Key: "instance_id", Value: idStr(instanceID)},
-	}
+	var models []routeModel
 
-	cursor, err := s.col(colRoutes).Find(ctx, filter)
+	err := s.mdb.NewFind(&models).
+		Filter(bson.M{"tenant_id": tenantID, "instance_id": instanceID.String()}).
+		Scan(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("mongo: list routes: %w", err)
-	}
-	defer cursor.Close(ctx)
-
-	items := make([]network.Route, 0)
-
-	for cursor.Next(ctx) {
-		var m routeModel
-
-		if err := cursor.Decode(&m); err != nil {
-			return nil, fmt.Errorf("mongo: list routes decode: %w", err)
-		}
-
-		items = append(items, *fromRouteModel(&m))
+		return nil, fmt.Errorf("mongo: list routes failed: %w", err)
 	}
 
-	if err := cursor.Err(); err != nil {
-		return nil, fmt.Errorf("mongo: list routes cursor: %w", err)
+	items := make([]network.Route, 0, len(models))
+	for i := range models {
+		items = append(items, *fromRouteModel(&models[i]))
 	}
 
 	return items, nil
 }
 
-// UpdateRoute persists changes to a route.
 func (s *Store) UpdateRoute(ctx context.Context, route *network.Route) error {
 	route.UpdatedAt = now()
-	m := toRouteModel(route)
+	model := toRouteModel(route)
 
-	result, err := s.col(colRoutes).ReplaceOne(
-		ctx,
-		bson.D{{Key: "_id", Value: m.ID}},
-		m,
-	)
+	res, err := s.mdb.NewUpdate(model).
+		Filter(bson.M{"_id": model.ID}).
+		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("mongo: update route: %w", err)
+		return fmt.Errorf("mongo: update route failed: %w", err)
 	}
 
-	if result.MatchedCount == 0 {
-		return fmt.Errorf("mongo: update route: %w: %s", ctrlplane.ErrNotFound, m.ID)
+	if res.MatchedCount() == 0 {
+		return fmt.Errorf("%w: route %s", ctrlplane.ErrNotFound, route.ID)
 	}
 
 	return nil
 }
 
-// DeleteRoute removes a route.
 func (s *Store) DeleteRoute(ctx context.Context, tenantID string, routeID id.ID) error {
-	filter := bson.D{
-		{Key: "_id", Value: idStr(routeID)},
-		{Key: "tenant_id", Value: tenantID},
-	}
-
-	result, err := s.col(colRoutes).DeleteOne(ctx, filter)
+	res, err := s.mdb.NewDelete((*routeModel)(nil)).
+		Filter(bson.M{"_id": routeID.String(), "tenant_id": tenantID}).
+		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("mongo: delete route: %w", err)
+		return fmt.Errorf("mongo: delete route failed: %w", err)
 	}
 
-	if result.DeletedCount == 0 {
-		return fmt.Errorf("mongo: delete route: %w: %s", ctrlplane.ErrNotFound, routeID)
+	if res.DeletedCount() == 0 {
+		return fmt.Errorf("%w: route %s", ctrlplane.ErrNotFound, routeID)
 	}
 
 	return nil
@@ -267,45 +203,34 @@ func (s *Store) DeleteRoute(ctx context.Context, tenantID string, routeID id.ID)
 
 // ── Certificates ────────────────────────────────────────────────────────────
 
-// InsertCertificate persists a new certificate.
 func (s *Store) InsertCertificate(ctx context.Context, cert *network.Certificate) error {
-	m := toCertificateModel(cert)
+	model := toCertificateModel(cert)
 
-	_, err := s.col(colCertificates).InsertOne(ctx, m)
+	_, err := s.mdb.NewInsert(model).Exec(ctx)
 	if err != nil {
-		if isDuplicateKeyError(err) {
-			return fmt.Errorf("mongo: insert certificate: %w: %s", ctrlplane.ErrAlreadyExists, m.ID)
-		}
-
-		return fmt.Errorf("mongo: insert certificate: %w", err)
+		return fmt.Errorf("mongo: insert certificate failed: %w", err)
 	}
 
 	return nil
 }
 
-// GetCertificate retrieves a certificate by ID.
 func (s *Store) GetCertificate(ctx context.Context, tenantID string, certID id.ID) (*network.Certificate, error) {
-	filter := bson.D{
-		{Key: "_id", Value: idStr(certID)},
-		{Key: "tenant_id", Value: tenantID},
-	}
+	var model certificateModel
 
-	var m certificateModel
-
-	err := s.col(colCertificates).FindOne(ctx, filter).Decode(&m)
+	err := s.mdb.NewFind(&model).
+		Filter(bson.M{"_id": certID.String(), "tenant_id": tenantID}).
+		Scan(ctx)
 	if err != nil {
-		if errors.Is(err, mongo.ErrNoDocuments) {
-			return nil, fmt.Errorf("mongo: get certificate: %w: %s", ctrlplane.ErrNotFound, certID)
+		if isNoDocuments(err) {
+			return nil, fmt.Errorf("%w: certificate %s", ctrlplane.ErrNotFound, certID)
 		}
 
-		return nil, fmt.Errorf("mongo: get certificate: %w", err)
+		return nil, fmt.Errorf("mongo: get certificate failed: %w", err)
 	}
 
-	return fromCertificateModel(&m), nil
+	return fromCertificateModel(&model), nil
 }
 
-// ListCertificates returns all certificates for an instance.
-// It looks up domains owned by the instance, then finds certificates by domain IDs.
 func (s *Store) ListCertificates(ctx context.Context, tenantID string, instanceID id.ID) ([]network.Certificate, error) {
 	// First find all domain IDs for this instance.
 	domains, err := s.ListDomains(ctx, tenantID, instanceID)
@@ -318,76 +243,55 @@ func (s *Store) ListCertificates(ctx context.Context, tenantID string, instanceI
 	}
 
 	domainIDs := make([]string, 0, len(domains))
-
 	for _, d := range domains {
 		domainIDs = append(domainIDs, idStr(d.ID))
 	}
 
-	filter := bson.D{
-		{Key: "tenant_id", Value: tenantID},
-		{Key: "domain_id", Value: bson.D{{Key: "$in", Value: domainIDs}}},
-	}
+	var models []certificateModel
 
-	cursor, err := s.col(colCertificates).Find(ctx, filter)
+	err = s.mdb.NewFind(&models).
+		Filter(bson.M{"tenant_id": tenantID, "domain_id": bson.M{"$in": domainIDs}}).
+		Scan(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("mongo: list certificates: %w", err)
-	}
-	defer cursor.Close(ctx)
-
-	items := make([]network.Certificate, 0)
-
-	for cursor.Next(ctx) {
-		var m certificateModel
-
-		if err := cursor.Decode(&m); err != nil {
-			return nil, fmt.Errorf("mongo: list certificates decode: %w", err)
-		}
-
-		items = append(items, *fromCertificateModel(&m))
+		return nil, fmt.Errorf("mongo: list certificates failed: %w", err)
 	}
 
-	if err := cursor.Err(); err != nil {
-		return nil, fmt.Errorf("mongo: list certificates cursor: %w", err)
+	items := make([]network.Certificate, 0, len(models))
+	for i := range models {
+		items = append(items, *fromCertificateModel(&models[i]))
 	}
 
 	return items, nil
 }
 
-// UpdateCertificate persists changes to a certificate.
 func (s *Store) UpdateCertificate(ctx context.Context, cert *network.Certificate) error {
 	cert.UpdatedAt = now()
-	m := toCertificateModel(cert)
+	model := toCertificateModel(cert)
 
-	result, err := s.col(colCertificates).ReplaceOne(
-		ctx,
-		bson.D{{Key: "_id", Value: m.ID}},
-		m,
-	)
+	res, err := s.mdb.NewUpdate(model).
+		Filter(bson.M{"_id": model.ID}).
+		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("mongo: update certificate: %w", err)
+		return fmt.Errorf("mongo: update certificate failed: %w", err)
 	}
 
-	if result.MatchedCount == 0 {
-		return fmt.Errorf("mongo: update certificate: %w: %s", ctrlplane.ErrNotFound, m.ID)
+	if res.MatchedCount() == 0 {
+		return fmt.Errorf("%w: certificate %s", ctrlplane.ErrNotFound, cert.ID)
 	}
 
 	return nil
 }
 
-// DeleteCertificate removes a certificate.
 func (s *Store) DeleteCertificate(ctx context.Context, tenantID string, certID id.ID) error {
-	filter := bson.D{
-		{Key: "_id", Value: idStr(certID)},
-		{Key: "tenant_id", Value: tenantID},
-	}
-
-	result, err := s.col(colCertificates).DeleteOne(ctx, filter)
+	res, err := s.mdb.NewDelete((*certificateModel)(nil)).
+		Filter(bson.M{"_id": certID.String(), "tenant_id": tenantID}).
+		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("mongo: delete certificate: %w", err)
+		return fmt.Errorf("mongo: delete certificate failed: %w", err)
 	}
 
-	if result.DeletedCount == 0 {
-		return fmt.Errorf("mongo: delete certificate: %w: %s", ctrlplane.ErrNotFound, certID)
+	if res.DeletedCount() == 0 {
+		return fmt.Errorf("%w: certificate %s", ctrlplane.ErrNotFound, certID)
 	}
 
 	return nil

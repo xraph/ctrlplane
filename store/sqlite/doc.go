@@ -1,2 +1,2 @@
-// Package sqlite implements the ctrlplane store interface using SQLite.
+// Package sqlite implements [store.Store] using the Grove ORM with sqlitedriver.
 package sqlite

@@ -51,3 +51,24 @@ func WithExtension(x plugin.Extension) ExtOption {
 		e.opts = append(e.opts, app.WithExtension(x))
 	}
 }
+
+// WithDisableRoutes disables automatic route registration.
+func WithDisableRoutes() ExtOption {
+	return func(e *Extension) {
+		e.config.DisableRoutes = true
+	}
+}
+
+// WithDisableMigrate disables automatic database migration on Register.
+func WithDisableMigrate() ExtOption {
+	return func(e *Extension) {
+		e.config.DisableMigrate = true
+	}
+}
+
+// WithRequireConfig requires config to be present in YAML files.
+func WithRequireConfig(require bool) ExtOption {
+	return func(e *Extension) {
+		e.config.RequireConfig = require
+	}
+}

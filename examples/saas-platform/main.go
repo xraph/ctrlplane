@@ -1,7 +1,7 @@
 // Package main demonstrates a complete SaaS management platform built with
 // Ctrl Plane and Forge. It shows how to:
 //
-//   - Configure multiple store backends (memory, bun, badger, mongo).
+//   - Configure multiple store backends (memory, grove, badger, mongo).
 //   - Register a Docker infrastructure provider.
 //   - Subscribe to lifecycle events for logging and notifications.
 //   - Add custom platform routes alongside the Ctrl Plane API.
@@ -25,6 +25,9 @@ import (
 	"time"
 
 	"github.com/xraph/forge"
+	"github.com/xraph/grove"
+	"github.com/xraph/grove/drivers/mongodriver"
+	"github.com/xraph/grove/drivers/pgdriver"
 
 	"github.com/xraph/ctrlplane/admin"
 	"github.com/xraph/ctrlplane/app"
@@ -34,9 +37,9 @@ import (
 	"github.com/xraph/ctrlplane/provider/docker"
 	"github.com/xraph/ctrlplane/store"
 	"github.com/xraph/ctrlplane/store/badger"
-	bunstore "github.com/xraph/ctrlplane/store/bun"
 	"github.com/xraph/ctrlplane/store/memory"
 	"github.com/xraph/ctrlplane/store/mongo"
+	"github.com/xraph/ctrlplane/store/postgres"
 )
 
 // ---------------------------------------------------------------------------
@@ -72,14 +75,23 @@ func envBool(key string, fallback bool) bool {
 // ---------------------------------------------------------------------------
 
 // initStore creates a store.Store based on the CP_STORE environment variable.
-// Supported values: memory (default), bun, badger, mongo.
-func initStore(storeType string) (store.Store, error) {
+// Supported values: memory (default), grove, badger, mongo.
+func initStore(ctx context.Context, storeType string) (store.Store, error) {
 	switch strings.ToLower(storeType) {
-	case "bun":
-		return bunstore.New(bunstore.Config{
-			Driver: bunstore.Driver(envOrDefault("CP_BUN_DRIVER", "postgres")),
-			DSN:    envOrDefault("CP_BUN_DSN", "postgres://localhost:5432/ctrlplane?sslmode=disable"),
-		})
+	case "grove", "postgres", "pg":
+		dsn := envOrDefault("CP_DATABASE_URL", "postgres://localhost:5432/ctrlplane?sslmode=disable")
+
+		pgdb := pgdriver.New()
+		if err := pgdb.Open(ctx, dsn); err != nil {
+			return nil, fmt.Errorf("pgdriver open: %w", err)
+		}
+
+		db, err := grove.Open(pgdb)
+		if err != nil {
+			return nil, fmt.Errorf("grove open: %w", err)
+		}
+
+		return postgres.New(db), nil
 
 	case "badger":
 		return badger.New(badger.Config{
@@ -87,16 +99,25 @@ func initStore(storeType string) (store.Store, error) {
 		})
 
 	case "mongo":
-		return mongo.New(mongo.Config{
-			URI:      envOrDefault("CP_MONGO_URI", "mongodb://localhost:27017"),
-			Database: envOrDefault("CP_MONGO_DATABASE", "ctrlplane"),
-		})
+		uri := envOrDefault("CP_MONGO_URI", "mongodb://localhost:27017/ctrlplane")
+
+		mdb := mongodriver.New()
+		if err := mdb.Open(ctx, uri); err != nil {
+			return nil, fmt.Errorf("mongodriver open: %w", err)
+		}
+
+		db, err := grove.Open(mdb)
+		if err != nil {
+			return nil, fmt.Errorf("grove open mongo: %w", err)
+		}
+
+		return mongo.New(db), nil
 
 	case "memory", "":
 		return memory.New(), nil
 
 	default:
-		return nil, fmt.Errorf("unsupported store type: %s (valid: memory, bun, badger, mongo)", storeType)
+		return nil, fmt.Errorf("unsupported store type: %s (valid: memory, grove, badger, mongo)", storeType)
 	}
 }
 
@@ -370,12 +391,12 @@ func run() error {
 	// -----------------------------------------------------------------------
 	// 2. Initialize the persistence store
 	// -----------------------------------------------------------------------
-	dataStore, err := initStore(storeType)
+	ctx := context.Background()
+
+	dataStore, err := initStore(ctx, storeType)
 	if err != nil {
 		return fmt.Errorf("init store: %w", err)
 	}
-
-	ctx := context.Background()
 
 	if err := dataStore.Migrate(ctx); err != nil {
 		return fmt.Errorf("migrate store: %w", err)

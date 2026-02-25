@@ -1,4 +1,4 @@
 {
   "title": "Stores",
-  "pages": ["memory", "badger", "bun", "mongo"]
+  "pages": ["memory", "badger", "bun", "sqlite", "mongo"]
 }

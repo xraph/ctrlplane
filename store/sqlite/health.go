@@ -1,4 +1,4 @@
-package bun
+package sqlite
 
 import (
 	"context"
@@ -13,9 +13,9 @@ import (
 func (s *Store) InsertCheck(ctx context.Context, check *health.HealthCheck) error {
 	model := toHealthCheckModel(check)
 
-	_, err := s.db.NewInsert().Model(model).Exec(ctx)
+	_, err := s.sdb.NewInsert(model).Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("bun: insert health check failed: %w", err)
+		return fmt.Errorf("sqlite: insert health check failed: %w", err)
 	}
 
 	return nil
@@ -24,12 +24,15 @@ func (s *Store) InsertCheck(ctx context.Context, check *health.HealthCheck) erro
 func (s *Store) GetCheck(ctx context.Context, tenantID string, checkID id.ID) (*health.HealthCheck, error) {
 	var model healthCheckModel
 
-	err := s.db.NewSelect().
-		Model(&model).
+	err := s.sdb.NewSelect(&model).
 		Where("id = ? AND tenant_id = ?", checkID.String(), tenantID).
 		Scan(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("%w: health check %s", ctrlplane.ErrNotFound, checkID)
+		if isNoRows(err) {
+			return nil, fmt.Errorf("%w: health check %s", ctrlplane.ErrNotFound, checkID)
+		}
+
+		return nil, fmt.Errorf("sqlite: get health check failed: %w", err)
 	}
 
 	check := &health.HealthCheck{
@@ -53,16 +56,14 @@ func (s *Store) GetCheck(ctx context.Context, tenantID string, checkID id.ID) (*
 func (s *Store) ListChecks(ctx context.Context, tenantID string, instanceID id.ID) ([]health.HealthCheck, error) {
 	var models []healthCheckModel
 
-	err := s.db.NewSelect().
-		Model(&models).
+	err := s.sdb.NewSelect(&models).
 		Where("tenant_id = ? AND instance_id = ?", tenantID, instanceID.String()).
 		Scan(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("bun: list health checks failed: %w", err)
+		return nil, fmt.Errorf("sqlite: list health checks failed: %w", err)
 	}
 
 	items := make([]health.HealthCheck, 0, len(models))
-
 	for _, model := range models {
 		check := health.HealthCheck{
 			Entity: ctrlplane.Entity{
@@ -88,17 +89,14 @@ func (s *Store) UpdateCheck(ctx context.Context, check *health.HealthCheck) erro
 	check.UpdatedAt = now()
 	model := toHealthCheckModel(check)
 
-	result, err := s.db.NewUpdate().
-		Model(model).
-		WherePK().
-		Exec(ctx)
+	res, err := s.sdb.NewUpdate(model).WherePK().Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("bun: update health check failed: %w", err)
+		return fmt.Errorf("sqlite: update health check failed: %w", err)
 	}
 
-	rows, err := result.RowsAffected()
+	rows, err := res.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("bun: rows affected check failed: %w", err)
+		return fmt.Errorf("sqlite: rows affected check failed: %w", err)
 	}
 
 	if rows == 0 {
@@ -109,17 +107,16 @@ func (s *Store) UpdateCheck(ctx context.Context, check *health.HealthCheck) erro
 }
 
 func (s *Store) DeleteCheck(ctx context.Context, tenantID string, checkID id.ID) error {
-	result, err := s.db.NewDelete().
-		Model((*healthCheckModel)(nil)).
+	res, err := s.sdb.NewDelete((*healthCheckModel)(nil)).
 		Where("id = ? AND tenant_id = ?", checkID.String(), tenantID).
 		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("bun: delete health check failed: %w", err)
+		return fmt.Errorf("sqlite: delete health check failed: %w", err)
 	}
 
-	rows, err := result.RowsAffected()
+	rows, err := res.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("bun: rows affected check failed: %w", err)
+		return fmt.Errorf("sqlite: rows affected check failed: %w", err)
 	}
 
 	if rows == 0 {
@@ -132,9 +129,9 @@ func (s *Store) DeleteCheck(ctx context.Context, tenantID string, checkID id.ID)
 func (s *Store) InsertResult(ctx context.Context, result *health.HealthResult) error {
 	model := toHealthResultModel(result)
 
-	_, err := s.db.NewInsert().Model(model).Exec(ctx)
+	_, err := s.sdb.NewInsert(model).Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("bun: insert health result failed: %w", err)
+		return fmt.Errorf("sqlite: insert health result failed: %w", err)
 	}
 
 	return nil
@@ -143,31 +140,28 @@ func (s *Store) InsertResult(ctx context.Context, result *health.HealthResult) e
 func (s *Store) ListResults(ctx context.Context, tenantID string, checkID id.ID, opts health.HistoryOptions) ([]health.HealthResult, error) {
 	var models []healthResultModel
 
-	query := s.db.NewSelect().
-		Model(&models).
+	q := s.sdb.NewSelect(&models).
 		Where("check_id = ?", checkID.String())
 
 	if !opts.Since.IsZero() {
-		query = query.Where("checked_at >= ?", opts.Since)
+		q = q.Where("checked_at >= ?", opts.Since)
 	}
 
 	if !opts.Until.IsZero() {
-		query = query.Where("checked_at <= ?", opts.Until)
+		q = q.Where("checked_at <= ?", opts.Until)
 	}
 
-	query = query.Order("checked_at DESC")
+	q = q.OrderExpr("checked_at DESC")
 
 	if opts.Limit > 0 {
-		query = query.Limit(opts.Limit)
+		q = q.Limit(opts.Limit)
 	}
 
-	err := query.Scan(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("bun: list health results failed: %w", err)
+	if err := q.Scan(ctx); err != nil {
+		return nil, fmt.Errorf("sqlite: list health results failed: %w", err)
 	}
 
 	items := make([]health.HealthResult, 0, len(models))
-
 	for _, model := range models {
 		result := health.HealthResult{
 			CheckID:    id.MustParse(model.CheckID),
@@ -188,14 +182,17 @@ func (s *Store) ListResults(ctx context.Context, tenantID string, checkID id.ID,
 func (s *Store) GetLatestResult(ctx context.Context, tenantID string, checkID id.ID) (*health.HealthResult, error) {
 	var model healthResultModel
 
-	err := s.db.NewSelect().
-		Model(&model).
+	err := s.sdb.NewSelect(&model).
 		Where("check_id = ?", checkID.String()).
-		Order("checked_at DESC").
+		OrderExpr("checked_at DESC").
 		Limit(1).
 		Scan(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("%w: no results for check %s", ctrlplane.ErrNotFound, checkID)
+		if isNoRows(err) {
+			return nil, fmt.Errorf("%w: no results for check %s", ctrlplane.ErrNotFound, checkID)
+		}
+
+		return nil, fmt.Errorf("sqlite: get latest result failed: %w", err)
 	}
 
 	result := &health.HealthResult{

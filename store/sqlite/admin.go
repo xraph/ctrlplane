@@ -1,4 +1,4 @@
-package bun
+package sqlite
 
 import (
 	"context"
@@ -11,9 +11,9 @@ import (
 func (s *Store) InsertTenant(ctx context.Context, tenant *admin.Tenant) error {
 	model := toTenantModel(tenant)
 
-	_, err := s.db.NewInsert().Model(model).Exec(ctx)
+	_, err := s.sdb.NewInsert(model).Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("bun: insert tenant failed: %w", err)
+		return fmt.Errorf("sqlite: insert tenant failed: %w", err)
 	}
 
 	return nil
@@ -22,12 +22,15 @@ func (s *Store) InsertTenant(ctx context.Context, tenant *admin.Tenant) error {
 func (s *Store) GetTenant(ctx context.Context, tenantID string) (*admin.Tenant, error) {
 	var model tenantModel
 
-	err := s.db.NewSelect().
-		Model(&model).
+	err := s.sdb.NewSelect(&model).
 		Where("id = ?", tenantID).
 		Scan(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("%w: tenant %s", ctrlplane.ErrNotFound, tenantID)
+		if isNoRows(err) {
+			return nil, fmt.Errorf("%w: tenant %s", ctrlplane.ErrNotFound, tenantID)
+		}
+
+		return nil, fmt.Errorf("sqlite: get tenant failed: %w", err)
 	}
 
 	tenant := &admin.Tenant{
@@ -48,12 +51,15 @@ func (s *Store) GetTenant(ctx context.Context, tenantID string) (*admin.Tenant, 
 func (s *Store) GetTenantBySlug(ctx context.Context, slug string) (*admin.Tenant, error) {
 	var model tenantModel
 
-	err := s.db.NewSelect().
-		Model(&model).
+	err := s.sdb.NewSelect(&model).
 		Where("slug = ?", slug).
 		Scan(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("%w: slug %s", ctrlplane.ErrNotFound, slug)
+		if isNoRows(err) {
+			return nil, fmt.Errorf("%w: slug %s", ctrlplane.ErrNotFound, slug)
+		}
+
+		return nil, fmt.Errorf("sqlite: get tenant by slug failed: %w", err)
 	}
 
 	tenant := &admin.Tenant{
@@ -74,28 +80,38 @@ func (s *Store) GetTenantBySlug(ctx context.Context, slug string) (*admin.Tenant
 func (s *Store) ListTenants(ctx context.Context, opts admin.ListTenantsOptions) (*admin.TenantListResult, error) {
 	var models []tenantModel
 
-	query := s.db.NewSelect().Model(&models)
+	q := s.sdb.NewSelect(&models)
 
 	if opts.Status != "" {
-		query = query.Where("status = ?", opts.Status)
+		q = q.Where("status = ?", opts.Status)
 	}
 
-	query = query.Order("created_at DESC")
+	q = q.OrderExpr("created_at DESC")
 
 	limit := opts.Limit
 	if limit <= 0 {
 		limit = 100
 	}
 
-	query = query.Limit(limit)
+	q = q.Limit(limit)
 
-	count, err := query.ScanAndCount(ctx)
+	if err := q.Scan(ctx); err != nil {
+		return nil, fmt.Errorf("sqlite: list tenants failed: %w", err)
+	}
+
+	// Count total.
+	countQ := s.sdb.NewSelect((*tenantModel)(nil))
+
+	if opts.Status != "" {
+		countQ = countQ.Where("status = ?", opts.Status)
+	}
+
+	total, err := countQ.Count(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("bun: list tenants failed: %w", err)
+		return nil, fmt.Errorf("sqlite: count tenants failed: %w", err)
 	}
 
 	items := make([]*admin.Tenant, 0, len(models))
-
 	for _, model := range models {
 		tenant := &admin.Tenant{
 			Entity: ctrlplane.Entity{
@@ -113,7 +129,7 @@ func (s *Store) ListTenants(ctx context.Context, opts admin.ListTenantsOptions) 
 
 	return &admin.TenantListResult{
 		Items: items,
-		Total: count,
+		Total: int(total),
 	}, nil
 }
 
@@ -121,17 +137,14 @@ func (s *Store) UpdateTenant(ctx context.Context, tenant *admin.Tenant) error {
 	tenant.UpdatedAt = now()
 	model := toTenantModel(tenant)
 
-	result, err := s.db.NewUpdate().
-		Model(model).
-		WherePK().
-		Exec(ctx)
+	res, err := s.sdb.NewUpdate(model).WherePK().Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("bun: update tenant failed: %w", err)
+		return fmt.Errorf("sqlite: update tenant failed: %w", err)
 	}
 
-	rows, err := result.RowsAffected()
+	rows, err := res.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("bun: rows affected check failed: %w", err)
+		return fmt.Errorf("sqlite: rows affected check failed: %w", err)
 	}
 
 	if rows == 0 {
@@ -142,17 +155,16 @@ func (s *Store) UpdateTenant(ctx context.Context, tenant *admin.Tenant) error {
 }
 
 func (s *Store) DeleteTenant(ctx context.Context, tenantID string) error {
-	result, err := s.db.NewDelete().
-		Model((*tenantModel)(nil)).
+	res, err := s.sdb.NewDelete((*tenantModel)(nil)).
 		Where("id = ?", tenantID).
 		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("bun: delete tenant failed: %w", err)
+		return fmt.Errorf("sqlite: delete tenant failed: %w", err)
 	}
 
-	rows, err := result.RowsAffected()
+	rows, err := res.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("bun: rows affected check failed: %w", err)
+		return fmt.Errorf("sqlite: rows affected check failed: %w", err)
 	}
 
 	if rows == 0 {
@@ -163,34 +175,31 @@ func (s *Store) DeleteTenant(ctx context.Context, tenantID string) error {
 }
 
 func (s *Store) CountTenants(ctx context.Context) (int, error) {
-	count, err := s.db.NewSelect().
-		Model((*tenantModel)(nil)).
-		Count(ctx)
+	count, err := s.sdb.NewSelect((*tenantModel)(nil)).Count(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("bun: count tenants failed: %w", err)
+		return 0, fmt.Errorf("sqlite: count tenants failed: %w", err)
 	}
 
-	return count, nil
+	return int(count), nil
 }
 
 func (s *Store) CountTenantsByStatus(ctx context.Context, status admin.TenantStatus) (int, error) {
-	count, err := s.db.NewSelect().
-		Model((*tenantModel)(nil)).
+	count, err := s.sdb.NewSelect((*tenantModel)(nil)).
 		Where("status = ?", string(status)).
 		Count(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("bun: count tenants by status failed: %w", err)
+		return 0, fmt.Errorf("sqlite: count tenants by status failed: %w", err)
 	}
 
-	return count, nil
+	return int(count), nil
 }
 
 func (s *Store) InsertAuditEntry(ctx context.Context, entry *admin.AuditEntry) error {
 	model := toAuditEntryModel(entry)
 
-	_, err := s.db.NewInsert().Model(model).Exec(ctx)
+	_, err := s.sdb.NewInsert(model).Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("bun: insert audit entry failed: %w", err)
+		return fmt.Errorf("sqlite: insert audit entry failed: %w", err)
 	}
 
 	return nil
@@ -199,48 +208,46 @@ func (s *Store) InsertAuditEntry(ctx context.Context, entry *admin.AuditEntry) e
 func (s *Store) QueryAuditLog(ctx context.Context, opts admin.AuditQuery) (*admin.AuditResult, error) {
 	var models []auditEntryModel
 
-	query := s.db.NewSelect().Model(&models)
+	q := s.sdb.NewSelect(&models)
 
 	if opts.TenantID != "" {
-		query = query.Where("tenant_id = ?", opts.TenantID)
+		q = q.Where("tenant_id = ?", opts.TenantID)
 	}
 
 	if opts.ActorID != "" {
-		query = query.Where("actor_id = ?", opts.ActorID)
+		q = q.Where("actor_id = ?", opts.ActorID)
 	}
 
 	if opts.Action != "" {
-		query = query.Where("action = ?", opts.Action)
+		q = q.Where("action = ?", opts.Action)
 	}
 
 	if opts.Resource != "" {
-		query = query.Where("resource = ?", opts.Resource)
+		q = q.Where("resource = ?", opts.Resource)
 	}
 
 	if !opts.Since.IsZero() {
-		query = query.Where("created_at >= ?", opts.Since)
+		q = q.Where("created_at >= ?", opts.Since)
 	}
 
 	if !opts.Until.IsZero() {
-		query = query.Where("created_at <= ?", opts.Until)
+		q = q.Where("created_at <= ?", opts.Until)
 	}
 
-	query = query.Order("created_at DESC")
+	q = q.OrderExpr("created_at DESC")
 
 	limit := opts.Limit
 	if limit <= 0 {
 		limit = 100
 	}
 
-	query = query.Limit(limit)
+	q = q.Limit(limit)
 
-	count, err := query.ScanAndCount(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("bun: query audit log failed: %w", err)
+	if err := q.Scan(ctx); err != nil {
+		return nil, fmt.Errorf("sqlite: query audit log failed: %w", err)
 	}
 
 	items := make([]admin.AuditEntry, 0, len(models))
-
 	for _, model := range models {
 		entry := admin.AuditEntry{
 			Entity: ctrlplane.Entity{
@@ -252,12 +259,11 @@ func (s *Store) QueryAuditLog(ctx context.Context, opts admin.AuditQuery) (*admi
 			Resource:   model.Resource,
 			ResourceID: model.ResourceID,
 		}
-
 		items = append(items, entry)
 	}
 
 	return &admin.AuditResult{
 		Items: items,
-		Total: count,
+		Total: len(items),
 	}, nil
 }

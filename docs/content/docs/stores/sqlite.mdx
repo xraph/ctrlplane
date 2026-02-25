@@ -1,0 +1,66 @@
+---
+title: SQLite Store
+description: Lightweight SQLite backend using Grove ORM with sqlitedriver.
+---
+
+The SQLite store (`store/sqlite`) provides a lightweight, embedded backend using the [Grove ORM](https://github.com/xraph/grove) with `sqlitedriver`. It implements the full `store.Store` interface and is well-suited for single-node deployments, local development, and testing.
+
+## When to use
+
+- **Local development** -- single-file database, no server process required.
+- **Testing** -- fast, isolated store with no external dependencies.
+- **Edge / embedded** -- CLI tools, desktop apps, or single-process services.
+- **CI pipelines** -- deterministic tests without a database container.
+
+## Configuration
+
+```go
+import (
+    "github.com/xraph/grove"
+    "github.com/xraph/grove/drivers/sqlitedriver"
+    "github.com/xraph/ctrlplane/store/sqlite"
+)
+
+// Open a SQLite connection via Grove's sqlitedriver.
+db := grove.Open(sqlitedriver.New("ctrlplane.db"))
+
+s := sqlite.New(db)
+if err := s.Migrate(ctx); err != nil {
+    log.Fatal(err)
+}
+```
+
+### With the app
+
+```go
+cp, err := app.New(
+    app.WithStore(s),
+)
+```
+
+## Internals
+
+| Aspect | Detail |
+|--------|--------|
+| **Driver** | Grove ORM with `sqlitedriver` (SQLite) |
+| **Migrations** | Grove migration orchestrator with programmatic migrations |
+| **Transactions** | Database-level transactions via SQLite |
+| **Migrate** | Creates tables and indexes |
+| **Ping** | `db.Ping(ctx)` |
+| **Close** | Closes the database connection |
+
+## Limitations
+
+- **Single-writer** -- SQLite uses database-level write locks. High write concurrency will serialize.
+- **Single process** -- cannot be shared across multiple instances.
+- **Not horizontally scalable** -- suited for single-process or embedded use.
+
+## Comparison
+
+| Feature | Memory | Badger | SQLite | Bun (PostgreSQL) | MongoDB |
+|---------|--------|--------|--------|-------------------|---------|
+| Setup | None | Path only | File path | DSN | URI |
+| Persistence | No | Yes | Yes | Yes | Yes |
+| Multi-process | No | No | No | Yes | Yes |
+| Query flexibility | Low | Low | Medium | High | High |
+| Best for | Tests | Embedded KV | Embedded SQL | Production SQL | Production NoSQL |

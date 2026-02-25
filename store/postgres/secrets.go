@@ -1,10 +1,8 @@
-package mongo
+package postgres
 
 import (
 	"context"
 	"fmt"
-
-	"go.mongodb.org/mongo-driver/v2/bson"
 
 	ctrlplane "github.com/xraph/ctrlplane"
 	"github.com/xraph/ctrlplane/id"
@@ -14,9 +12,9 @@ import (
 func (s *Store) InsertSecret(ctx context.Context, secret *secrets.Secret) error {
 	model := toSecretModel(secret)
 
-	_, err := s.mdb.NewInsert(model).Exec(ctx)
+	_, err := s.pg.NewInsert(model).Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("mongo: insert secret failed: %w", err)
+		return fmt.Errorf("postgres: insert secret failed: %w", err)
 	}
 
 	return nil
@@ -25,28 +23,39 @@ func (s *Store) InsertSecret(ctx context.Context, secret *secrets.Secret) error 
 func (s *Store) GetSecretByKey(ctx context.Context, tenantID string, instanceID id.ID, key string) (*secrets.Secret, error) {
 	var model secretModel
 
-	err := s.mdb.NewFind(&model).
-		Filter(bson.M{"tenant_id": tenantID, "instance_id": instanceID.String(), "key": key}).
+	err := s.pg.NewSelect(&model).
+		Where("tenant_id = $1 AND instance_id = $2 AND key = $3", tenantID, instanceID.String(), key).
 		Scan(ctx)
 	if err != nil {
-		if isNoDocuments(err) {
+		if isNoRows(err) {
 			return nil, fmt.Errorf("%w: secret %s", ctrlplane.ErrNotFound, key)
 		}
 
-		return nil, fmt.Errorf("mongo: get secret by key failed: %w", err)
+		return nil, fmt.Errorf("postgres: get secret by key failed: %w", err)
 	}
 
-	return fromSecretModel(&model), nil
+	secret := &secrets.Secret{
+		Entity: ctrlplane.Entity{
+			CreatedAt: model.CreatedAt,
+			UpdatedAt: model.UpdatedAt,
+		},
+		TenantID:   model.TenantID,
+		InstanceID: id.MustParse(model.InstanceID),
+		Key:        model.Key,
+		Value:      model.Value,
+	}
+
+	return secret, nil
 }
 
 func (s *Store) ListSecrets(ctx context.Context, tenantID string, instanceID id.ID) ([]secrets.Secret, error) {
 	var models []secretModel
 
-	err := s.mdb.NewFind(&models).
-		Filter(bson.M{"tenant_id": tenantID, "instance_id": instanceID.String()}).
+	err := s.pg.NewSelect(&models).
+		Where("tenant_id = $1 AND instance_id = $2", tenantID, instanceID.String()).
 		Scan(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("mongo: list secrets failed: %w", err)
+		return nil, fmt.Errorf("postgres: list secrets failed: %w", err)
 	}
 
 	items := make([]secrets.Secret, 0, len(models))
@@ -59,7 +68,7 @@ func (s *Store) ListSecrets(ctx context.Context, tenantID string, instanceID id.
 			TenantID:   model.TenantID,
 			InstanceID: id.MustParse(model.InstanceID),
 			Key:        model.Key,
-			Value:      nil, // Omit value for list operations.
+			Value:      nil,
 		}
 		items = append(items, secret)
 	}
@@ -71,14 +80,19 @@ func (s *Store) UpdateSecret(ctx context.Context, secret *secrets.Secret) error 
 	secret.UpdatedAt = now()
 	model := toSecretModel(secret)
 
-	res, err := s.mdb.NewUpdate(model).
-		Filter(bson.M{"tenant_id": model.TenantID, "instance_id": model.InstanceID, "key": model.Key}).
+	res, err := s.pg.NewUpdate(model).
+		Where("tenant_id = $1 AND instance_id = $2 AND key = $3", secret.TenantID, secret.InstanceID.String(), secret.Key).
 		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("mongo: update secret failed: %w", err)
+		return fmt.Errorf("postgres: update secret failed: %w", err)
 	}
 
-	if res.MatchedCount() == 0 {
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("postgres: rows affected check failed: %w", err)
+	}
+
+	if rows == 0 {
 		return fmt.Errorf("%w: secret %s", ctrlplane.ErrNotFound, secret.Key)
 	}
 
@@ -86,14 +100,19 @@ func (s *Store) UpdateSecret(ctx context.Context, secret *secrets.Secret) error 
 }
 
 func (s *Store) DeleteSecret(ctx context.Context, tenantID string, instanceID id.ID, key string) error {
-	res, err := s.mdb.NewDelete((*secretModel)(nil)).
-		Filter(bson.M{"tenant_id": tenantID, "instance_id": instanceID.String(), "key": key}).
+	res, err := s.pg.NewDelete((*secretModel)(nil)).
+		Where("tenant_id = $1 AND instance_id = $2 AND key = $3", tenantID, instanceID.String(), key).
 		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("mongo: delete secret failed: %w", err)
+		return fmt.Errorf("postgres: delete secret failed: %w", err)
 	}
 
-	if res.DeletedCount() == 0 {
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("postgres: rows affected check failed: %w", err)
+	}
+
+	if rows == 0 {
 		return fmt.Errorf("%w: secret %s", ctrlplane.ErrNotFound, key)
 	}
 
@@ -101,11 +120,11 @@ func (s *Store) DeleteSecret(ctx context.Context, tenantID string, instanceID id
 }
 
 func (s *Store) CountSecretsByTenant(ctx context.Context, tenantID string) (int, error) {
-	count, err := s.mdb.NewFind((*secretModel)(nil)).
-		Filter(bson.M{"tenant_id": tenantID}).
+	count, err := s.pg.NewSelect((*secretModel)(nil)).
+		Where("tenant_id = $1", tenantID).
 		Count(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("mongo: count secrets failed: %w", err)
+		return 0, fmt.Errorf("postgres: count secrets failed: %w", err)
 	}
 
 	return int(count), nil

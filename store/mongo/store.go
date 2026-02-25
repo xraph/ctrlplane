@@ -2,6 +2,7 @@ package mongo
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -9,89 +10,53 @@ import (
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 
-	ctrlplane "github.com/xraph/ctrlplane"
+	"github.com/xraph/grove"
+	"github.com/xraph/grove/drivers/mongodriver"
+
 	"github.com/xraph/ctrlplane/id"
 	"github.com/xraph/ctrlplane/store"
 )
 
 // Collection name constants.
 const (
-	colInstances         = "instances"
-	colDeployments       = "deployments"
-	colReleases          = "releases"
-	colHealthChecks      = "health_checks"
-	colHealthResults     = "health_results"
-	colMetrics           = "metrics"
-	colLogs              = "logs"
-	colTraces            = "traces"
-	colResourceSnapshots = "resource_snapshots"
-	colDomains           = "domains"
-	colRoutes            = "routes"
-	colCertificates      = "certificates"
-	colSecrets           = "secrets"
-	colTenants           = "tenants"
-	colAuditEntries      = "audit_entries"
+	colInstances         = "cp_instances"
+	colDeployments       = "cp_deployments"
+	colReleases          = "cp_releases"
+	colHealthChecks      = "cp_health_checks"
+	colHealthResults     = "cp_health_results"
+	colMetrics           = "cp_metrics"
+	colLogs              = "cp_logs"
+	colTraces            = "cp_traces"
+	colResourceSnapshots = "cp_resource_snapshots"
+	colDomains           = "cp_domains"
+	colRoutes            = "cp_routes"
+	colCertificates      = "cp_certificates"
+	colSecrets           = "cp_secrets"
+	colTenants           = "cp_tenants"
+	colAuditEntries      = "cp_audit_entries"
 )
 
 // Compile-time interface check.
 var _ store.Store = (*Store)(nil)
 
-// Config holds the configuration for the MongoDB store.
-type Config struct {
-	URI         string        `env:"CP_MONGO_URI"  json:"uri"`
-	Database    string        `default:"ctrlplane" env:"CP_MONGO_DATABASE"      json:"database"`
-	MaxPoolSize uint64        `default:"100"       env:"CP_MONGO_MAX_POOL_SIZE" json:"max_pool_size"`
-	MinPoolSize uint64        `default:"10"        env:"CP_MONGO_MIN_POOL_SIZE" json:"min_pool_size"`
-	Timeout     time.Duration `default:"10s"       env:"CP_MONGO_TIMEOUT"       json:"timeout"`
-}
-
-// Store is a MongoDB-backed implementation of store.Store.
+// Store implements store.Store using MongoDB via Grove ORM.
 type Store struct {
-	client *mongo.Client
-	db     *mongo.Database
-	cfg    Config
+	db  *grove.DB
+	mdb *mongodriver.MongoDB
 }
 
-// New creates a new MongoDB store and establishes a connection.
-func New(cfg Config) (*Store, error) {
-	if cfg.URI == "" {
-		return nil, fmt.Errorf("mongo: %w: uri is required", ctrlplane.ErrInvalidConfig)
-	}
-
-	if cfg.Database == "" {
-		cfg.Database = "ctrlplane"
-	}
-
-	if cfg.Timeout == 0 {
-		cfg.Timeout = 10 * time.Second
-	}
-
-	opts := options.Client().
-		ApplyURI(cfg.URI).
-		SetMaxPoolSize(cfg.MaxPoolSize).
-		SetMinPoolSize(cfg.MinPoolSize).
-		SetTimeout(cfg.Timeout)
-
-	client, err := mongo.Connect(opts)
-	if err != nil {
-		return nil, fmt.Errorf("mongo: connect: %w", err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), cfg.Timeout)
-	defer cancel()
-
-	if err := client.Ping(ctx, nil); err != nil {
-		return nil, fmt.Errorf("mongo: ping: %w", err)
-	}
-
+// New creates a new MongoDB store backed by Grove ORM.
+func New(db *grove.DB) *Store {
 	return &Store{
-		client: client,
-		db:     client.Database(cfg.Database),
-		cfg:    cfg,
-	}, nil
+		db:  db,
+		mdb: mongodriver.Unwrap(db),
+	}
 }
 
-// Migrate creates collections and indexes.
+// DB returns the underlying grove database for direct access.
+func (s *Store) DB() *grove.DB { return s.db }
+
+// Migrate creates indexes for all controlplane collections.
 func (s *Store) Migrate(ctx context.Context) error {
 	indexes := migrationIndexes()
 
@@ -100,9 +65,9 @@ func (s *Store) Migrate(ctx context.Context) error {
 			continue
 		}
 
-		_, err := s.col(col).Indexes().CreateMany(ctx, models)
+		_, err := s.mdb.Collection(col).Indexes().CreateMany(ctx, models)
 		if err != nil {
-			return fmt.Errorf("mongo: migrate %s indexes: %w", col, err)
+			return fmt.Errorf("ctrlplane/mongo: migrate %s indexes: %w", col, err)
 		}
 	}
 
@@ -111,35 +76,22 @@ func (s *Store) Migrate(ctx context.Context) error {
 
 // Ping checks database connectivity.
 func (s *Store) Ping(ctx context.Context) error {
-	if err := s.client.Ping(ctx, nil); err != nil {
-		return fmt.Errorf("mongo: ping: %w", err)
-	}
-
-	return nil
+	return s.db.Ping(ctx)
 }
 
-// Close disconnects from MongoDB.
+// Close closes the database connection.
 func (s *Store) Close() error {
-	if err := s.client.Disconnect(context.Background()); err != nil {
-		return fmt.Errorf("mongo: close: %w", err)
-	}
-
-	return nil
-}
-
-// col returns a collection handle.
-func (s *Store) col(name string) *mongo.Collection {
-	return s.db.Collection(name)
-}
-
-// isDuplicateKeyError checks if an error is a MongoDB duplicate key error (code 11000).
-func isDuplicateKeyError(err error) bool {
-	return mongo.IsDuplicateKeyError(err)
+	return s.db.Close()
 }
 
 // now returns the current UTC time.
 func now() time.Time {
 	return time.Now().UTC()
+}
+
+// isNoDocuments checks if an error wraps mongo.ErrNoDocuments.
+func isNoDocuments(err error) bool {
+	return errors.Is(err, mongo.ErrNoDocuments)
 }
 
 // idStr returns the string representation of an ID.
@@ -150,18 +102,18 @@ func idStr(i id.ID) string {
 // migrationIndexes returns the index definitions for all collections.
 func migrationIndexes() map[string][]mongo.IndexModel {
 	return map[string][]mongo.IndexModel{
+		colTenants: {
+			{
+				Keys:    bson.D{{Key: "slug", Value: 1}},
+				Options: options.Index().SetUnique(true),
+			},
+		},
 		colInstances: {
 			{
 				Keys:    bson.D{{Key: "tenant_id", Value: 1}, {Key: "slug", Value: 1}},
 				Options: options.Index().SetUnique(true),
 			},
 			{Keys: bson.D{{Key: "tenant_id", Value: 1}, {Key: "created_at", Value: -1}}},
-		},
-		colTenants: {
-			{
-				Keys:    bson.D{{Key: "slug", Value: 1}},
-				Options: options.Index().SetUnique(true),
-			},
 		},
 		colDeployments: {
 			{Keys: bson.D{{Key: "tenant_id", Value: 1}, {Key: "instance_id", Value: 1}, {Key: "created_at", Value: -1}}},

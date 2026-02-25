@@ -1,4 +1,4 @@
-package bun
+package sqlite
 
 import (
 	"context"
@@ -12,9 +12,9 @@ import (
 func (s *Store) InsertSecret(ctx context.Context, secret *secrets.Secret) error {
 	model := toSecretModel(secret)
 
-	_, err := s.db.NewInsert().Model(model).Exec(ctx)
+	_, err := s.sdb.NewInsert(model).Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("bun: insert secret failed: %w", err)
+		return fmt.Errorf("sqlite: insert secret failed: %w", err)
 	}
 
 	return nil
@@ -23,12 +23,15 @@ func (s *Store) InsertSecret(ctx context.Context, secret *secrets.Secret) error 
 func (s *Store) GetSecretByKey(ctx context.Context, tenantID string, instanceID id.ID, key string) (*secrets.Secret, error) {
 	var model secretModel
 
-	err := s.db.NewSelect().
-		Model(&model).
+	err := s.sdb.NewSelect(&model).
 		Where("tenant_id = ? AND instance_id = ? AND key = ?", tenantID, instanceID.String(), key).
 		Scan(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("%w: secret %s", ctrlplane.ErrNotFound, key)
+		if isNoRows(err) {
+			return nil, fmt.Errorf("%w: secret %s", ctrlplane.ErrNotFound, key)
+		}
+
+		return nil, fmt.Errorf("sqlite: get secret by key failed: %w", err)
 	}
 
 	secret := &secrets.Secret{
@@ -48,16 +51,14 @@ func (s *Store) GetSecretByKey(ctx context.Context, tenantID string, instanceID 
 func (s *Store) ListSecrets(ctx context.Context, tenantID string, instanceID id.ID) ([]secrets.Secret, error) {
 	var models []secretModel
 
-	err := s.db.NewSelect().
-		Model(&models).
+	err := s.sdb.NewSelect(&models).
 		Where("tenant_id = ? AND instance_id = ?", tenantID, instanceID.String()).
 		Scan(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("bun: list secrets failed: %w", err)
+		return nil, fmt.Errorf("sqlite: list secrets failed: %w", err)
 	}
 
 	items := make([]secrets.Secret, 0, len(models))
-
 	for _, model := range models {
 		secret := secrets.Secret{
 			Entity: ctrlplane.Entity{
@@ -79,17 +80,16 @@ func (s *Store) UpdateSecret(ctx context.Context, secret *secrets.Secret) error 
 	secret.UpdatedAt = now()
 	model := toSecretModel(secret)
 
-	result, err := s.db.NewUpdate().
-		Model(model).
+	res, err := s.sdb.NewUpdate(model).
 		Where("tenant_id = ? AND instance_id = ? AND key = ?", secret.TenantID, secret.InstanceID.String(), secret.Key).
 		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("bun: update secret failed: %w", err)
+		return fmt.Errorf("sqlite: update secret failed: %w", err)
 	}
 
-	rows, err := result.RowsAffected()
+	rows, err := res.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("bun: rows affected check failed: %w", err)
+		return fmt.Errorf("sqlite: rows affected check failed: %w", err)
 	}
 
 	if rows == 0 {
@@ -100,17 +100,16 @@ func (s *Store) UpdateSecret(ctx context.Context, secret *secrets.Secret) error 
 }
 
 func (s *Store) DeleteSecret(ctx context.Context, tenantID string, instanceID id.ID, key string) error {
-	result, err := s.db.NewDelete().
-		Model((*secretModel)(nil)).
+	res, err := s.sdb.NewDelete((*secretModel)(nil)).
 		Where("tenant_id = ? AND instance_id = ? AND key = ?", tenantID, instanceID.String(), key).
 		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("bun: delete secret failed: %w", err)
+		return fmt.Errorf("sqlite: delete secret failed: %w", err)
 	}
 
-	rows, err := result.RowsAffected()
+	rows, err := res.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("bun: rows affected check failed: %w", err)
+		return fmt.Errorf("sqlite: rows affected check failed: %w", err)
 	}
 
 	if rows == 0 {
@@ -121,13 +120,12 @@ func (s *Store) DeleteSecret(ctx context.Context, tenantID string, instanceID id
 }
 
 func (s *Store) CountSecretsByTenant(ctx context.Context, tenantID string) (int, error) {
-	count, err := s.db.NewSelect().
-		Model((*secretModel)(nil)).
+	count, err := s.sdb.NewSelect((*secretModel)(nil)).
 		Where("tenant_id = ?", tenantID).
 		Count(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("bun: count secrets failed: %w", err)
+		return 0, fmt.Errorf("sqlite: count secrets failed: %w", err)
 	}
 
-	return count, nil
+	return int(count), nil
 }

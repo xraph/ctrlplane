@@ -2,206 +2,159 @@ package mongo
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
-	"go.mongodb.org/mongo-driver/v2/mongo"
-	"go.mongodb.org/mongo-driver/v2/mongo/options"
 
 	ctrlplane "github.com/xraph/ctrlplane"
 	"github.com/xraph/ctrlplane/health"
 	"github.com/xraph/ctrlplane/id"
 )
 
-// InsertCheck persists a new health check configuration.
 func (s *Store) InsertCheck(ctx context.Context, check *health.HealthCheck) error {
-	m := toHealthCheckModel(check)
+	model := toHealthCheckModel(check)
 
-	_, err := s.col(colHealthChecks).InsertOne(ctx, m)
+	_, err := s.mdb.NewInsert(model).Exec(ctx)
 	if err != nil {
-		if isDuplicateKeyError(err) {
-			return fmt.Errorf("mongo: insert health check: %w: %s", ctrlplane.ErrAlreadyExists, m.ID)
-		}
-
-		return fmt.Errorf("mongo: insert health check: %w", err)
+		return fmt.Errorf("mongo: insert health check failed: %w", err)
 	}
 
 	return nil
 }
 
-// GetCheck retrieves a health check by ID.
 func (s *Store) GetCheck(ctx context.Context, tenantID string, checkID id.ID) (*health.HealthCheck, error) {
-	filter := bson.D{
-		{Key: "_id", Value: idStr(checkID)},
-		{Key: "tenant_id", Value: tenantID},
-	}
+	var model healthCheckModel
 
-	var m healthCheckModel
-
-	err := s.col(colHealthChecks).FindOne(ctx, filter).Decode(&m)
+	err := s.mdb.NewFind(&model).
+		Filter(bson.M{"_id": checkID.String(), "tenant_id": tenantID}).
+		Scan(ctx)
 	if err != nil {
-		if errors.Is(err, mongo.ErrNoDocuments) {
-			return nil, fmt.Errorf("mongo: get health check: %w: %s", ctrlplane.ErrNotFound, checkID)
+		if isNoDocuments(err) {
+			return nil, fmt.Errorf("%w: health check %s", ctrlplane.ErrNotFound, checkID)
 		}
 
-		return nil, fmt.Errorf("mongo: get health check: %w", err)
+		return nil, fmt.Errorf("mongo: get health check failed: %w", err)
 	}
 
-	return fromHealthCheckModel(&m), nil
+	return fromHealthCheckModel(&model), nil
 }
 
-// ListChecks returns all health checks for an instance.
 func (s *Store) ListChecks(ctx context.Context, tenantID string, instanceID id.ID) ([]health.HealthCheck, error) {
-	filter := bson.D{
-		{Key: "tenant_id", Value: tenantID},
-		{Key: "instance_id", Value: idStr(instanceID)},
-	}
+	var models []healthCheckModel
 
-	cursor, err := s.col(colHealthChecks).Find(ctx, filter)
+	err := s.mdb.NewFind(&models).
+		Filter(bson.M{"tenant_id": tenantID, "instance_id": instanceID.String()}).
+		Scan(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("mongo: list health checks: %w", err)
-	}
-	defer cursor.Close(ctx)
-
-	items := make([]health.HealthCheck, 0)
-
-	for cursor.Next(ctx) {
-		var m healthCheckModel
-
-		if err := cursor.Decode(&m); err != nil {
-			return nil, fmt.Errorf("mongo: list health checks decode: %w", err)
-		}
-
-		items = append(items, *fromHealthCheckModel(&m))
+		return nil, fmt.Errorf("mongo: list health checks failed: %w", err)
 	}
 
-	if err := cursor.Err(); err != nil {
-		return nil, fmt.Errorf("mongo: list health checks cursor: %w", err)
+	items := make([]health.HealthCheck, 0, len(models))
+	for i := range models {
+		items = append(items, *fromHealthCheckModel(&models[i]))
 	}
 
 	return items, nil
 }
 
-// UpdateCheck persists changes to a health check.
 func (s *Store) UpdateCheck(ctx context.Context, check *health.HealthCheck) error {
 	check.UpdatedAt = now()
-	m := toHealthCheckModel(check)
+	model := toHealthCheckModel(check)
 
-	result, err := s.col(colHealthChecks).ReplaceOne(
-		ctx,
-		bson.D{{Key: "_id", Value: m.ID}},
-		m,
-	)
+	res, err := s.mdb.NewUpdate(model).
+		Filter(bson.M{"_id": model.ID}).
+		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("mongo: update health check: %w", err)
+		return fmt.Errorf("mongo: update health check failed: %w", err)
 	}
 
-	if result.MatchedCount == 0 {
-		return fmt.Errorf("mongo: update health check: %w: %s", ctrlplane.ErrNotFound, m.ID)
+	if res.MatchedCount() == 0 {
+		return fmt.Errorf("%w: health check %s", ctrlplane.ErrNotFound, check.ID)
 	}
 
 	return nil
 }
 
-// DeleteCheck removes a health check.
 func (s *Store) DeleteCheck(ctx context.Context, tenantID string, checkID id.ID) error {
-	filter := bson.D{
-		{Key: "_id", Value: idStr(checkID)},
-		{Key: "tenant_id", Value: tenantID},
-	}
-
-	result, err := s.col(colHealthChecks).DeleteOne(ctx, filter)
+	res, err := s.mdb.NewDelete((*healthCheckModel)(nil)).
+		Filter(bson.M{"_id": checkID.String(), "tenant_id": tenantID}).
+		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("mongo: delete health check: %w", err)
+		return fmt.Errorf("mongo: delete health check failed: %w", err)
 	}
 
-	if result.DeletedCount == 0 {
-		return fmt.Errorf("mongo: delete health check: %w: %s", ctrlplane.ErrNotFound, checkID)
+	if res.DeletedCount() == 0 {
+		return fmt.Errorf("%w: health check %s", ctrlplane.ErrNotFound, checkID)
 	}
 
 	return nil
 }
 
-// InsertResult persists a health check result.
 func (s *Store) InsertResult(ctx context.Context, result *health.HealthResult) error {
-	m := toHealthResultModel(result)
+	model := toHealthResultModel(result)
 
-	_, err := s.col(colHealthResults).InsertOne(ctx, m)
+	_, err := s.mdb.NewInsert(model).Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("mongo: insert health result: %w", err)
+		return fmt.Errorf("mongo: insert health result failed: %w", err)
 	}
 
 	return nil
 }
 
-// ListResults returns health results for a check within a time range.
 func (s *Store) ListResults(ctx context.Context, tenantID string, checkID id.ID, opts health.HistoryOptions) ([]health.HealthResult, error) {
-	filter := bson.D{
-		{Key: "tenant_id", Value: tenantID},
-		{Key: "check_id", Value: idStr(checkID)},
-	}
+	var models []healthResultModel
+
+	f := bson.M{"check_id": checkID.String()}
 
 	if !opts.Since.IsZero() {
-		filter = append(filter, bson.E{Key: "checked_at", Value: bson.D{{Key: "$gte", Value: opts.Since}}})
+		f["checked_at"] = bson.M{"$gte": opts.Since}
 	}
 
 	if !opts.Until.IsZero() {
-		filter = append(filter, bson.E{Key: "checked_at", Value: bson.D{{Key: "$lte", Value: opts.Until}}})
+		if existing, ok := f["checked_at"]; ok {
+			existing.(bson.M)["$lte"] = opts.Until
+		} else {
+			f["checked_at"] = bson.M{"$lte": opts.Until}
+		}
 	}
 
-	findOpts := options.Find().
-		SetSort(bson.D{{Key: "checked_at", Value: -1}})
+	q := s.mdb.NewFind(&models).
+		Filter(f).
+		Sort(bson.D{{Key: "checked_at", Value: -1}})
 
 	if opts.Limit > 0 {
-		findOpts.SetLimit(int64(opts.Limit))
+		q = q.Limit(int64(opts.Limit))
 	}
 
-	cursor, err := s.col(colHealthResults).Find(ctx, filter, findOpts)
-	if err != nil {
-		return nil, fmt.Errorf("mongo: list health results: %w", err)
-	}
-	defer cursor.Close(ctx)
-
-	items := make([]health.HealthResult, 0)
-
-	for cursor.Next(ctx) {
-		var m healthResultModel
-
-		if err := cursor.Decode(&m); err != nil {
-			return nil, fmt.Errorf("mongo: list health results decode: %w", err)
-		}
-
-		items = append(items, *fromHealthResultModel(&m))
+	if err := q.Scan(ctx); err != nil {
+		return nil, fmt.Errorf("mongo: list health results failed: %w", err)
 	}
 
-	if err := cursor.Err(); err != nil {
-		return nil, fmt.Errorf("mongo: list health results cursor: %w", err)
+	items := make([]health.HealthResult, 0, len(models))
+	for i := range models {
+		items = append(items, fromHealthResultModel(&models[i]))
 	}
 
 	return items, nil
 }
 
-// GetLatestResult returns the most recent result for a check.
 func (s *Store) GetLatestResult(ctx context.Context, tenantID string, checkID id.ID) (*health.HealthResult, error) {
-	filter := bson.D{
-		{Key: "tenant_id", Value: tenantID},
-		{Key: "check_id", Value: idStr(checkID)},
-	}
+	var model healthResultModel
 
-	findOpts := options.FindOne().
-		SetSort(bson.D{{Key: "checked_at", Value: -1}})
-
-	var m healthResultModel
-
-	err := s.col(colHealthResults).FindOne(ctx, filter, findOpts).Decode(&m)
+	err := s.mdb.NewFind(&model).
+		Filter(bson.M{"check_id": checkID.String()}).
+		Sort(bson.D{{Key: "checked_at", Value: -1}}).
+		Limit(1).
+		Scan(ctx)
 	if err != nil {
-		if errors.Is(err, mongo.ErrNoDocuments) {
-			return nil, fmt.Errorf("mongo: get latest health result: %w: %s", ctrlplane.ErrNotFound, checkID)
+		if isNoDocuments(err) {
+			return nil, fmt.Errorf("%w: no results for check %s", ctrlplane.ErrNotFound, checkID)
 		}
 
-		return nil, fmt.Errorf("mongo: get latest health result: %w", err)
+		return nil, fmt.Errorf("mongo: get latest result failed: %w", err)
 	}
 
-	return fromHealthResultModel(&m), nil
+	result := fromHealthResultModel(&model)
+
+	return &result, nil
 }

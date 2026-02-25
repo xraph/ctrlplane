@@ -2,109 +2,92 @@ package mongo
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
-	"go.mongodb.org/mongo-driver/v2/mongo"
-	"go.mongodb.org/mongo-driver/v2/mongo/options"
 
 	ctrlplane "github.com/xraph/ctrlplane"
 	"github.com/xraph/ctrlplane/admin"
 )
 
-// InsertTenant persists a new tenant.
 func (s *Store) InsertTenant(ctx context.Context, tenant *admin.Tenant) error {
-	m := toTenantModel(tenant)
+	model := toTenantModel(tenant)
 
-	_, err := s.col(colTenants).InsertOne(ctx, m)
+	_, err := s.mdb.NewInsert(model).Exec(ctx)
 	if err != nil {
-		if isDuplicateKeyError(err) {
-			return fmt.Errorf("mongo: insert tenant: %w: %s", ctrlplane.ErrAlreadyExists, m.ID)
-		}
-
-		return fmt.Errorf("mongo: insert tenant: %w", err)
+		return fmt.Errorf("mongo: insert tenant failed: %w", err)
 	}
 
 	return nil
 }
 
-// GetTenant retrieves a tenant by ID.
 func (s *Store) GetTenant(ctx context.Context, tenantID string) (*admin.Tenant, error) {
-	filter := bson.D{{Key: "_id", Value: tenantID}}
+	var model tenantModel
 
-	var m tenantModel
-
-	err := s.col(colTenants).FindOne(ctx, filter).Decode(&m)
+	err := s.mdb.NewFind(&model).
+		Filter(bson.M{"_id": tenantID}).
+		Scan(ctx)
 	if err != nil {
-		if errors.Is(err, mongo.ErrNoDocuments) {
-			return nil, fmt.Errorf("mongo: get tenant: %w: %s", ctrlplane.ErrNotFound, tenantID)
+		if isNoDocuments(err) {
+			return nil, fmt.Errorf("%w: tenant %s", ctrlplane.ErrNotFound, tenantID)
 		}
 
-		return nil, fmt.Errorf("mongo: get tenant: %w", err)
+		return nil, fmt.Errorf("mongo: get tenant failed: %w", err)
 	}
 
-	return fromTenantModel(&m), nil
+	return fromTenantModel(&model), nil
 }
 
-// GetTenantBySlug retrieves a tenant by slug.
 func (s *Store) GetTenantBySlug(ctx context.Context, slug string) (*admin.Tenant, error) {
-	filter := bson.D{{Key: "slug", Value: slug}}
+	var model tenantModel
 
-	var m tenantModel
-
-	err := s.col(colTenants).FindOne(ctx, filter).Decode(&m)
+	err := s.mdb.NewFind(&model).
+		Filter(bson.M{"slug": slug}).
+		Scan(ctx)
 	if err != nil {
-		if errors.Is(err, mongo.ErrNoDocuments) {
-			return nil, fmt.Errorf("mongo: get tenant by slug: %w: %s", ctrlplane.ErrNotFound, slug)
+		if isNoDocuments(err) {
+			return nil, fmt.Errorf("%w: slug %s", ctrlplane.ErrNotFound, slug)
 		}
 
-		return nil, fmt.Errorf("mongo: get tenant by slug: %w", err)
+		return nil, fmt.Errorf("mongo: get tenant by slug failed: %w", err)
 	}
 
-	return fromTenantModel(&m), nil
+	return fromTenantModel(&model), nil
 }
 
-// ListTenants returns tenants with optional filtering.
 func (s *Store) ListTenants(ctx context.Context, opts admin.ListTenantsOptions) (*admin.TenantListResult, error) {
-	filter := bson.D{}
+	var models []tenantModel
 
+	f := bson.M{}
 	if opts.Status != "" {
-		filter = append(filter, bson.E{Key: "status", Value: opts.Status})
+		f["status"] = opts.Status
 	}
 
-	total, err := s.col(colTenants).CountDocuments(ctx, filter)
+	limit := opts.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+
+	err := s.mdb.NewFind(&models).
+		Filter(f).
+		Sort(bson.D{{Key: "created_at", Value: -1}}).
+		Limit(int64(limit)).
+		Scan(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("mongo: list tenants count: %w", err)
+		return nil, fmt.Errorf("mongo: list tenants failed: %w", err)
 	}
 
-	findOpts := options.Find().
-		SetSort(bson.D{{Key: "created_at", Value: -1}})
-
-	if opts.Limit > 0 {
-		findOpts.SetLimit(int64(opts.Limit))
-	}
-
-	cursor, err := s.col(colTenants).Find(ctx, filter, findOpts)
+	// Count total.
+	total, err := s.mdb.NewFind((*tenantModel)(nil)).
+		Filter(f).
+		Count(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("mongo: list tenants: %w", err)
-	}
-	defer cursor.Close(ctx)
-
-	items := make([]*admin.Tenant, 0)
-
-	for cursor.Next(ctx) {
-		var m tenantModel
-
-		if err := cursor.Decode(&m); err != nil {
-			return nil, fmt.Errorf("mongo: list tenants decode: %w", err)
-		}
-
-		items = append(items, fromTenantModel(&m))
+		return nil, fmt.Errorf("mongo: count tenants failed: %w", err)
 	}
 
-	if err := cursor.Err(); err != nil {
-		return nil, fmt.Errorf("mongo: list tenants cursor: %w", err)
+	items := make([]*admin.Tenant, 0, len(models))
+	for i := range models {
+		items = append(items, fromTenantModel(&models[i]))
 	}
 
 	return &admin.TenantListResult{
@@ -113,139 +96,125 @@ func (s *Store) ListTenants(ctx context.Context, opts admin.ListTenantsOptions) 
 	}, nil
 }
 
-// UpdateTenant persists changes to a tenant.
 func (s *Store) UpdateTenant(ctx context.Context, tenant *admin.Tenant) error {
 	tenant.UpdatedAt = now()
-	m := toTenantModel(tenant)
+	model := toTenantModel(tenant)
 
-	result, err := s.col(colTenants).ReplaceOne(
-		ctx,
-		bson.D{{Key: "_id", Value: m.ID}},
-		m,
-	)
+	res, err := s.mdb.NewUpdate(model).
+		Filter(bson.M{"_id": model.ID}).
+		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("mongo: update tenant: %w", err)
+		return fmt.Errorf("mongo: update tenant failed: %w", err)
 	}
 
-	if result.MatchedCount == 0 {
-		return fmt.Errorf("mongo: update tenant: %w: %s", ctrlplane.ErrNotFound, m.ID)
+	if res.MatchedCount() == 0 {
+		return fmt.Errorf("%w: tenant %s", ctrlplane.ErrNotFound, tenant.ID)
 	}
 
 	return nil
 }
 
-// DeleteTenant removes a tenant.
 func (s *Store) DeleteTenant(ctx context.Context, tenantID string) error {
-	result, err := s.col(colTenants).DeleteOne(ctx, bson.D{{Key: "_id", Value: tenantID}})
+	res, err := s.mdb.NewDelete((*tenantModel)(nil)).
+		Filter(bson.M{"_id": tenantID}).
+		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("mongo: delete tenant: %w", err)
+		return fmt.Errorf("mongo: delete tenant failed: %w", err)
 	}
 
-	if result.DeletedCount == 0 {
-		return fmt.Errorf("mongo: delete tenant: %w: %s", ctrlplane.ErrNotFound, tenantID)
+	if res.DeletedCount() == 0 {
+		return fmt.Errorf("%w: tenant %s", ctrlplane.ErrNotFound, tenantID)
 	}
 
 	return nil
 }
 
-// CountTenants returns the total number of tenants.
 func (s *Store) CountTenants(ctx context.Context) (int, error) {
-	count, err := s.col(colTenants).CountDocuments(ctx, bson.D{})
+	count, err := s.mdb.NewFind((*tenantModel)(nil)).
+		Filter(bson.M{}).
+		Count(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("mongo: count tenants: %w", err)
+		return 0, fmt.Errorf("mongo: count tenants failed: %w", err)
 	}
 
 	return int(count), nil
 }
 
-// CountTenantsByStatus returns the number of tenants in a given status.
 func (s *Store) CountTenantsByStatus(ctx context.Context, status admin.TenantStatus) (int, error) {
-	filter := bson.D{{Key: "status", Value: string(status)}}
-
-	count, err := s.col(colTenants).CountDocuments(ctx, filter)
+	count, err := s.mdb.NewFind((*tenantModel)(nil)).
+		Filter(bson.M{"status": string(status)}).
+		Count(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("mongo: count tenants by status: %w", err)
+		return 0, fmt.Errorf("mongo: count tenants by status failed: %w", err)
 	}
 
 	return int(count), nil
 }
 
-// InsertAuditEntry persists an audit log entry.
 func (s *Store) InsertAuditEntry(ctx context.Context, entry *admin.AuditEntry) error {
-	m := toAuditEntryModel(entry)
+	model := toAuditEntryModel(entry)
 
-	_, err := s.col(colAuditEntries).InsertOne(ctx, m)
+	_, err := s.mdb.NewInsert(model).Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("mongo: insert audit entry: %w", err)
+		return fmt.Errorf("mongo: insert audit entry failed: %w", err)
 	}
 
 	return nil
 }
 
-// QueryAuditLog returns audit entries matching the query.
 func (s *Store) QueryAuditLog(ctx context.Context, opts admin.AuditQuery) (*admin.AuditResult, error) {
-	filter := bson.D{}
+	var models []auditEntryModel
 
+	f := bson.M{}
 	if opts.TenantID != "" {
-		filter = append(filter, bson.E{Key: "tenant_id", Value: opts.TenantID})
+		f["tenant_id"] = opts.TenantID
 	}
 
 	if opts.ActorID != "" {
-		filter = append(filter, bson.E{Key: "actor_id", Value: opts.ActorID})
-	}
-
-	if opts.Resource != "" {
-		filter = append(filter, bson.E{Key: "resource", Value: opts.Resource})
+		f["actor_id"] = opts.ActorID
 	}
 
 	if opts.Action != "" {
-		filter = append(filter, bson.E{Key: "action", Value: opts.Action})
+		f["action"] = opts.Action
+	}
+
+	if opts.Resource != "" {
+		f["resource"] = opts.Resource
 	}
 
 	if !opts.Since.IsZero() {
-		filter = append(filter, bson.E{Key: "created_at", Value: bson.D{{Key: "$gte", Value: opts.Since}}})
+		f["created_at"] = bson.M{"$gte": opts.Since}
 	}
 
 	if !opts.Until.IsZero() {
-		filter = append(filter, bson.E{Key: "created_at", Value: bson.D{{Key: "$lte", Value: opts.Until}}})
-	}
-
-	total, err := s.col(colAuditEntries).CountDocuments(ctx, filter)
-	if err != nil {
-		return nil, fmt.Errorf("mongo: query audit log count: %w", err)
-	}
-
-	findOpts := options.Find().
-		SetSort(bson.D{{Key: "created_at", Value: -1}})
-
-	if opts.Limit > 0 {
-		findOpts.SetLimit(int64(opts.Limit))
-	}
-
-	cursor, err := s.col(colAuditEntries).Find(ctx, filter, findOpts)
-	if err != nil {
-		return nil, fmt.Errorf("mongo: query audit log: %w", err)
-	}
-	defer cursor.Close(ctx)
-
-	items := make([]admin.AuditEntry, 0)
-
-	for cursor.Next(ctx) {
-		var m auditEntryModel
-
-		if err := cursor.Decode(&m); err != nil {
-			return nil, fmt.Errorf("mongo: query audit log decode: %w", err)
+		if existing, ok := f["created_at"]; ok {
+			existing.(bson.M)["$lte"] = opts.Until
+		} else {
+			f["created_at"] = bson.M{"$lte": opts.Until}
 		}
-
-		items = append(items, fromAuditEntryModel(&m))
 	}
 
-	if err := cursor.Err(); err != nil {
-		return nil, fmt.Errorf("mongo: query audit log cursor: %w", err)
+	limit := opts.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+
+	err := s.mdb.NewFind(&models).
+		Filter(f).
+		Sort(bson.D{{Key: "created_at", Value: -1}}).
+		Limit(int64(limit)).
+		Scan(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("mongo: query audit log failed: %w", err)
+	}
+
+	items := make([]admin.AuditEntry, 0, len(models))
+	for i := range models {
+		items = append(items, fromAuditEntryModel(&models[i]))
 	}
 
 	return &admin.AuditResult{
 		Items: items,
-		Total: int(total),
+		Total: len(items),
 	}, nil
 }
