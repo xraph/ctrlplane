@@ -31,15 +31,65 @@ func main() {
 
 The extension registers itself with Forge and mounts the Ctrl Plane HTTP API at the configured base path.
 
+## File-based configuration
+
+When running inside Forge, Ctrl Plane automatically loads configuration from the application's YAML config file. The extension looks for settings under two keys (in order):
+
+1. `extensions.ctrlplane` (namespaced, recommended)
+2. `ctrlplane` (legacy shorthand)
+
+```yaml title="forge.yaml"
+extensions:
+  ctrlplane:
+    database_url: "postgres://localhost:5432/ctrlplane"
+    default_provider: "k8s"
+    base_path: "/api/cp"
+    health_interval: "30s"
+    telemetry_flush_interval: "10s"
+    max_instances_per_tenant: 100
+    audit_enabled: true
+    disable_routes: false
+    disable_migrate: false
+```
+
+### Merge behavior
+
+File-based and programmatic configuration are merged together with these rules:
+
+| Category | Precedence |
+|----------|------------|
+| Boolean flags (`disable_routes`, `disable_migrate`) | Programmatic `true` wins |
+| String fields (`base_path`, `database_url`, `default_provider`) | YAML takes precedence; programmatic fills gaps |
+| Duration/int fields (`health_interval`, `max_instances_per_tenant`, etc.) | YAML takes precedence; programmatic fills gaps |
+| `AuthProvider` | Always programmatic (cannot be set from YAML) |
+
+Any remaining zero-valued fields are filled from `DefaultConfig()`.
+
+### Requiring file config
+
+If your deployment relies on the config file being present, use `WithRequireConfig`:
+
+```go
+app.Use(cpext.New(
+    cpext.WithRequireConfig(true),
+))
+```
+
+When `RequireConfig` is `true` and no config is found under either key, `Register` returns an error.
+
 ## Extension options
 
 | Option | Purpose |
 |--------|---------|
 | `WithAuthProvider(p)` | Set the auth provider |
 | `WithProvider(name, p)` | Register a cloud provider |
-| `WithBasePath(path)` | Set the URL prefix (default: `/`) |
-| `WithConfig(cfg)` | Set extension configuration |
+| `WithBasePath(path)` | Set the URL prefix (default: `/api/cp`) |
+| `WithConfig(cfg)` | Set extension configuration directly |
 | `WithStore(opt)` | Pass a store option to the underlying Ctrl Plane |
+| `WithExtension(x)` | Register a plugin extension (lifecycle hooks) |
+| `WithDisableRoutes()` | Disable automatic route registration |
+| `WithDisableMigrate()` | Disable automatic database migration on Register |
+| `WithRequireConfig(bool)` | Require config to be present in YAML files |
 
 ## With Authsome
 
@@ -78,10 +128,10 @@ The Authsome adapter translates Authsome's user and session model into Ctrl Plan
 
 The extension implements the `forge.Extension` interface:
 
-- `Init(ctx)` -- Creates the Ctrl Plane instance and wires all services.
-- `Start(ctx)` -- Starts background workers.
-- `Stop(ctx)` -- Stops background workers and flushes state.
-- `Handler()` -- Returns the HTTP handler for Forge to mount.
+1. **`Register(fapp)`** -- Loads configuration from YAML files (or programmatic defaults), initializes the Ctrl Plane instance, runs migrations, registers routes, and provides the instance to the DI container.
+2. **`Start(ctx)`** -- Starts background workers.
+3. **`Stop(ctx)`** -- Gracefully shuts down background workers.
+4. **`Health(ctx)`** -- Returns an error if the extension is not initialized.
 
 Forge calls these methods in order during its own startup and shutdown sequence.
 

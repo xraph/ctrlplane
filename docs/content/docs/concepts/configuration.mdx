@@ -74,6 +74,48 @@ instanceSvc := instance.NewService(instance.ServiceConfig{
 })
 ```
 
+## File-based configuration (Forge extension)
+
+When Ctrl Plane runs as a [Forge extension](/docs/guides/forge-extension), it can load configuration from the application's YAML config file. The extension checks two keys in order:
+
+1. **`extensions.ctrlplane`** -- namespaced under the Forge extensions convention (recommended)
+2. **`ctrlplane`** -- legacy top-level key
+
+```yaml title="forge.yaml"
+extensions:
+  ctrlplane:
+    database_url: "postgres://localhost:5432/ctrlplane"
+    default_provider: "k8s"
+    base_path: "/api/cp"
+    health_interval: "30s"
+    telemetry_flush_interval: "10s"
+    max_instances_per_tenant: 100
+    audit_enabled: true
+    disable_routes: false
+    disable_migrate: false
+```
+
+### Extension-specific fields
+
+In addition to the global config fields, the extension config adds:
+
+| Field | Type | Description | Default |
+|-------|------|-------------|---------|
+| `base_path` | `string` | URL prefix for all ctrlplane routes | `/api/cp` |
+| `disable_routes` | `bool` | Disable automatic route registration | `false` |
+| `disable_migrate` | `bool` | Disable automatic database migration | `false` |
+
+### Configuration precedence
+
+When both file-based and programmatic options are provided, they are merged:
+
+1. **YAML values** take precedence for string, duration, and integer fields.
+2. **Programmatic boolean flags** (`DisableRoutes`, `DisableMigrate`) override when set to `true`.
+3. **`AuthProvider`** can only be set programmatically (not from YAML).
+4. Any remaining zero-valued fields are filled from `DefaultConfig()`.
+
+If no file-based config is found and `RequireConfig` is not set, the extension falls back to programmatic options merged with defaults.
+
 ## Environment variables
 
 All environment variables use the `CP_` prefix to avoid collisions:
