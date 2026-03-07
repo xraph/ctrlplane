@@ -1,0 +1,29 @@
+package components
+
+import (
+	"github.com/xraph/forgeui/components/badge"
+
+	"github.com/xraph/ctrlplane/event"
+)
+
+// EventTypeBadge renders a colored badge based on event type.
+templ EventTypeBadge(eventType event.Type) {
+	switch eventType {
+		case event.DeploySucceeded, event.HealthCheckPassed, event.HealthRecovered:
+			<span class="inline-flex items-center rounded-sm px-2 py-0.5 text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">
+				{ string(eventType) }
+			</span>
+		case event.DeployFailed, event.HealthCheckFailed, event.InstanceFailed:
+			@badge.Badge(badge.Props{Variant: badge.VariantDestructive}) {
+				{ string(eventType) }
+			}
+		case event.HealthDegraded, event.CertExpiring, event.QuotaExceeded:
+			<span class="inline-flex items-center rounded-sm px-2 py-0.5 text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400">
+				{ string(eventType) }
+			</span>
+		default:
+			@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+				{ string(eventType) }
+			}
+	}
+}

@@ -5,7 +5,6 @@ import (
 
 	"github.com/xraph/forge"
 
-	"github.com/xraph/ctrlplane/app"
 	"github.com/xraph/ctrlplane/extension"
 	"github.com/xraph/ctrlplane/provider/docker"
 	"github.com/xraph/ctrlplane/store/memory"
@@ -34,10 +33,16 @@ func run() error {
 		})),
 	)
 
+	// Create Docker provider with sane defaults.
+	dockerProv, err := docker.New()
+	if err != nil {
+		return err
+	}
+
 	// Register CtrlPlane as a Forge extension
 	cpExt := extension.New(
-		extension.WithStore(app.WithStore(memory.New())),
-		extension.WithProvider("docker", docker.New(docker.Config{})),
+		extension.WithStore(memory.New()),
+		extension.WithProvider("docker", dockerProv),
 		extension.WithBasePath("/api/cp"),
 	)
 

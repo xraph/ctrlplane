@@ -1,0 +1,65 @@
+package components
+
+import (
+	"strconv"
+
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/table"
+
+	"github.com/xraph/ctrlplane/network"
+)
+
+// RouteTable renders a table of routes.
+templ RouteTable(routes []network.Route, instanceID string) {
+	if len(routes) == 0 {
+		@EmptyState("network", "No routes", "Add a route to direct traffic to your instance.")
+	} else {
+		@table.Table() {
+			@table.Header() {
+				@table.Row() {
+					@table.Head() { Path }
+					@table.Head() { Port }
+					@table.Head() { Protocol }
+					@table.Head() { Weight }
+					@table.Head() { Strip Prefix }
+					@table.Head() { Actions }
+				}
+			}
+			@table.Body() {
+				for _, r := range routes {
+					@table.Row() {
+						@table.Cell() {
+							<span class="font-mono text-sm">{ r.Path }</span>
+						}
+						@table.Cell() {
+							<span class="text-muted-foreground">{ strconv.Itoa(r.Port) }</span>
+						}
+						@table.Cell() {
+							<span class="text-muted-foreground">{ r.Protocol }</span>
+						}
+						@table.Cell() {
+							<span class="text-muted-foreground">{ strconv.Itoa(r.Weight) }%</span>
+						}
+						@table.Cell() {
+							@BoolBadge(r.StripPrefix, "Yes", "No")
+						}
+						@table.Cell() {
+							@button.Button(button.Props{
+								Variant: button.VariantGhost,
+								Size:    button.SizeSm,
+								Attributes: templ.Attributes{
+									"hx-get":     "./network?instance_id=" + instanceID + "&tab=routes&action=remove_route&route_id=" + r.ID.String(),
+									"hx-target":  "#content",
+									"hx-swap":    "innerHTML",
+									"hx-confirm": "Remove route '" + r.Path + "'?",
+								},
+							}) {
+								Remove
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}

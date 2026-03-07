@@ -1,0 +1,16 @@
+package components
+
+// StrategySelect renders a deployment strategy selector dropdown.
+templ StrategySelect(selected string) {
+	<select
+		name="strategy"
+		id="strategy"
+		class="flex h-9 w-full rounded-sm border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+		required
+	>
+		<option value="rolling" selected?={ selected == "" || selected == "rolling" }>Rolling</option>
+		<option value="blue-green" selected?={ selected == "blue-green" }>Blue-Green</option>
+		<option value="canary" selected?={ selected == "canary" }>Canary</option>
+		<option value="recreate" selected?={ selected == "recreate" }>Recreate</option>
+	</select>
+}

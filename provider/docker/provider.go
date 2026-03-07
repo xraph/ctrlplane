@@ -20,9 +20,22 @@ type Provider struct {
 	cfg Config
 }
 
-// New creates a new Docker provider with the given configuration.
-func New(cfg Config) *Provider {
-	return &Provider{cfg: cfg}
+// New creates a new Docker provider with the given options.
+// Without any options, sane defaults are used (network: "bridge").
+func New(opts ...Option) (*Provider, error) {
+	p := &Provider{
+		cfg: Config{
+			Network: "bridge",
+		},
+	}
+
+	for _, opt := range opts {
+		if err := opt(p); err != nil {
+			return nil, err
+		}
+	}
+
+	return p, nil
 }
 
 // Info returns metadata about this provider.

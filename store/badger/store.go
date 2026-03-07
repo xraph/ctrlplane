@@ -33,6 +33,7 @@ const (
 	prefixInstanceSlug   = "islg:"
 	prefixTenantSlug     = "tslg:"
 	prefixReleaseVersion = "rlvr:"
+	prefixTemplate       = "tmpl:"
 )
 
 // Config holds the configuration for the Badger store.

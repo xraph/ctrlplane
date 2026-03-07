@@ -11,6 +11,10 @@ type Bus interface {
 	// If no types are specified, the handler receives all events.
 	Subscribe(handler Handler, types ...Type) Subscription
 
+	// RecentEvents returns the most recent events, optionally filtered by type.
+	// If no types are specified, all recent events are returned.
+	RecentEvents(limit int, types ...Type) []*Event
+
 	// Close shuts down the event bus and releases resources.
 	Close() error
 }

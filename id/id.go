@@ -26,6 +26,7 @@ const (
 	PrefixTenant          Prefix = "ten"
 	PrefixAuditEntry      Prefix = "aud"
 	PrefixEvent           Prefix = "evt"
+	PrefixTemplate        Prefix = "tmpl"
 )
 
 // ID is the primary identifier type for all ctrlplane entities.

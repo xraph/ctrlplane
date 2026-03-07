@@ -40,8 +40,20 @@ type Service interface {
 	// ListProviders returns status of all registered providers.
 	ListProviders(ctx context.Context) ([]ProviderStatus, error)
 
+	// TestProviderHealth runs a health check against a specific provider.
+	TestProviderHealth(ctx context.Context, providerName string) (*ProviderHealthResult, error)
+
 	// QueryAuditLog queries the audit log.
 	QueryAuditLog(ctx context.Context, opts AuditQuery) (*AuditResult, error)
+}
+
+// ProviderHealthResult holds the result of a provider health test.
+type ProviderHealthResult struct {
+	Name      string        `db:"name"       json:"name"`
+	Healthy   bool          `db:"healthy"    json:"healthy"`
+	Message   string        `db:"message"    json:"message"`
+	Latency   time.Duration `db:"latency"    json:"latency"`
+	CheckedAt time.Time     `db:"checked_at" json:"checked_at"`
 }
 
 // CreateTenantRequest holds the parameters for creating a tenant.

@@ -31,4 +31,19 @@ type Store interface {
 
 	// NextReleaseVersion returns the next auto-incrementing version number for an instance.
 	NextReleaseVersion(ctx context.Context, tenantID string, instanceID id.ID) (int, error)
+
+	// InsertTemplate persists a new deployment template.
+	InsertTemplate(ctx context.Context, t *Template) error
+
+	// GetTemplate retrieves a deployment template by ID within a tenant.
+	GetTemplate(ctx context.Context, tenantID string, templateID id.ID) (*Template, error)
+
+	// UpdateTemplate persists changes to an existing deployment template.
+	UpdateTemplate(ctx context.Context, t *Template) error
+
+	// DeleteTemplate removes a deployment template.
+	DeleteTemplate(ctx context.Context, tenantID string, templateID id.ID) error
+
+	// ListTemplates returns a paginated list of deployment templates for a tenant.
+	ListTemplates(ctx context.Context, tenantID string, opts ListOptions) (*TemplateListResult, error)
 }

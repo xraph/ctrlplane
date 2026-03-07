@@ -1,0 +1,56 @@
+package widgets
+
+import (
+	"strconv"
+
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/icons"
+
+	"github.com/xraph/ctrlplane/dashboard/components"
+	"github.com/xraph/ctrlplane/worker"
+)
+
+// WorkersWidget renders a compact card showing worker status summary.
+templ WorkersWidget(workers []worker.WorkerInfo) {
+	@card.Card(card.Props{Class: "rounded-sm"}) {
+		@card.Content(card.ContentProps{Class: "flex flex-col gap-1 p-6"}) {
+			<div class="flex items-center justify-between">
+				<span class="text-sm text-muted-foreground">Workers</span>
+				<span class="text-muted-foreground">
+					@components.ResolveIcon("activity", icons.WithSize(16))
+				</span>
+			</div>
+			<div class="text-3xl font-bold">{ strconv.Itoa(len(workers)) }</div>
+			<div class="flex items-center gap-3 text-xs text-muted-foreground">
+				<span>{ strconv.Itoa(countRunning(workers)) } running</span>
+				if countErrors(workers) > 0 {
+					<span class="text-destructive">{ strconv.Itoa(countErrors(workers)) } with errors</span>
+				}
+			</div>
+		}
+	}
+}
+
+// countRunning counts the number of running workers.
+func countRunning(workers []worker.WorkerInfo) int {
+	count := 0
+	for _, w := range workers {
+		if w.Running {
+			count++
+		}
+	}
+
+	return count
+}
+
+// countErrors counts the number of workers with errors.
+func countErrors(workers []worker.WorkerInfo) int {
+	count := 0
+	for _, w := range workers {
+		if w.LastErr != "" {
+			count++
+		}
+	}
+
+	return count
+}

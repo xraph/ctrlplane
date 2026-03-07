@@ -37,6 +37,8 @@ type Store struct {
 
 	secretStore map[string]*secrets.Secret // keyed by "instanceID:key"
 
+	templates map[string]*deploy.Template
+
 	tenants      map[string]*admin.Tenant
 	auditEntries []admin.AuditEntry
 }
@@ -53,6 +55,7 @@ func New() *Store {
 		routes:        make(map[string]*network.Route),
 		certificates:  make(map[string]*network.Certificate),
 		secretStore:   make(map[string]*secrets.Secret),
+		templates:     make(map[string]*deploy.Template),
 		tenants:       make(map[string]*admin.Tenant),
 	}
 }

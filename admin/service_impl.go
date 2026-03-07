@@ -373,6 +373,53 @@ func (s *service) ListProviders(ctx context.Context) ([]ProviderStatus, error) {
 	return statuses, nil
 }
 
+// TestProviderHealth runs a health check against a specific provider.
+func (s *service) TestProviderHealth(ctx context.Context, providerName string) (*ProviderHealthResult, error) {
+	claims, err := auth.RequireClaims(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("test provider health: %w", err)
+	}
+
+	if !claims.IsSystemAdmin() {
+		return nil, fmt.Errorf("test provider health: %w", ctrlplane.ErrForbidden)
+	}
+
+	p, err := s.providers.Get(providerName)
+	if err != nil {
+		return nil, fmt.Errorf("test provider health: %w", err)
+	}
+
+	// If the provider implements HealthChecker, use it.
+	if hc, ok := p.(provider.HealthChecker); ok {
+		status, healthErr := hc.HealthCheck(ctx)
+
+		result := &ProviderHealthResult{
+			Name:      providerName,
+			CheckedAt: time.Now().UTC(),
+		}
+
+		switch {
+		case healthErr != nil:
+			result.Message = healthErr.Error()
+		default:
+			result.Healthy = status.Healthy
+			result.Message = status.Message
+			result.Latency = status.Latency
+			result.CheckedAt = status.CheckedAt
+		}
+
+		return result, nil
+	}
+
+	// Fall back to reporting healthy if no HealthChecker interface.
+	return &ProviderHealthResult{
+		Name:      providerName,
+		Healthy:   true,
+		Message:   "provider does not implement health checking",
+		CheckedAt: time.Now().UTC(),
+	}, nil
+}
+
 // QueryAuditLog queries the audit log.
 func (s *service) QueryAuditLog(ctx context.Context, opts AuditQuery) (*AuditResult, error) {
 	_, err := auth.RequireClaims(ctx)

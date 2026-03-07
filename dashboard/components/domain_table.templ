@@ -1,0 +1,95 @@
+package components
+
+import (
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/table"
+
+	"github.com/xraph/ctrlplane/network"
+)
+
+// DomainTable renders a table of domains.
+templ DomainTable(domains []network.Domain, instanceID string) {
+	if len(domains) == 0 {
+		@EmptyState("globe", "No domains", "Add a custom domain to your instance.")
+	} else {
+		@table.Table() {
+			@table.Header() {
+				@table.Row() {
+					@table.Head() { Hostname }
+					@table.Head() { Verified }
+					@table.Head() { TLS }
+					@table.Head() { DNS Target }
+					@table.Head() { Cert Expiry }
+					@table.Head() { Actions }
+				}
+			}
+			@table.Body() {
+				for _, d := range domains {
+					@table.Row() {
+						@table.Cell() {
+							<span class="font-medium">{ d.Hostname }</span>
+						}
+						@table.Cell() {
+							@BoolBadge(d.Verified, "Verified", "Pending")
+						}
+						@table.Cell() {
+							@BoolBadge(d.TLSEnabled, "Enabled", "Disabled")
+						}
+						@table.Cell() {
+							<span class="font-mono text-xs text-muted-foreground">{ d.DNSTarget }</span>
+						}
+						@table.Cell() {
+							if d.CertExpiry != nil {
+								<span class="text-muted-foreground">{ d.CertExpiry.Format("Jan 02, 2006") }</span>
+							} else {
+								<span class="text-muted-foreground">-</span>
+							}
+						}
+						@table.Cell() {
+							<div class="flex items-center gap-1">
+								if !d.Verified {
+									@button.Button(button.Props{
+										Variant: button.VariantGhost,
+										Size:    button.SizeSm,
+										Attributes: templ.Attributes{
+											"hx-get":    "./network?instance_id=" + instanceID + "&tab=domains&action=verify_domain&domain_id=" + d.ID.String(),
+											"hx-target": "#content",
+											"hx-swap":   "innerHTML",
+										},
+									}) {
+										Verify
+									}
+								}
+								if d.Verified && d.TLSEnabled {
+									@button.Button(button.Props{
+										Variant: button.VariantGhost,
+										Size:    button.SizeSm,
+										Attributes: templ.Attributes{
+											"hx-get":    "./network?instance_id=" + instanceID + "&tab=domains&action=provision_cert&domain_id=" + d.ID.String(),
+											"hx-target": "#content",
+											"hx-swap":   "innerHTML",
+										},
+									}) {
+										Cert
+									}
+								}
+								@button.Button(button.Props{
+									Variant: button.VariantGhost,
+									Size:    button.SizeSm,
+									Attributes: templ.Attributes{
+										"hx-get":     "./network?instance_id=" + instanceID + "&tab=domains&action=remove_domain&domain_id=" + d.ID.String(),
+										"hx-target":  "#content",
+										"hx-swap":    "innerHTML",
+										"hx-confirm": "Remove domain '" + d.Hostname + "'?",
+									},
+								}) {
+									Remove
+								}
+							</div>
+						}
+					}
+				}
+			}
+		}
+	}
+}

@@ -1,0 +1,18 @@
+package widgets
+
+import (
+	"strconv"
+
+	"github.com/xraph/ctrlplane/admin"
+	"github.com/xraph/ctrlplane/dashboard/components"
+)
+
+// SystemStatsWidget renders the system overview widget with stat cards.
+templ SystemStatsWidget(stats *admin.SystemStats) {
+	<div class="grid grid-cols-2 gap-4">
+		@components.StatCard("building-2", "Tenants", strconv.Itoa(stats.TotalTenants), strconv.Itoa(stats.ActiveTenants)+" active")
+		@components.StatCard("server", "Instances", strconv.Itoa(stats.TotalInstances), strconv.Itoa(stats.RunningInstances)+" running")
+		@components.StatCard("activity", "Running", strconv.Itoa(stats.RunningInstances), "instances")
+		@components.StatCard("cloud", "Providers", strconv.Itoa(stats.TotalProviders), strconv.Itoa(stats.HealthyProviders)+" healthy")
+	</div>
+}

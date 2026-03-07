@@ -1,0 +1,67 @@
+package components
+
+import (
+	"github.com/xraph/forgeui/components/table"
+
+	"github.com/xraph/ctrlplane/instance"
+)
+
+// InstanceTable renders a table of instances with clickable rows.
+templ InstanceTable(instances []*instance.Instance) {
+	if len(instances) == 0 {
+		@EmptyState("server", "No instances", "Create your first instance to get started.")
+	} else {
+		@table.Table() {
+			@table.Header() {
+				@table.Row() {
+					@table.Head() { Name }
+					@table.Head() { State }
+					@table.Head() { Provider }
+					@table.Head() { Region }
+					@table.Head() { Image }
+					@table.Head() { Created }
+				}
+			}
+			@table.Body() {
+				for _, inst := range instances {
+					@table.Row(table.RowProps{
+						Class: "cursor-pointer",
+						Attributes: templ.Attributes{
+							"hx-get":      "./instances/detail?instance_id=" + inst.ID.String(),
+							"hx-target":   "#content",
+							"hx-push-url": "true",
+							"hx-swap":     "innerHTML",
+						},
+					}) {
+						@table.Cell() {
+							<span class="font-medium">{ inst.Name }</span>
+						}
+						@table.Cell() {
+							@InstanceStateBadge(inst.State)
+						}
+						@table.Cell() {
+							<span class="text-muted-foreground">{ inst.ProviderName }</span>
+						}
+						@table.Cell() {
+							<span class="text-muted-foreground">{ inst.Region }</span>
+						}
+						@table.Cell() {
+							<span class="text-muted-foreground text-xs font-mono">{ truncStr(inst.Image, 40) }</span>
+						}
+						@table.Cell() {
+							<span class="text-muted-foreground">{ inst.CreatedAt.Format("Jan 02, 2006") }</span>
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+func truncStr(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+
+	return s[:maxLen-3] + "..."
+}

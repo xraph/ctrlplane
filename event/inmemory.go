@@ -6,10 +6,13 @@ import (
 	"sync"
 )
 
+const defaultHistoryCapacity = 1000
+
 // InMemoryBus is a channel-based event bus for single-process use and testing.
 type InMemoryBus struct {
-	mu   sync.RWMutex
-	subs []inMemorySub
+	mu      sync.RWMutex
+	subs    []inMemorySub
+	history []*Event
 }
 
 type inMemorySub struct {
@@ -20,15 +23,18 @@ type inMemorySub struct {
 
 // NewInMemoryBus creates a new in-memory event bus.
 func NewInMemoryBus() *InMemoryBus {
-	return &InMemoryBus{}
+	return &InMemoryBus{
+		history: make([]*Event, 0, defaultHistoryCapacity),
+	}
 }
 
 // Publish sends an event to all matching subscribers synchronously.
 func (b *InMemoryBus) Publish(ctx context.Context, evt *Event) error {
-	b.mu.RLock()
+	b.mu.Lock()
+	b.appendHistory(evt)
 	subs := make([]inMemorySub, len(b.subs))
 	copy(subs, b.subs)
-	b.mu.RUnlock()
+	b.mu.Unlock()
 
 	for _, sub := range subs {
 		if !sub.matches(evt.Type) {
@@ -59,9 +65,46 @@ func (b *InMemoryBus) Subscribe(handler Handler, types ...Type) Subscription {
 	return &inMemorySubscription{bus: b, subID: sub.id}
 }
 
+// RecentEvents returns the most recent events, optionally filtered by type.
+func (b *InMemoryBus) RecentEvents(limit int, types ...Type) []*Event {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	if limit <= 0 {
+		limit = 50
+	}
+
+	// Iterate backward through history to collect most recent first.
+	result := make([]*Event, 0, limit)
+
+	for i := len(b.history) - 1; i >= 0 && len(result) < limit; i-- {
+		evt := b.history[i]
+
+		if len(types) > 0 && !slices.Contains(types, evt.Type) {
+			continue
+		}
+
+		result = append(result, evt)
+	}
+
+	return result
+}
+
 // Close is a no-op for the in-memory bus.
 func (b *InMemoryBus) Close() error {
 	return nil
+}
+
+// appendHistory adds an event to the ring buffer, evicting the oldest if at capacity.
+// Caller must hold b.mu write lock.
+func (b *InMemoryBus) appendHistory(evt *Event) {
+	if len(b.history) >= defaultHistoryCapacity {
+		// Shift left by one, discarding the oldest event.
+		copy(b.history, b.history[1:])
+		b.history[len(b.history)-1] = evt
+	} else {
+		b.history = append(b.history, evt)
+	}
 }
 
 func (s *inMemorySub) matches(t Type) bool {

@@ -1,0 +1,66 @@
+package widgets
+
+import (
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/components/table"
+
+	"github.com/xraph/ctrlplane/dashboard/components"
+	"github.com/xraph/ctrlplane/deploy"
+)
+
+// RecentDeploysWidget renders the recent deployments widget.
+templ RecentDeploysWidget(deploys []*deploy.Deployment) {
+	@card.Card(card.Props{Class: "rounded-sm"}) {
+		@card.Header() {
+			@card.Title() {
+				Recent Deployments
+			}
+		}
+		@card.Content() {
+			if len(deploys) == 0 {
+				@components.EmptyState("rocket", "No deployments", "No recent deployments.")
+			} else {
+				@table.Table() {
+					@table.Header() {
+						@table.Row() {
+							@table.Head() { Image }
+							@table.Head() { State }
+							@table.Head() { Strategy }
+						}
+					}
+					@table.Body() {
+						for _, dep := range deploys {
+							@table.Row(table.RowProps{
+								Class: "cursor-pointer",
+								Attributes: templ.Attributes{
+									"hx-get":      "./deployments/detail?deployment_id=" + dep.ID.String(),
+									"hx-target":   "#content",
+									"hx-push-url": "true",
+									"hx-swap":     "innerHTML",
+								},
+							}) {
+								@table.Cell() {
+									<span class="font-mono text-xs">{ truncWidgetStr(dep.Image, 30) }</span>
+								}
+								@table.Cell() {
+									@components.DeployStateBadge(dep.State)
+								}
+								@table.Cell() {
+									<span class="text-muted-foreground text-xs">{ dep.Strategy }</span>
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+func truncWidgetStr(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+
+	return s[:maxLen-3] + "..."
+}

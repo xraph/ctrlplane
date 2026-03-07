@@ -28,6 +28,16 @@ type Config struct {
 	// RequireConfig requires config to be present in YAML files.
 	// If true and no config is found, Register returns an error.
 	RequireConfig bool `json:"-" yaml:"-"`
+
+	// GroveDatabase is the named grove database to resolve from the DI container.
+	// If empty, the default grove.DB is used. Set via WithGroveDatabase option or
+	// the "grove_database" YAML key.
+	GroveDatabase string `json:"grove_database" mapstructure:"grove_database" yaml:"grove_database"`
+
+	// VaultName is the named vault to resolve from the DI container.
+	// If empty, the default secrets.Vault is used. Set via WithVaultName option or
+	// the "vault_name" YAML key.
+	VaultName string `json:"vault_name" mapstructure:"vault_name" yaml:"vault_name"`
 }
 
 // DefaultConfig returns a Config with sensible defaults.

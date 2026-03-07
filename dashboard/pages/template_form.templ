@@ -1,0 +1,983 @@
+package pages
+
+import (
+	"strconv"
+
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/components/label"
+
+	"github.com/xraph/ctrlplane/dashboard/components"
+)
+
+// TemplateFormPage renders the create/edit form for a deployment template.
+templ TemplateFormPage(data TemplateFormData) {
+	<div class="space-y-6">
+		<div class="flex items-center gap-3">
+			<a class="text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+				hx-get="../templates"
+				hx-target="#content"
+				hx-push-url="true"
+				hx-swap="innerHTML">&larr; Back to Templates</a>
+		</div>
+
+		<div class="flex items-center gap-3">
+			if data.Template != nil {
+				<h1 class="text-3xl font-bold">Edit Template</h1>
+			} else {
+				<h1 class="text-3xl font-bold">New Template</h1>
+			}
+		</div>
+
+		if data.Error != "" {
+			<div class="rounded-sm border border-destructive/50 bg-destructive/10 p-4 text-sm text-destructive">
+				{ data.Error }
+			</div>
+		}
+
+		if data.Success != "" {
+			<div class="rounded-sm border border-green-500/50 bg-green-500/10 p-4 text-sm text-green-700 dark:text-green-400">
+				{ data.Success }
+			</div>
+		}
+
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Header() {
+				@card.Title() {
+					Template Configuration
+				}
+				@card.Description() {
+					if data.Template != nil {
+						Update the deployment template settings.
+					} else {
+						Define a reusable deployment configuration.
+					}
+				}
+			}
+			@card.Content() {
+				if data.Template != nil {
+					<form
+						hx-post={ "./edit?template_id=" + data.Template.ID.String() }
+						hx-target="#content"
+						hx-swap="innerHTML"
+						class="space-y-8"
+						onsubmit="serializeTemplateForm(this)"
+					>
+						@templateFormFields(data)
+					</form>
+				} else {
+					<form
+						hx-post="./create"
+						hx-target="#content"
+						hx-swap="innerHTML"
+						class="space-y-8"
+						onsubmit="serializeTemplateForm(this)"
+					>
+						@templateFormFields(data)
+					</form>
+				}
+			}
+		}
+
+		<!-- JavaScript for dynamic form sections -->
+		@templateFormScript()
+	</div>
+}
+
+// templateFormFields renders the shared form fields for create/edit.
+templ templateFormFields(data TemplateFormData) {
+	<!-- ═══════════════════════════════════════════════════════════ -->
+	<!-- Section 1 — Basic Info                                     -->
+	<!-- ═══════════════════════════════════════════════════════════ -->
+	<fieldset class="space-y-4">
+		<legend class="text-lg font-semibold border-b pb-2 w-full">Basic Info</legend>
+
+		<!-- Name -->
+		<div class="space-y-2">
+			@label.Label(label.Props{For: "name"}) {
+				Name
+			}
+			<input
+				type="text"
+				name="name"
+				id="name"
+				placeholder="e.g. Production Deploy, Staging Config"
+				class="flex h-9 w-full rounded-sm border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+				required
+				if data.Template != nil {
+					value={ data.Template.Name }
+				}
+			/>
+		</div>
+
+		<!-- Description -->
+		<div class="space-y-2">
+			@label.Label(label.Props{For: "description"}) {
+				Description
+			}
+			<input
+				type="text"
+				name="description"
+				id="description"
+				placeholder="Optional description of this template"
+				class="flex h-9 w-full rounded-sm border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+				if data.Template != nil {
+					value={ data.Template.Description }
+				}
+			/>
+		</div>
+
+		<!-- Image -->
+		<div class="space-y-2">
+			@label.Label(label.Props{For: "image"}) {
+				Image
+			}
+			<input
+				type="text"
+				name="image"
+				id="image"
+				placeholder="e.g. myapp:latest or registry.io/myapp:v1.2.3"
+				class="flex h-9 w-full rounded-sm border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+				required
+				if data.Template != nil {
+					value={ data.Template.Image }
+				}
+			/>
+		</div>
+
+		<!-- Strategy -->
+		<div class="space-y-2">
+			@label.Label(label.Props{For: "strategy"}) {
+				Strategy
+			}
+			if data.Template != nil {
+				@components.StrategySelect(data.Template.Strategy)
+			} else {
+				@components.StrategySelect("")
+			}
+		</div>
+	</fieldset>
+
+	<!-- ═══════════════════════════════════════════════════════════ -->
+	<!-- Section 2 — Resources                                      -->
+	<!-- ═══════════════════════════════════════════════════════════ -->
+	<fieldset class="space-y-4">
+		<legend class="text-lg font-semibold border-b pb-2 w-full">Resources</legend>
+		<p class="text-sm text-muted-foreground">Define compute resource limits for this template. Leave at 0 for defaults.</p>
+
+		<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+			<!-- CPU Millis -->
+			<div class="space-y-2">
+				@label.Label(label.Props{For: "cpu_millis"}) {
+					CPU (millis)
+				}
+				<input
+					type="number"
+					name="cpu_millis"
+					id="cpu_millis"
+					min="0"
+					step="1"
+					placeholder="e.g. 500 = 0.5 CPU"
+					class="flex h-9 w-full rounded-sm border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+					if data.Template != nil && data.Template.Resources.CPUMillis > 0 {
+						value={ strconv.Itoa(data.Template.Resources.CPUMillis) }
+					}
+				/>
+			</div>
+
+			<!-- Memory MB -->
+			<div class="space-y-2">
+				@label.Label(label.Props{For: "memory_mb"}) {
+					Memory (MB)
+				}
+				<input
+					type="number"
+					name="memory_mb"
+					id="memory_mb"
+					min="0"
+					step="1"
+					placeholder="e.g. 512"
+					class="flex h-9 w-full rounded-sm border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+					if data.Template != nil && data.Template.Resources.MemoryMB > 0 {
+						value={ strconv.Itoa(data.Template.Resources.MemoryMB) }
+					}
+				/>
+			</div>
+
+			<!-- Disk MB -->
+			<div class="space-y-2">
+				@label.Label(label.Props{For: "disk_mb"}) {
+					Disk (MB)
+				}
+				<input
+					type="number"
+					name="disk_mb"
+					id="disk_mb"
+					min="0"
+					step="1"
+					placeholder="e.g. 1024"
+					class="flex h-9 w-full rounded-sm border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+					if data.Template != nil && data.Template.Resources.DiskMB > 0 {
+						value={ strconv.Itoa(data.Template.Resources.DiskMB) }
+					}
+				/>
+			</div>
+
+			<!-- Replicas -->
+			<div class="space-y-2">
+				@label.Label(label.Props{For: "replicas"}) {
+					Replicas
+				}
+				<input
+					type="number"
+					name="replicas"
+					id="replicas"
+					min="0"
+					step="1"
+					placeholder="e.g. 2"
+					class="flex h-9 w-full rounded-sm border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+					if data.Template != nil && data.Template.Resources.Replicas > 0 {
+						value={ strconv.Itoa(data.Template.Resources.Replicas) }
+					}
+				/>
+			</div>
+		</div>
+
+		<!-- GPU -->
+		<div class="space-y-2">
+			@label.Label(label.Props{For: "gpu"}) {
+				GPU
+			}
+			<input
+				type="text"
+				name="gpu"
+				id="gpu"
+				placeholder="e.g. nvidia-tesla-t4"
+				class="flex h-9 w-full rounded-sm border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+				if data.Template != nil {
+					value={ data.Template.Resources.GPU }
+				}
+			/>
+		</div>
+	</fieldset>
+
+	<!-- ═══════════════════════════════════════════════════════════ -->
+	<!-- Section 3 — Ports                                          -->
+	<!-- ═══════════════════════════════════════════════════════════ -->
+	<fieldset class="space-y-4">
+		<legend class="text-lg font-semibold border-b pb-2 w-full">Ports</legend>
+		<p class="text-sm text-muted-foreground">Define port mappings for the container.</p>
+
+		<input type="hidden" name="ports_json" id="ports_json"
+			if data.Template != nil {
+				value={ portsToJSON(data.Template.Ports) }
+			} else {
+				value="[]"
+			}
+		/>
+
+		<div id="ports-container" class="space-y-2">
+			<!-- Dynamic port rows added by JS -->
+		</div>
+
+		<button
+			type="button"
+			onclick="addPort(0, 0, 'tcp')"
+			class="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors border rounded-sm px-2 py-1"
+		>
+			+ Add Port
+		</button>
+	</fieldset>
+
+	<!-- ═══════════════════════════════════════════════════════════ -->
+	<!-- Section 4 — Volumes                                        -->
+	<!-- ═══════════════════════════════════════════════════════════ -->
+	<fieldset class="space-y-4">
+		<legend class="text-lg font-semibold border-b pb-2 w-full">Volumes</legend>
+		<p class="text-sm text-muted-foreground">Define volume mounts for persistent or ephemeral storage.</p>
+
+		<input type="hidden" name="volumes_json" id="volumes_json"
+			if data.Template != nil {
+				value={ volumesToJSON(data.Template.Volumes) }
+			} else {
+				value="[]"
+			}
+		/>
+
+		<div id="volumes-container" class="space-y-2">
+			<!-- Dynamic volume rows added by JS -->
+		</div>
+
+		<button
+			type="button"
+			onclick="addVolume('', '', 0, 'persistent')"
+			class="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors border rounded-sm px-2 py-1"
+		>
+			+ Add Volume
+		</button>
+	</fieldset>
+
+	<!-- ═══════════════════════════════════════════════════════════ -->
+	<!-- Section 5 — Health Check                                   -->
+	<!-- ═══════════════════════════════════════════════════════════ -->
+	<fieldset class="space-y-4">
+		<legend class="text-lg font-semibold border-b pb-2 w-full">Health Check</legend>
+		<p class="text-sm text-muted-foreground">Configure an optional health check endpoint. Leave empty to skip.</p>
+
+		<input type="hidden" name="health_check_json" id="health_check_json"
+			if data.Template != nil {
+				value={ healthCheckToJSON(data.Template.HealthCheck) }
+			} else {
+				value="{}"
+			}
+		/>
+
+		<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+			<!-- Path -->
+			<div class="space-y-2">
+				@label.Label(label.Props{For: "hc_path"}) {
+					Path
+				}
+				<input
+					type="text"
+					id="hc_path"
+					placeholder="e.g. /healthz"
+					class="flex h-9 w-full rounded-sm border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring hc-field"
+					if data.Template != nil && data.Template.HealthCheck != nil {
+						value={ data.Template.HealthCheck.Path }
+					}
+				/>
+			</div>
+
+			<!-- Port -->
+			<div class="space-y-2">
+				@label.Label(label.Props{For: "hc_port"}) {
+					Port
+				}
+				<input
+					type="number"
+					id="hc_port"
+					min="0"
+					step="1"
+					placeholder="e.g. 8080"
+					class="flex h-9 w-full rounded-sm border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring hc-field"
+					if data.Template != nil && data.Template.HealthCheck != nil && data.Template.HealthCheck.Port > 0 {
+						value={ strconv.Itoa(data.Template.HealthCheck.Port) }
+					}
+				/>
+			</div>
+
+			<!-- Interval (seconds) -->
+			<div class="space-y-2">
+				@label.Label(label.Props{For: "hc_interval"}) {
+					Interval (seconds)
+				}
+				<input
+					type="number"
+					id="hc_interval"
+					min="0"
+					step="1"
+					placeholder="e.g. 30"
+					class="flex h-9 w-full rounded-sm border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring hc-field"
+					if data.Template != nil && data.Template.HealthCheck != nil {
+						value={ durationSeconds(data.Template.HealthCheck.Interval) }
+					}
+				/>
+			</div>
+
+			<!-- Timeout (seconds) -->
+			<div class="space-y-2">
+				@label.Label(label.Props{For: "hc_timeout"}) {
+					Timeout (seconds)
+				}
+				<input
+					type="number"
+					id="hc_timeout"
+					min="0"
+					step="1"
+					placeholder="e.g. 5"
+					class="flex h-9 w-full rounded-sm border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring hc-field"
+					if data.Template != nil && data.Template.HealthCheck != nil {
+						value={ durationSeconds(data.Template.HealthCheck.Timeout) }
+					}
+				/>
+			</div>
+
+			<!-- Retries -->
+			<div class="space-y-2">
+				@label.Label(label.Props{For: "hc_retries"}) {
+					Retries
+				}
+				<input
+					type="number"
+					id="hc_retries"
+					min="0"
+					step="1"
+					placeholder="e.g. 3"
+					class="flex h-9 w-full rounded-sm border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring hc-field"
+					if data.Template != nil && data.Template.HealthCheck != nil && data.Template.HealthCheck.Retries > 0 {
+						value={ strconv.Itoa(data.Template.HealthCheck.Retries) }
+					}
+				/>
+			</div>
+		</div>
+	</fieldset>
+
+	<!-- ═══════════════════════════════════════════════════════════ -->
+	<!-- Section 6 — Environment Variables                          -->
+	<!-- ═══════════════════════════════════════════════════════════ -->
+	<fieldset class="space-y-4">
+		<legend class="text-lg font-semibold border-b pb-2 w-full">Environment Variables</legend>
+		<p class="text-sm text-muted-foreground">Key-value pairs injected into the container environment.</p>
+
+		<input type="hidden" name="env_json" id="env_json"
+			if data.Template != nil {
+				value={ envToJSON(data.Template.Env) }
+			} else {
+				value="{}"
+			}
+		/>
+
+		<div id="env-vars-container" class="space-y-2">
+			<!-- Dynamic env var rows added by JS -->
+		</div>
+
+		<button
+			type="button"
+			onclick="addEnvVar('', '')"
+			class="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors border rounded-sm px-2 py-1"
+		>
+			+ Add Variable
+		</button>
+	</fieldset>
+
+	<!-- ═══════════════════════════════════════════════════════════ -->
+	<!-- Section 7 — Secret References                              -->
+	<!-- ═══════════════════════════════════════════════════════════ -->
+	<fieldset class="space-y-4">
+		<legend class="text-lg font-semibold border-b pb-2 w-full">Secret References</legend>
+		<p class="text-sm text-muted-foreground">Reference secrets that will be injected at deploy time.</p>
+
+		<input type="hidden" name="secrets_json" id="secrets_json"
+			if data.Template != nil {
+				value={ secretsToJSON(data.Template.Secrets) }
+			} else {
+				value="[]"
+			}
+		/>
+
+		<div id="secrets-container" class="space-y-2">
+			<!-- Dynamic secret rows added by JS -->
+		</div>
+
+		<button
+			type="button"
+			onclick="addSecret('', 'env')"
+			class="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors border rounded-sm px-2 py-1"
+		>
+			+ Add Secret
+		</button>
+	</fieldset>
+
+	<!-- ═══════════════════════════════════════════════════════════ -->
+	<!-- Section 8 — Config Files (Vault-Powered)                   -->
+	<!-- ═══════════════════════════════════════════════════════════ -->
+	<fieldset class="space-y-4">
+		<legend class="text-lg font-semibold border-b pb-2 w-full">Config Files (Vault-Powered)</legend>
+		<p class="text-sm text-muted-foreground">
+			Define configuration files that are stored in the vault and mounted into the container at deploy time.
+		</p>
+
+		<input type="hidden" name="config_files_json" id="config_files_json"
+			if data.Template != nil {
+				value={ configFilesToJSON(data.Template.ConfigFiles) }
+			} else {
+				value="[]"
+			}
+		/>
+
+		<div id="config-files-container" class="space-y-4">
+			<!-- Dynamic config file entries added by JS -->
+		</div>
+
+		<button
+			type="button"
+			onclick="addConfigFile('', '', 'yaml', '')"
+			class="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors border rounded-sm px-2 py-1"
+		>
+			+ Add Config File
+		</button>
+	</fieldset>
+
+	<!-- ═══════════════════════════════════════════════════════════ -->
+	<!-- Section 9 — Labels & Annotations                           -->
+	<!-- ═══════════════════════════════════════════════════════════ -->
+	<fieldset class="space-y-4">
+		<legend class="text-lg font-semibold border-b pb-2 w-full">Labels &amp; Annotations</legend>
+		<p class="text-sm text-muted-foreground">Metadata key-value pairs for organization and infrastructure integration.</p>
+
+		<div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+			<!-- Labels -->
+			<div class="space-y-2">
+				<span class="text-sm font-medium">Labels</span>
+				<input type="hidden" name="labels_json" id="labels_json"
+					if data.Template != nil {
+						value={ labelsToJSON(data.Template.Labels) }
+					} else {
+						value="{}"
+					}
+				/>
+				<div id="labels-container" class="space-y-2">
+					<!-- Dynamic label rows added by JS -->
+				</div>
+				<button
+					type="button"
+					onclick="addLabel('', '')"
+					class="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors border rounded-sm px-2 py-1"
+				>
+					+ Add Label
+				</button>
+			</div>
+
+			<!-- Annotations -->
+			<div class="space-y-2">
+				<span class="text-sm font-medium">Annotations</span>
+				<input type="hidden" name="annotations_json" id="annotations_json"
+					if data.Template != nil {
+						value={ labelsToJSON(data.Template.Annotations) }
+					} else {
+						value="{}"
+					}
+				/>
+				<div id="annotations-container" class="space-y-2">
+					<!-- Dynamic annotation rows added by JS -->
+				</div>
+				<button
+					type="button"
+					onclick="addAnnotation('', '')"
+					class="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors border rounded-sm px-2 py-1"
+				>
+					+ Add Annotation
+				</button>
+			</div>
+		</div>
+	</fieldset>
+
+	<!-- ═══════════════════════════════════════════════════════════ -->
+	<!-- Section 10 — VCS & Notes                                   -->
+	<!-- ═══════════════════════════════════════════════════════════ -->
+	<fieldset class="space-y-4">
+		<legend class="text-lg font-semibold border-b pb-2 w-full">VCS &amp; Notes</legend>
+
+		<!-- Commit SHA -->
+		<div class="space-y-2">
+			@label.Label(label.Props{For: "commit_sha"}) {
+				Commit SHA
+			}
+			<input
+				type="text"
+				name="commit_sha"
+				id="commit_sha"
+				placeholder="e.g. a1b2c3d4e5f6"
+				class="flex h-9 w-full rounded-sm border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+				if data.Template != nil {
+					value={ data.Template.CommitSHA }
+				}
+			/>
+		</div>
+
+		<!-- Notes -->
+		<div class="space-y-2">
+			@label.Label(label.Props{For: "notes"}) {
+				Notes
+			}
+			<textarea
+				name="notes"
+				id="notes"
+				rows="3"
+				placeholder="Optional deployment notes..."
+				class="flex min-h-[60px] w-full rounded-sm border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+			>
+				if data.Template != nil {
+					{ data.Template.Notes }
+				}
+			</textarea>
+		</div>
+	</fieldset>
+
+	<!-- Submit -->
+	<div class="flex justify-end pt-4 border-t">
+		@button.Button(button.Props{
+			Type: "submit",
+		}) {
+			if data.Template != nil {
+				Update Template
+			} else {
+				Create Template
+			}
+		}
+	</div>
+}
+
+// templateFormScript provides the client-side JavaScript for managing all dynamic form sections.
+templ templateFormScript() {
+	<script>
+	// ── Utilities ────────────────────────────────────────────────
+
+	function escapeAttr(s) {
+		if (s == null) return '';
+		return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+	}
+
+	function escapeTextarea(s) {
+		if (s == null) return '';
+		return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+	}
+
+	var inputCls = 'flex h-8 rounded-sm border border-input bg-transparent px-2 py-1 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring';
+	var selectCls = 'flex h-8 rounded-sm border border-input bg-transparent px-2 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring';
+	var removeBtnCls = 'text-muted-foreground hover:text-destructive text-sm px-1';
+
+	// ── Environment Variables ────────────────────────────────────
+
+	function addEnvVar(key, value) {
+		var container = document.getElementById('env-vars-container');
+		var row = document.createElement('div');
+		row.className = 'flex items-center gap-2';
+		row.innerHTML = '<input type="text" placeholder="KEY" value="' + escapeAttr(key) + '" class="env-key w-1/3 font-mono ' + inputCls + '"/>' +
+			'<input type="text" placeholder="value" value="' + escapeAttr(value) + '" class="env-val w-2/3 font-mono ' + inputCls + '"/>' +
+			'<button type="button" onclick="this.parentElement.remove()" class="' + removeBtnCls + '">&times;</button>';
+		container.appendChild(row);
+	}
+
+	function serializeEnvVars(form) {
+		var env = {};
+		var keys = form.querySelectorAll('.env-key');
+		var vals = form.querySelectorAll('.env-val');
+		for (var i = 0; i < keys.length; i++) {
+			var k = keys[i].value.trim();
+			var v = vals[i].value;
+			if (k !== '') { env[k] = v; }
+		}
+		form.querySelector('#env_json').value = JSON.stringify(env);
+	}
+
+	// ── Ports ───────────────────────────────────────────────────
+
+	function addPort(container_port, host_port, protocol) {
+		var c = document.getElementById('ports-container');
+		var row = document.createElement('div');
+		row.className = 'flex items-center gap-2';
+		row.innerHTML = '<input type="number" placeholder="Container Port" value="' + (container_port || '') + '" min="0" class="port-container w-1/4 ' + inputCls + '"/>' +
+			'<input type="number" placeholder="Host Port" value="' + (host_port || '') + '" min="0" class="port-host w-1/4 ' + inputCls + '"/>' +
+			'<select class="port-protocol w-1/4 ' + selectCls + '">' +
+				'<option value="tcp"' + (protocol === 'tcp' ? ' selected' : '') + '>tcp</option>' +
+				'<option value="udp"' + (protocol === 'udp' ? ' selected' : '') + '>udp</option>' +
+				'<option value="http"' + (protocol === 'http' ? ' selected' : '') + '>http</option>' +
+			'</select>' +
+			'<button type="button" onclick="this.parentElement.remove()" class="' + removeBtnCls + '">&times;</button>';
+		c.appendChild(row);
+	}
+
+	function serializePorts(form) {
+		var ports = [];
+		var rows = document.getElementById('ports-container').children;
+		for (var i = 0; i < rows.length; i++) {
+			var r = rows[i];
+			var cp = parseInt(r.querySelector('.port-container').value, 10);
+			var hp = parseInt(r.querySelector('.port-host').value, 10);
+			var pr = r.querySelector('.port-protocol').value;
+			if (cp > 0) {
+				ports.push({container: cp, host: hp || 0, protocol: pr || 'tcp'});
+			}
+		}
+		form.querySelector('#ports_json').value = JSON.stringify(ports);
+	}
+
+	// ── Volumes ─────────────────────────────────────────────────
+
+	function addVolume(name, mountPath, sizeMB, volType) {
+		var c = document.getElementById('volumes-container');
+		var row = document.createElement('div');
+		row.className = 'flex items-center gap-2';
+		row.innerHTML = '<input type="text" placeholder="Name" value="' + escapeAttr(name) + '" class="vol-name w-1/5 ' + inputCls + '"/>' +
+			'<input type="text" placeholder="Mount Path" value="' + escapeAttr(mountPath) + '" class="vol-mount w-2/5 font-mono ' + inputCls + '"/>' +
+			'<input type="number" placeholder="Size MB" value="' + (sizeMB || '') + '" min="0" class="vol-size w-1/6 ' + inputCls + '"/>' +
+			'<select class="vol-type w-1/6 ' + selectCls + '">' +
+				'<option value="persistent"' + (volType === 'persistent' ? ' selected' : '') + '>persistent</option>' +
+				'<option value="ephemeral"' + (volType === 'ephemeral' ? ' selected' : '') + '>ephemeral</option>' +
+				'<option value="tmpfs"' + (volType === 'tmpfs' ? ' selected' : '') + '>tmpfs</option>' +
+			'</select>' +
+			'<button type="button" onclick="this.parentElement.remove()" class="' + removeBtnCls + '">&times;</button>';
+		c.appendChild(row);
+	}
+
+	function serializeVolumes(form) {
+		var vols = [];
+		var rows = document.getElementById('volumes-container').children;
+		for (var i = 0; i < rows.length; i++) {
+			var r = rows[i];
+			var n = r.querySelector('.vol-name').value.trim();
+			var mp = r.querySelector('.vol-mount').value.trim();
+			var sz = parseInt(r.querySelector('.vol-size').value, 10);
+			var tp = r.querySelector('.vol-type').value;
+			if (n !== '' || mp !== '') {
+				vols.push({name: n, mount_path: mp, size_mb: sz || 0, type: tp || 'persistent'});
+			}
+		}
+		form.querySelector('#volumes_json').value = JSON.stringify(vols);
+	}
+
+	// ── Health Check ────────────────────────────────────────────
+
+	function serializeHealthCheck(form) {
+		var path = document.getElementById('hc_path').value.trim();
+		var port = parseInt(document.getElementById('hc_port').value, 10);
+		var interval = parseInt(document.getElementById('hc_interval').value, 10);
+		var timeout = parseInt(document.getElementById('hc_timeout').value, 10);
+		var retries = parseInt(document.getElementById('hc_retries').value, 10);
+
+		// If no health check fields are filled, set to empty object.
+		if (!path && !port && !interval && !timeout && !retries) {
+			form.querySelector('#health_check_json').value = '{}';
+			return;
+		}
+
+		// Convert seconds to nanoseconds for time.Duration JSON serialization.
+		var hc = {
+			path: path || '',
+			port: port || 0,
+			interval: (interval || 0) * 1000000000,
+			timeout: (timeout || 0) * 1000000000,
+			retries: retries || 0
+		};
+		form.querySelector('#health_check_json').value = JSON.stringify(hc);
+	}
+
+	// ── Secrets ─────────────────────────────────────────────────
+
+	function addSecret(key, secretType) {
+		var c = document.getElementById('secrets-container');
+		var row = document.createElement('div');
+		row.className = 'flex items-center gap-2';
+		row.innerHTML = '<input type="text" placeholder="Secret Key" value="' + escapeAttr(key) + '" class="secret-key w-2/3 font-mono ' + inputCls + '"/>' +
+			'<select class="secret-type w-1/4 ' + selectCls + '">' +
+				'<option value="env"' + (secretType === 'env' ? ' selected' : '') + '>env</option>' +
+				'<option value="file"' + (secretType === 'file' ? ' selected' : '') + '>file</option>' +
+				'<option value="registry"' + (secretType === 'registry' ? ' selected' : '') + '>registry</option>' +
+				'<option value="tls"' + (secretType === 'tls' ? ' selected' : '') + '>tls</option>' +
+			'</select>' +
+			'<button type="button" onclick="this.parentElement.remove()" class="' + removeBtnCls + '">&times;</button>';
+		c.appendChild(row);
+	}
+
+	function serializeSecrets(form) {
+		var secs = [];
+		var rows = document.getElementById('secrets-container').children;
+		for (var i = 0; i < rows.length; i++) {
+			var r = rows[i];
+			var k = r.querySelector('.secret-key').value.trim();
+			var t = r.querySelector('.secret-type').value;
+			if (k !== '') {
+				secs.push({key: k, type: t || 'env'});
+			}
+		}
+		form.querySelector('#secrets_json').value = JSON.stringify(secs);
+	}
+
+	// ── Config Files ────────────────────────────────────────────
+
+	var _cfIdx = 0;
+
+	function addConfigFile(name, path, format, content) {
+		var c = document.getElementById('config-files-container');
+		var idx = _cfIdx++;
+		var entry = document.createElement('div');
+		entry.className = 'rounded-sm border p-3 space-y-3 config-file-entry';
+
+		var headerRow = '<div class="flex items-center justify-between">' +
+			'<span class="text-sm font-medium text-muted-foreground">Config File #' + (idx + 1) + '</span>' +
+			'<button type="button" onclick="this.closest(\'.config-file-entry\').remove()" class="' + removeBtnCls + '">&times; Remove</button>' +
+			'</div>';
+
+		var namePathRow = '<div class="grid grid-cols-1 md:grid-cols-2 gap-2">' +
+			'<input type="text" placeholder="Name (e.g. app-config)" value="' + escapeAttr(name) + '" class="cf-name ' + inputCls + '"/>' +
+			'<input type="text" placeholder="Path (e.g. /etc/app/config.yaml)" value="' + escapeAttr(path) + '" class="cf-path font-mono ' + inputCls + '"/>' +
+			'</div>';
+
+		var formatRow = '<div>' +
+			'<select class="cf-format ' + selectCls + '">' +
+				'<option value="json"' + (format === 'json' ? ' selected' : '') + '>json</option>' +
+				'<option value="yaml"' + (format === 'yaml' ? ' selected' : '') + '>yaml</option>' +
+				'<option value="env"' + (format === 'env' ? ' selected' : '') + '>env</option>' +
+				'<option value="text"' + (format === 'text' ? ' selected' : '') + '>text</option>' +
+			'</select>' +
+			'</div>';
+
+		var contentRow = '<div>' +
+			'<textarea placeholder="File content..." rows="6" class="cf-content flex min-h-[100px] w-full rounded-sm border border-input bg-transparent px-3 py-2 text-sm font-mono shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">' + escapeTextarea(content) + '</textarea>' +
+			'</div>';
+
+		entry.innerHTML = headerRow + namePathRow + formatRow + contentRow;
+		c.appendChild(entry);
+	}
+
+	function serializeConfigFiles(form) {
+		var files = [];
+		var entries = document.querySelectorAll('.config-file-entry');
+		for (var i = 0; i < entries.length; i++) {
+			var e = entries[i];
+			var n = e.querySelector('.cf-name').value.trim();
+			var p = e.querySelector('.cf-path').value.trim();
+			var f = e.querySelector('.cf-format').value;
+			var ct = e.querySelector('.cf-content').value;
+			if (n !== '' || p !== '') {
+				files.push({name: n, path: p, format: f || 'yaml', content: ct || ''});
+			}
+		}
+		form.querySelector('#config_files_json').value = JSON.stringify(files);
+	}
+
+	// ── Labels ──────────────────────────────────────────────────
+
+	function addLabel(key, value) {
+		var container = document.getElementById('labels-container');
+		var row = document.createElement('div');
+		row.className = 'flex items-center gap-2';
+		row.innerHTML = '<input type="text" placeholder="key" value="' + escapeAttr(key) + '" class="label-key w-2/5 font-mono ' + inputCls + '"/>' +
+			'<input type="text" placeholder="value" value="' + escapeAttr(value) + '" class="label-val w-2/5 font-mono ' + inputCls + '"/>' +
+			'<button type="button" onclick="this.parentElement.remove()" class="' + removeBtnCls + '">&times;</button>';
+		container.appendChild(row);
+	}
+
+	function serializeLabels(form) {
+		var labels = {};
+		var keys = document.getElementById('labels-container').querySelectorAll('.label-key');
+		var vals = document.getElementById('labels-container').querySelectorAll('.label-val');
+		for (var i = 0; i < keys.length; i++) {
+			var k = keys[i].value.trim();
+			var v = vals[i].value;
+			if (k !== '') { labels[k] = v; }
+		}
+		form.querySelector('#labels_json').value = JSON.stringify(labels);
+	}
+
+	// ── Annotations ─────────────────────────────────────────────
+
+	function addAnnotation(key, value) {
+		var container = document.getElementById('annotations-container');
+		var row = document.createElement('div');
+		row.className = 'flex items-center gap-2';
+		row.innerHTML = '<input type="text" placeholder="key" value="' + escapeAttr(key) + '" class="ann-key w-2/5 font-mono ' + inputCls + '"/>' +
+			'<input type="text" placeholder="value" value="' + escapeAttr(value) + '" class="ann-val w-2/5 font-mono ' + inputCls + '"/>' +
+			'<button type="button" onclick="this.parentElement.remove()" class="' + removeBtnCls + '">&times;</button>';
+		container.appendChild(row);
+	}
+
+	function serializeAnnotations(form) {
+		var anns = {};
+		var keys = document.getElementById('annotations-container').querySelectorAll('.ann-key');
+		var vals = document.getElementById('annotations-container').querySelectorAll('.ann-val');
+		for (var i = 0; i < keys.length; i++) {
+			var k = keys[i].value.trim();
+			var v = vals[i].value;
+			if (k !== '') { anns[k] = v; }
+		}
+		form.querySelector('#annotations_json').value = JSON.stringify(anns);
+	}
+
+	// ── Master Serializer ───────────────────────────────────────
+
+	function serializeTemplateForm(form) {
+		serializeEnvVars(form);
+		serializePorts(form);
+		serializeVolumes(form);
+		serializeHealthCheck(form);
+		serializeSecrets(form);
+		serializeConfigFiles(form);
+		serializeLabels(form);
+		serializeAnnotations(form);
+	}
+
+	// ── Initialize existing data on page load ───────────────────
+
+	(function() {
+		// Env vars.
+		var envField = document.getElementById('env_json');
+		if (envField && envField.value && envField.value !== '{}') {
+			try {
+				var env = JSON.parse(envField.value);
+				for (var k in env) {
+					if (env.hasOwnProperty(k)) { addEnvVar(k, env[k]); }
+				}
+			} catch(e) {}
+		}
+
+		// Ports.
+		var portsField = document.getElementById('ports_json');
+		if (portsField && portsField.value && portsField.value !== '[]') {
+			try {
+				var ports = JSON.parse(portsField.value);
+				for (var i = 0; i < ports.length; i++) {
+					addPort(ports[i].container || 0, ports[i].host || 0, ports[i].protocol || 'tcp');
+				}
+			} catch(e) {}
+		}
+
+		// Volumes.
+		var volsField = document.getElementById('volumes_json');
+		if (volsField && volsField.value && volsField.value !== '[]') {
+			try {
+				var vols = JSON.parse(volsField.value);
+				for (var i = 0; i < vols.length; i++) {
+					addVolume(vols[i].name || '', vols[i].mount_path || '', vols[i].size_mb || 0, vols[i].type || 'persistent');
+				}
+			} catch(e) {}
+		}
+
+		// Secrets.
+		var secsField = document.getElementById('secrets_json');
+		if (secsField && secsField.value && secsField.value !== '[]') {
+			try {
+				var secs = JSON.parse(secsField.value);
+				for (var i = 0; i < secs.length; i++) {
+					addSecret(secs[i].key || '', secs[i].type || 'env');
+				}
+			} catch(e) {}
+		}
+
+		// Config files.
+		var cfField = document.getElementById('config_files_json');
+		if (cfField && cfField.value && cfField.value !== '[]') {
+			try {
+				var cfs = JSON.parse(cfField.value);
+				for (var i = 0; i < cfs.length; i++) {
+					addConfigFile(cfs[i].name || '', cfs[i].path || '', cfs[i].format || 'yaml', cfs[i].content || '');
+				}
+			} catch(e) {}
+		}
+
+		// Labels.
+		var labelsField = document.getElementById('labels_json');
+		if (labelsField && labelsField.value && labelsField.value !== '{}') {
+			try {
+				var labels = JSON.parse(labelsField.value);
+				for (var k in labels) {
+					if (labels.hasOwnProperty(k)) { addLabel(k, labels[k]); }
+				}
+			} catch(e) {}
+		}
+
+		// Annotations.
+		var annsField = document.getElementById('annotations_json');
+		if (annsField && annsField.value && annsField.value !== '{}') {
+			try {
+				var anns = JSON.parse(annsField.value);
+				for (var k in anns) {
+					if (anns.hasOwnProperty(k)) { addAnnotation(k, anns[k]); }
+				}
+			} catch(e) {}
+		}
+	})();
+	</script>
+}

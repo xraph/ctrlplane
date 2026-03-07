@@ -5,6 +5,8 @@ import (
 	"github.com/xraph/ctrlplane/auth"
 	"github.com/xraph/ctrlplane/plugin"
 	"github.com/xraph/ctrlplane/provider"
+	"github.com/xraph/ctrlplane/secrets"
+	"github.com/xraph/ctrlplane/store"
 )
 
 // ExtOption configures the CtrlPlane Forge extension.
@@ -38,10 +40,39 @@ func WithConfig(cfg Config) ExtOption {
 	}
 }
 
-// WithStore sets the store via an app option.
-func WithStore(opt app.Option) ExtOption {
+// WithStore sets an explicit store for the extension.
+// When provided, grove auto-discovery is skipped.
+func WithStore(s store.Store) ExtOption {
 	return func(e *Extension) {
-		e.opts = append(e.opts, opt)
+		e.opts = append(e.opts, app.WithStore(s))
+		e.storeProvided = true
+	}
+}
+
+// WithGroveDatabase configures the extension to resolve a named grove.DB
+// from the Forge DI container for its store backend.
+func WithGroveDatabase(name string) ExtOption {
+	return func(e *Extension) {
+		e.config.GroveDatabase = name
+		e.useGrove = true
+	}
+}
+
+// WithVaultName configures the extension to resolve a named secrets.Vault
+// from the Forge DI container for its vault backend.
+func WithVaultName(name string) ExtOption {
+	return func(e *Extension) {
+		e.config.VaultName = name
+		e.useVault = true
+	}
+}
+
+// WithVault sets an explicit vault for the extension.
+// When provided, vault auto-discovery is skipped.
+func WithVault(v secrets.Vault) ExtOption {
+	return func(e *Extension) {
+		e.opts = append(e.opts, app.WithVault(v))
+		e.vaultProvided = true
 	}
 }
 

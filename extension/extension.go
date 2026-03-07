@@ -3,33 +3,56 @@ package extension
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/xraph/forge"
+	dashboard "github.com/xraph/forge/extensions/dashboard"
+	"github.com/xraph/forge/extensions/dashboard/contributor"
+	"github.com/xraph/grove"
 	"github.com/xraph/vessel"
 
 	"github.com/xraph/ctrlplane/api"
 	"github.com/xraph/ctrlplane/app"
 	"github.com/xraph/ctrlplane/auth"
+	cpdash "github.com/xraph/ctrlplane/dashboard"
+	"github.com/xraph/ctrlplane/secrets"
+	memoryvault "github.com/xraph/ctrlplane/secrets/memoryvault"
+	"github.com/xraph/ctrlplane/store"
+	memorystore "github.com/xraph/ctrlplane/store/memory"
+	mongostore "github.com/xraph/ctrlplane/store/mongo"
+	pgstore "github.com/xraph/ctrlplane/store/postgres"
+	sqlitestore "github.com/xraph/ctrlplane/store/sqlite"
 )
 
 // ExtensionName is the name registered with Forge.
 const ExtensionName = "ctrlplane"
+
+// ExtensionDescription is the human-readable description of the extension.
 const ExtensionDescription = "CtrlPlane control plane for managing cloud infrastructure and deployments"
+
+// ExtensionVersion is the semantic version of the extension.
 const ExtensionVersion = "0.1.0"
 
 // Ensure Extension implements forge.Extension at compile time.
 var _ forge.Extension = (*Extension)(nil)
+
+// Ensure Extension implements dashboard.DashboardAware at compile time.
+var _ dashboard.DashboardAware = (*Extension)(nil)
 
 // Extension adapts CtrlPlane as a Forge extension.
 // It implements the forge.Extension interface when used with Forge.
 type Extension struct {
 	*forge.BaseExtension
 
-	config Config
-	cp     *app.CtrlPlane
-	api    *api.API
-	opts   []app.Option
+	config        Config
+	cp            *app.CtrlPlane
+	api           *api.API
+	opts          []app.Option
+	useGrove      bool // True when explicitly configured for grove via WithGroveDatabase.
+	storeProvided bool // True when WithStore was called explicitly.
+	useVault      bool // True when explicitly configured for vault via WithVaultName.
+	vaultProvided bool // True when WithVault was called explicitly.
 }
 
 // New creates a CtrlPlane Forge extension with the given options.
@@ -84,8 +107,29 @@ func (e *Extension) Init(fapp forge.App) error {
 		authProvider = &auth.NoopProvider{}
 	}
 
-	cpOpts := make([]app.Option, 0, len(e.opts)+2)
+	cpOpts := make([]app.Option, 0, len(e.opts)+3)
 	cpOpts = append(cpOpts, e.opts...)
+
+	// Resolve the store if one was not explicitly provided via WithStore.
+	if !e.storeProvided {
+		s, err := e.resolveStore(fapp)
+		if err != nil {
+			return err
+		}
+
+		cpOpts = append(cpOpts, app.WithStore(s))
+	}
+
+	// Resolve the vault if one was not explicitly provided via WithVault.
+	if !e.vaultProvided {
+		v, err := e.resolveVault(fapp)
+		if err != nil {
+			return err
+		}
+
+		cpOpts = append(cpOpts, app.WithVault(v))
+	}
+
 	cpOpts = append(cpOpts,
 		app.WithConfig(e.config.ToCtrlPlaneConfig()),
 		app.WithAuth(authProvider),
@@ -106,6 +150,7 @@ func (e *Extension) Init(fapp forge.App) error {
 	}
 
 	e.api = api.New(e.cp, fapp.Router())
+
 	if !e.config.DisableRoutes {
 		e.api.RegisterRoutes(fapp.Router())
 	}
@@ -145,6 +190,148 @@ func (e *Extension) RegisterRoutes(router forge.Router) {
 	e.api.RegisterRoutes(router)
 }
 
+// DashboardContributor implements dashboard.DashboardAware. It returns a
+// LocalContributor that renders ctrlplane pages, widgets, and settings
+// in the Forge dashboard using templ + ForgeUI.
+func (e *Extension) DashboardContributor() contributor.LocalContributor {
+	return cpdash.New(cpdash.NewManifest(), e.cp)
+}
+
+// --- Store Resolution ---
+
+// resolveStore determines the store to use, following this priority:
+//  1. Explicit grove database (WithGroveDatabase option or YAML grove_database).
+//  2. Auto-discover default grove.DB from the Forge DI container.
+//  3. Fallback to an in-memory store.
+func (e *Extension) resolveStore(fapp forge.App) (store.Store, error) {
+	if e.useGrove {
+		// Explicitly configured to use a grove database.
+		groveDB, err := e.resolveGroveDB(fapp)
+		if err != nil {
+			return nil, fmt.Errorf("ctrlplane: %w", err)
+		}
+
+		s, err := e.buildStoreFromGroveDB(groveDB)
+		if err != nil {
+			return nil, err
+		}
+
+		e.Logger().Info("ctrlplane: resolved grove.DB from container",
+			forge.F("driver", groveDB.Driver().Name()),
+		)
+
+		return s, nil
+	}
+
+	// Auto-discover the default grove.DB from the DI container.
+	if db, err := vessel.Inject[*grove.DB](fapp.Container()); err == nil {
+		s, err := e.buildStoreFromGroveDB(db)
+		if err != nil {
+			return nil, err
+		}
+
+		e.Logger().Info("ctrlplane: auto-discovered grove.DB from container",
+			forge.F("driver", db.Driver().Name()),
+		)
+
+		return s, nil
+	}
+
+	// No grove DB available — fall back to an in-memory store.
+	e.Logger().Warn("ctrlplane: no grove.DB found, using in-memory store")
+
+	return memorystore.New(), nil
+}
+
+// resolveGroveDB retrieves a *grove.DB from the Forge DI container.
+// If GroveDatabase is set, it looks up the named DB; otherwise it uses the default.
+func (e *Extension) resolveGroveDB(fapp forge.App) (*grove.DB, error) {
+	if e.config.GroveDatabase != "" {
+		db, err := vessel.InjectNamed[*grove.DB](fapp.Container(), e.config.GroveDatabase)
+		if err != nil {
+			return nil, fmt.Errorf("grove database %q not found in container: %w", e.config.GroveDatabase, err)
+		}
+
+		return db, nil
+	}
+
+	db, err := vessel.Inject[*grove.DB](fapp.Container())
+	if err != nil {
+		return nil, fmt.Errorf("default grove database not found in container: %w", err)
+	}
+
+	return db, nil
+}
+
+// buildStoreFromGroveDB constructs the appropriate store backend
+// based on the grove driver type (pg, sqlite, mongo).
+func (e *Extension) buildStoreFromGroveDB(db *grove.DB) (store.Store, error) {
+	switch db.Driver().Name() {
+	case "pg":
+		return pgstore.New(db), nil
+	case "sqlite":
+		return sqlitestore.New(db), nil
+	case "mongo":
+		return mongostore.New(db), nil
+	default:
+		return nil, fmt.Errorf("ctrlplane: unsupported grove driver %q", db.Driver().Name())
+	}
+}
+
+// --- Vault Resolution ---
+
+// resolveVault determines the vault to use, following this priority:
+//  1. Explicit vault name (WithVaultName option or YAML vault_name).
+//  2. Auto-discover default secrets.Vault from the Forge DI container.
+//  3. Fallback to an in-memory vault.
+func (e *Extension) resolveVault(fapp forge.App) (secrets.Vault, error) {
+	if e.useVault {
+		// Explicitly configured to use a named vault.
+		v, err := e.resolveVaultFromContainer(fapp)
+		if err != nil {
+			return nil, fmt.Errorf("ctrlplane: %w", err)
+		}
+
+		e.Logger().Info("ctrlplane: resolved vault from container",
+			forge.F("vault_name", e.config.VaultName),
+		)
+
+		return v, nil
+	}
+
+	// Auto-discover default secrets.Vault from DI container.
+	if v, err := vessel.Inject[secrets.Vault](fapp.Container()); err == nil {
+		e.Logger().Info("ctrlplane: auto-discovered vault from container")
+
+		return v, nil
+	}
+
+	// No vault available — fall back to an in-memory vault.
+	e.Logger().Warn("ctrlplane: no vault found, using in-memory vault")
+
+	return memoryvault.New(), nil
+}
+
+// resolveVaultFromContainer retrieves a secrets.Vault from the Forge DI container.
+// If VaultName is set, it looks up the named vault; otherwise it uses the default.
+func (e *Extension) resolveVaultFromContainer(fapp forge.App) (secrets.Vault, error) {
+	if e.config.VaultName != "" {
+		v, err := vessel.InjectNamed[secrets.Vault](fapp.Container(), e.config.VaultName)
+		if err != nil {
+			return nil, fmt.Errorf("vault %q not found in container: %w", e.config.VaultName, err)
+		}
+
+		return v, nil
+	}
+
+	v, err := vessel.Inject[secrets.Vault](fapp.Container())
+	if err != nil {
+		return nil, fmt.Errorf("default vault not found in container: %w", err)
+	}
+
+	return v, nil
+}
+
 // --- Config Loading (mirrors relay extension pattern) ---
 
 // loadConfiguration loads config from YAML files or programmatic sources.
@@ -167,10 +354,22 @@ func (e *Extension) loadConfiguration() error {
 		e.config = e.mergeConfigurations(fileConfig, programmaticConfig)
 	}
 
+	// Enable grove resolution if YAML config specifies a grove database.
+	if e.config.GroveDatabase != "" {
+		e.useGrove = true
+	}
+
+	// Enable vault resolution if YAML config specifies a vault name.
+	if e.config.VaultName != "" {
+		e.useVault = true
+	}
+
 	e.Logger().Debug("ctrlplane: configuration loaded",
 		forge.F("disable_routes", e.config.DisableRoutes),
 		forge.F("disable_migrate", e.config.DisableMigrate),
 		forge.F("base_path", e.config.BasePath),
+		forge.F("grove_database", e.config.GroveDatabase),
+		forge.F("vault_name", e.config.VaultName),
 	)
 
 	return nil
@@ -218,6 +417,7 @@ func (e *Extension) tryLoadFromConfigFile() (Config, bool) {
 // mergeWithDefaults fills zero-valued fields with defaults.
 func (e *Extension) mergeWithDefaults(cfg Config) Config {
 	defaults := DefaultConfig()
+
 	if cfg.BasePath == "" {
 		cfg.BasePath = defaults.BasePath
 	}
@@ -256,6 +456,14 @@ func (e *Extension) mergeConfigurations(yamlConfig, programmaticConfig Config) C
 
 	if yamlConfig.DefaultProvider == "" && programmaticConfig.DefaultProvider != "" {
 		yamlConfig.DefaultProvider = programmaticConfig.DefaultProvider
+	}
+
+	if yamlConfig.GroveDatabase == "" && programmaticConfig.GroveDatabase != "" {
+		yamlConfig.GroveDatabase = programmaticConfig.GroveDatabase
+	}
+
+	if yamlConfig.VaultName == "" && programmaticConfig.VaultName != "" {
+		yamlConfig.VaultName = programmaticConfig.VaultName
 	}
 
 	// Duration/int fields: YAML takes precedence, programmatic fills gaps.

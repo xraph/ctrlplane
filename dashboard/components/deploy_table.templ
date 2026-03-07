@@ -1,0 +1,67 @@
+package components
+
+import (
+	"github.com/xraph/forgeui/components/table"
+
+	"github.com/xraph/ctrlplane/deploy"
+)
+
+// DeploymentTable renders a table of deployments.
+templ DeploymentTable(deployments []*deploy.Deployment, showInstance bool) {
+	if len(deployments) == 0 {
+		@EmptyState("rocket", "No deployments", "Deploy your first release to get started.")
+	} else {
+		@table.Table() {
+			@table.Header() {
+				@table.Row() {
+					if showInstance {
+						@table.Head() { Instance }
+					}
+					@table.Head() { Image }
+					@table.Head() { Strategy }
+					@table.Head() { State }
+					@table.Head() { Initiator }
+					@table.Head() { Started }
+				}
+			}
+			@table.Body() {
+				for _, dep := range deployments {
+					@table.Row(table.RowProps{
+						Class: "cursor-pointer",
+						Attributes: templ.Attributes{
+							"hx-get":      "./deployments/detail?deployment_id=" + dep.ID.String(),
+							"hx-target":   "#content",
+							"hx-push-url": "true",
+							"hx-swap":     "innerHTML",
+						},
+					}) {
+						if showInstance {
+							@table.Cell() {
+								<span class="text-muted-foreground font-mono text-xs">{ dep.InstanceID.String() }</span>
+							}
+						}
+						@table.Cell() {
+							<span class="font-mono text-xs">{ truncStr(dep.Image, 40) }</span>
+						}
+						@table.Cell() {
+							<span class="text-muted-foreground">{ dep.Strategy }</span>
+						}
+						@table.Cell() {
+							@DeployStateBadge(dep.State)
+						}
+						@table.Cell() {
+							<span class="text-muted-foreground">{ dep.Initiator }</span>
+						}
+						@table.Cell() {
+							if dep.StartedAt != nil {
+								<span class="text-muted-foreground">{ dep.StartedAt.Format("Jan 02 15:04") }</span>
+							} else {
+								<span class="text-muted-foreground">-</span>
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}

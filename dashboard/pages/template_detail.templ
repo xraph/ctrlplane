@@ -1,0 +1,499 @@
+package pages
+
+import (
+	"strconv"
+
+	"github.com/xraph/forgeui/components/badge"
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/components/table"
+
+	"github.com/xraph/ctrlplane/dashboard/components"
+)
+
+// TemplateDetailPage renders the detail view for a single deployment template.
+templ TemplateDetailPage(data TemplateDetailPageData) {
+	<!-- PRG: replace browser URL after POST so refresh does a GET instead of resubmitting. -->
+	@components.PRGRedirect(data.RedirectURL)
+
+	<div class="space-y-6">
+		<!-- Back -->
+		<div class="flex items-center gap-3">
+			<a class="text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+				hx-get="../templates"
+				hx-target="#content"
+				hx-push-url="true"
+				hx-swap="innerHTML">&larr; Back to Templates</a>
+		</div>
+
+		if data.Error != "" {
+			<div class="rounded-sm border border-destructive/50 bg-destructive/10 p-4 text-sm text-destructive">
+				{ data.Error }
+			</div>
+		}
+
+		if data.Success != "" {
+			<div class="rounded-sm border border-green-500/50 bg-green-500/10 p-4 text-sm text-green-700 dark:text-green-400">
+				{ data.Success }
+			</div>
+		}
+
+		<!-- Header -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Content(card.ContentProps{Class: "p-6"}) {
+				<div class="flex items-start justify-between">
+					<div class="space-y-2">
+						<div class="flex items-center gap-3">
+							<h1 class="text-2xl font-bold">{ data.Template.Name }</h1>
+						</div>
+						if data.Template.Description != "" {
+							<p class="text-sm text-muted-foreground">{ data.Template.Description }</p>
+						}
+						<div class="flex items-center gap-4 text-sm text-muted-foreground">
+							<span class="font-mono text-xs">{ data.Template.ID.String() }</span>
+						</div>
+					</div>
+					<div class="flex items-center gap-2">
+						@button.Button(button.Props{
+							Size: button.SizeSm,
+							Attributes: templ.Attributes{
+								"hx-get":      "../deployments/create?template_id=" + data.Template.ID.String(),
+								"hx-target":   "#content",
+								"hx-push-url": "true",
+								"hx-swap":     "innerHTML",
+							},
+						}) {
+							Deploy with Template
+						}
+						@button.Button(button.Props{
+							Variant: button.VariantOutline,
+							Size:    button.SizeSm,
+							Attributes: templ.Attributes{
+								"hx-get":      "./edit?template_id=" + data.Template.ID.String(),
+								"hx-target":   "#content",
+								"hx-push-url": "true",
+								"hx-swap":     "innerHTML",
+							},
+						}) {
+							Edit
+						}
+						@button.Button(button.Props{
+							Variant: button.VariantDestructive,
+							Size:    button.SizeSm,
+							Attributes: templ.Attributes{
+								"hx-get":      "./detail?template_id=" + data.Template.ID.String() + "&action=delete",
+								"hx-target":   "#content",
+								"hx-push-url": "./templates",
+								"hx-swap":     "innerHTML",
+								"hx-confirm":  "Delete this template? This cannot be undone.",
+							},
+						}) {
+							Delete
+						}
+					</div>
+				</div>
+			}
+		}
+
+		<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+			<!-- Template Configuration -->
+			@card.Card(card.Props{Class: "rounded-sm"}) {
+				@card.Header() {
+					@card.Title() {
+						Configuration
+					}
+				}
+				@card.Content() {
+					<div class="space-y-2 text-sm">
+						<div class="flex justify-between">
+							<span class="text-muted-foreground">Image</span>
+							<span class="font-mono text-xs">{ data.Template.Image }</span>
+						</div>
+						<div class="flex justify-between">
+							<span class="text-muted-foreground">Strategy</span>
+							@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+								{ data.Template.Strategy }
+							}
+						</div>
+						if data.Template.CommitSHA != "" {
+							<div class="flex justify-between">
+								<span class="text-muted-foreground">Commit SHA</span>
+								<span class="font-mono text-xs">{ data.Template.CommitSHA }</span>
+							</div>
+						}
+						<div class="flex justify-between">
+							<span class="text-muted-foreground">Created</span>
+							<span>{ data.Template.CreatedAt.Format("Jan 02, 2006 15:04") }</span>
+						</div>
+						<div class="flex justify-between">
+							<span class="text-muted-foreground">Updated</span>
+							<span>{ data.Template.UpdatedAt.Format("Jan 02, 2006 15:04") }</span>
+						</div>
+					</div>
+				}
+			}
+
+			<!-- Notes -->
+			@card.Card(card.Props{Class: "rounded-sm"}) {
+				@card.Header() {
+					@card.Title() {
+						Notes
+					}
+				}
+				@card.Content() {
+					if data.Template.Notes != "" {
+						<p class="text-sm">{ data.Template.Notes }</p>
+					} else {
+						<p class="text-sm text-muted-foreground">No notes provided.</p>
+					}
+				}
+			}
+		</div>
+
+		<!-- Resources -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Header() {
+				@card.Title() {
+					Resources
+				}
+			}
+			@card.Content() {
+				if data.Template.Resources.CPUMillis > 0 || data.Template.Resources.MemoryMB > 0 || data.Template.Resources.DiskMB > 0 || data.Template.Resources.Replicas > 0 || data.Template.Resources.GPU != "" {
+					<div class="space-y-2 text-sm">
+						if data.Template.Resources.CPUMillis > 0 {
+							<div class="flex justify-between">
+								<span class="text-muted-foreground">CPU</span>
+								<span>{ formatCPU(data.Template.Resources.CPUMillis) }</span>
+							</div>
+						}
+						if data.Template.Resources.MemoryMB > 0 {
+							<div class="flex justify-between">
+								<span class="text-muted-foreground">Memory</span>
+								<span>{ formatMemory(data.Template.Resources.MemoryMB) }</span>
+							</div>
+						}
+						if data.Template.Resources.DiskMB > 0 {
+							<div class="flex justify-between">
+								<span class="text-muted-foreground">Disk</span>
+								<span>{ formatMemory(data.Template.Resources.DiskMB) }</span>
+							</div>
+						}
+						if data.Template.Resources.Replicas > 0 {
+							<div class="flex justify-between">
+								<span class="text-muted-foreground">Replicas</span>
+								<span>{ strconv.Itoa(data.Template.Resources.Replicas) }</span>
+							</div>
+						}
+						if data.Template.Resources.GPU != "" {
+							<div class="flex justify-between">
+								<span class="text-muted-foreground">GPU</span>
+								<span>{ data.Template.Resources.GPU }</span>
+							</div>
+						}
+					</div>
+				} else {
+					<p class="text-sm text-muted-foreground">No resource requirements configured.</p>
+				}
+			}
+		}
+
+		<!-- Ports -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Header() {
+				@card.Title() {
+					Ports
+				}
+			}
+			@card.Content() {
+				if len(data.Template.Ports) > 0 {
+					@table.Table() {
+						@table.Header() {
+							@table.Row() {
+								@table.Head() { Container }
+								@table.Head() { Host }
+								@table.Head() { Protocol }
+							}
+						}
+						@table.Body() {
+							for _, p := range data.Template.Ports {
+								@table.Row() {
+									@table.Cell() {
+										{ strconv.Itoa(p.Container) }
+									}
+									@table.Cell() {
+										if p.Host > 0 {
+											{ strconv.Itoa(p.Host) }
+										} else {
+											<span class="text-muted-foreground">auto</span>
+										}
+									}
+									@table.Cell() {
+										{ p.Protocol }
+									}
+								}
+							}
+						}
+					}
+				} else {
+					<p class="text-sm text-muted-foreground">No ports configured.</p>
+				}
+			}
+		}
+
+		<!-- Volumes -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Header() {
+				@card.Title() {
+					Volumes
+				}
+			}
+			@card.Content() {
+				if len(data.Template.Volumes) > 0 {
+					@table.Table() {
+						@table.Header() {
+							@table.Row() {
+								@table.Head() { Name }
+								@table.Head() { Mount Path }
+								@table.Head() { Size }
+								@table.Head() { Type }
+							}
+						}
+						@table.Body() {
+							for _, v := range data.Template.Volumes {
+								@table.Row() {
+									@table.Cell() {
+										<span class="font-mono text-xs font-medium">{ v.Name }</span>
+									}
+									@table.Cell() {
+										<span class="font-mono text-xs">{ v.MountPath }</span>
+									}
+									@table.Cell() {
+										if v.SizeMB > 0 {
+											{ formatMemory(v.SizeMB) }
+										} else {
+											<span class="text-muted-foreground">default</span>
+										}
+									}
+									@table.Cell() {
+										@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+											{ v.Type }
+										}
+									}
+								}
+							}
+						}
+					}
+				} else {
+					<p class="text-sm text-muted-foreground">No volumes configured.</p>
+				}
+			}
+		}
+
+		<!-- Health Check -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Header() {
+				@card.Title() {
+					Health Check
+				}
+			}
+			@card.Content() {
+				if data.Template.HealthCheck != nil {
+					<div class="space-y-2 text-sm">
+						if data.Template.HealthCheck.Path != "" {
+							<div class="flex justify-between">
+								<span class="text-muted-foreground">Path</span>
+								<span class="font-mono text-xs">{ data.Template.HealthCheck.Path }</span>
+							</div>
+						}
+						<div class="flex justify-between">
+							<span class="text-muted-foreground">Port</span>
+							<span>{ strconv.Itoa(data.Template.HealthCheck.Port) }</span>
+						</div>
+						<div class="flex justify-between">
+							<span class="text-muted-foreground">Interval</span>
+							<span>{ formatDuration(data.Template.HealthCheck.Interval) }</span>
+						</div>
+						<div class="flex justify-between">
+							<span class="text-muted-foreground">Timeout</span>
+							<span>{ formatDuration(data.Template.HealthCheck.Timeout) }</span>
+						</div>
+						<div class="flex justify-between">
+							<span class="text-muted-foreground">Retries</span>
+							<span>{ strconv.Itoa(data.Template.HealthCheck.Retries) }</span>
+						</div>
+					</div>
+				} else {
+					<p class="text-sm text-muted-foreground">No health check configured.</p>
+				}
+			}
+		}
+
+		<!-- Env Vars -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Header() {
+				@card.Title() {
+					Environment Variables
+				}
+			}
+			@card.Content() {
+				@components.EnvVarEditor(data.Template.Env)
+			}
+		}
+
+		<!-- Secret References -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Header() {
+				@card.Title() {
+					Secret References
+				}
+			}
+			@card.Content() {
+				if len(data.Template.Secrets) > 0 {
+					@table.Table() {
+						@table.Header() {
+							@table.Row() {
+								@table.Head() { Key }
+								@table.Head() { Type }
+							}
+						}
+						@table.Body() {
+							for _, s := range data.Template.Secrets {
+								@table.Row() {
+									@table.Cell() {
+										<span class="font-mono text-xs font-medium">{ s.Key }</span>
+									}
+									@table.Cell() {
+										@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+											{ string(s.Type) }
+										}
+									}
+								}
+							}
+						}
+					}
+				} else {
+					<p class="text-sm text-muted-foreground">No secrets referenced.</p>
+				}
+			}
+		}
+
+		<!-- Config Files -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Header() {
+				<div class="flex items-center justify-between w-full">
+					@card.Title() {
+						Config Files
+					}
+					@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+						Vault-backed
+					}
+				</div>
+				@card.Description() {
+					Configuration file content is stored in the vault and mounted at deploy time.
+				}
+			}
+			@card.Content() {
+				if len(data.Template.ConfigFiles) > 0 {
+					@table.Table() {
+						@table.Header() {
+							@table.Row() {
+								@table.Head() { Name }
+								@table.Head() { Path }
+								@table.Head() { Format }
+							}
+						}
+						@table.Body() {
+							for _, cf := range data.Template.ConfigFiles {
+								@table.Row() {
+									@table.Cell() {
+										<span class="font-mono text-xs font-medium">{ cf.Name }</span>
+									}
+									@table.Cell() {
+										<span class="font-mono text-xs">{ cf.Path }</span>
+									}
+									@table.Cell() {
+										@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+											{ cf.Format }
+										}
+									}
+								}
+							}
+						}
+					}
+				} else {
+					<p class="text-sm text-muted-foreground">No config files.</p>
+				}
+			}
+		}
+
+		<!-- Labels -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Header() {
+				@card.Title() {
+					Labels
+				}
+			}
+			@card.Content() {
+				if len(data.Template.Labels) > 0 {
+					@table.Table() {
+						@table.Header() {
+							@table.Row() {
+								@table.Head() { Key }
+								@table.Head() { Value }
+							}
+						}
+						@table.Body() {
+							for k, v := range data.Template.Labels {
+								@table.Row() {
+									@table.Cell() {
+										<span class="font-mono text-xs font-medium">{ k }</span>
+									}
+									@table.Cell() {
+										<span class="font-mono text-xs text-muted-foreground">{ v }</span>
+									}
+								}
+							}
+						}
+					}
+				} else {
+					<p class="text-sm text-muted-foreground">No labels.</p>
+				}
+			}
+		}
+
+		<!-- Annotations -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Header() {
+				@card.Title() {
+					Annotations
+				}
+			}
+			@card.Content() {
+				if len(data.Template.Annotations) > 0 {
+					@table.Table() {
+						@table.Header() {
+							@table.Row() {
+								@table.Head() { Key }
+								@table.Head() { Value }
+							}
+						}
+						@table.Body() {
+							for k, v := range data.Template.Annotations {
+								@table.Row() {
+									@table.Cell() {
+										<span class="font-mono text-xs font-medium">{ k }</span>
+									}
+									@table.Cell() {
+										<span class="font-mono text-xs text-muted-foreground">{ v }</span>
+									}
+								}
+							}
+						}
+					}
+				} else {
+					<p class="text-sm text-muted-foreground">No annotations.</p>
+				}
+			}
+		}
+	</div>
+}

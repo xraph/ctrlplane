@@ -1,0 +1,77 @@
+package pages
+
+import (
+	"github.com/xraph/forgeui/components/card"
+
+	"github.com/xraph/ctrlplane/dashboard/components"
+)
+
+// ProvidersPage renders the providers overview page.
+templ ProvidersPage(data ProviderListData) {
+	<div class="space-y-6">
+		<div class="flex items-center justify-between">
+			<h1 class="text-3xl font-bold">Providers</h1>
+		</div>
+
+		if len(data.Providers) == 0 {
+			@components.EmptyState("cloud", "No providers", "No infrastructure providers are registered.")
+		} else {
+			<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+				for _, p := range data.Providers {
+					<a
+						class="cursor-pointer"
+						hx-get={ "./providers/detail?provider=" + p.Name }
+						hx-target="#content"
+						hx-push-url="true"
+						hx-swap="innerHTML"
+					>
+						@components.ProviderCard(p)
+					</a>
+				}
+			</div>
+		}
+
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Header() {
+				@card.Title() {
+					Provider Health
+				}
+				@card.Description() {
+					Test connectivity to registered providers.
+				}
+			}
+			@card.Content() {
+				<div class="space-y-2">
+					for _, p := range data.Providers {
+						<div class="flex items-center justify-between p-3 rounded-sm border">
+							<div class="flex items-center gap-3">
+								<span class="font-medium text-sm">{ p.Name }</span>
+								if p.Region != "" {
+									<span class="text-xs text-muted-foreground">({ p.Region })</span>
+								}
+								if p.Healthy {
+									<span class="inline-flex items-center rounded-sm px-2 py-0.5 text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">
+										Healthy
+									</span>
+								} else {
+									<span class="inline-flex items-center rounded-sm px-2 py-0.5 text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400">
+										Unhealthy
+									</span>
+								}
+							</div>
+							<a
+								class="text-sm px-3 py-1.5 rounded-sm border hover:bg-muted transition-colors cursor-pointer"
+								hx-get={ "./providers/detail?provider=" + p.Name + "&action=test_health" }
+								hx-target="#content"
+								hx-push-url="true"
+								hx-swap="innerHTML"
+							>
+								Test Health
+							</a>
+						</div>
+					}
+				</div>
+			}
+		}
+	</div>
+}

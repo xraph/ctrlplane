@@ -1,0 +1,130 @@
+package settings
+
+import (
+	"strconv"
+
+	"github.com/xraph/forgeui/components/badge"
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/components/table"
+
+	ctrlplane "github.com/xraph/ctrlplane"
+	"github.com/xraph/ctrlplane/admin"
+	"github.com/xraph/ctrlplane/dashboard/components"
+)
+
+// ConfigPanel renders the read-only configuration settings panel.
+templ ConfigPanel(cfg ctrlplane.Config, providers []admin.ProviderStatus) {
+	<div class="space-y-6">
+		<!-- Configuration -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Header() {
+				@card.Title() {
+					CtrlPlane Configuration
+				}
+				@card.Description() {
+					Current configuration values (read-only).
+				}
+			}
+			@card.Content() {
+				<div class="space-y-3 text-sm">
+					<div class="flex justify-between">
+						<span class="text-muted-foreground">Default Provider</span>
+						if cfg.DefaultProvider != "" {
+							<span class="font-medium">{ cfg.DefaultProvider }</span>
+						} else {
+							<span class="text-muted-foreground">Not set</span>
+						}
+					</div>
+					<div class="flex justify-between">
+						<span class="text-muted-foreground">Health Check Interval</span>
+						<span class="font-medium">{ cfg.HealthInterval.String() }</span>
+					</div>
+					<div class="flex justify-between">
+						<span class="text-muted-foreground">Telemetry Flush Interval</span>
+						<span class="font-medium">{ cfg.TelemetryFlushInterval.String() }</span>
+					</div>
+					<div class="flex justify-between">
+						<span class="text-muted-foreground">Max Instances Per Tenant</span>
+						if cfg.MaxInstancesPerTenant > 0 {
+							<span class="font-medium">{ strconv.Itoa(cfg.MaxInstancesPerTenant) }</span>
+						} else {
+							<span class="text-muted-foreground">Unlimited</span>
+						}
+					</div>
+					<div class="flex justify-between">
+						<span class="text-muted-foreground">Audit Logging</span>
+						@components.BoolBadge(cfg.AuditEnabled, "Enabled", "Disabled")
+					</div>
+					<div class="flex justify-between">
+						<span class="text-muted-foreground">Database</span>
+						if cfg.DatabaseURL != "" {
+							@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+								Connected
+							}
+						} else {
+							@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+								Not configured
+							}
+						}
+					</div>
+				</div>
+			}
+		}
+
+		<!-- Providers -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Header() {
+				@card.Title() {
+					Registered Providers
+				}
+				@card.Description() {
+					Infrastructure providers available in this deployment.
+				}
+			}
+			@card.Content() {
+				if len(providers) == 0 {
+					@components.EmptyState("cloud", "No providers", "No infrastructure providers registered.")
+				} else {
+					@table.Table() {
+						@table.Header() {
+							@table.Row() {
+								@table.Head() { Name }
+								@table.Head() { Region }
+								@table.Head() { Health }
+								@table.Head() { Instances }
+								@table.Head() { Capabilities }
+							}
+						}
+						@table.Body() {
+							for _, p := range providers {
+								@table.Row() {
+									@table.Cell() {
+										<span class="font-medium">{ p.Name }</span>
+									}
+									@table.Cell() {
+										<span class="text-muted-foreground">{ p.Region }</span>
+									}
+									@table.Cell() {
+										@components.BoolBadge(p.Healthy, "Healthy", "Unhealthy")
+									}
+									@table.Cell() {
+										<span class="text-muted-foreground">{ strconv.Itoa(p.Instances) }</span>
+									}
+									@table.Cell() {
+										<div class="flex flex-wrap gap-1">
+											for _, cap := range p.Capabilities {
+												@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+													{ cap }
+												}
+											}
+										</div>
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	</div>
+}

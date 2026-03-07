@@ -1,0 +1,59 @@
+package components
+
+import (
+	"github.com/xraph/forgeui/components/badge"
+	"github.com/xraph/forgeui/components/table"
+
+	"github.com/xraph/ctrlplane/admin"
+)
+
+// AuditTable renders a table of audit log entries.
+templ AuditTable(entries []admin.AuditEntry) {
+	if len(entries) == 0 {
+		@EmptyState("scroll-text", "No audit entries", "Actions will be recorded here as they happen.")
+	} else {
+		@table.Table() {
+			@table.Header() {
+				@table.Row() {
+					@table.Head() { Time }
+					@table.Head() { Actor }
+					@table.Head() { Action }
+					@table.Head() { Resource }
+					@table.Head() { Resource ID }
+					@table.Head() { IP Address }
+				}
+			}
+			@table.Body() {
+				for _, entry := range entries {
+					@table.Row() {
+						@table.Cell() {
+							<span class="text-muted-foreground text-xs">{ entry.CreatedAt.Format("Jan 02 15:04:05") }</span>
+						}
+						@table.Cell() {
+							<div class="flex flex-col">
+								<span class="text-sm">{ entry.ActorID }</span>
+								@badge.Badge(badge.Props{Variant: badge.VariantOutline, Class: "text-[10px] w-fit"}) {
+									{ entry.ActorType }
+								}
+							</div>
+						}
+						@table.Cell() {
+							@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+								{ entry.Action }
+							}
+						}
+						@table.Cell() {
+							<span class="text-muted-foreground">{ entry.Resource }</span>
+						}
+						@table.Cell() {
+							<span class="font-mono text-xs text-muted-foreground">{ truncStr(entry.ResourceID, 24) }</span>
+						}
+						@table.Cell() {
+							<span class="text-muted-foreground text-xs">{ entry.IPAddress }</span>
+						}
+					}
+				}
+			}
+		}
+	}
+}

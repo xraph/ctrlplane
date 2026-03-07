@@ -1,0 +1,123 @@
+package pages
+
+import (
+	"strconv"
+
+	"github.com/xraph/forgeui/components/badge"
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/components/table"
+
+	"github.com/xraph/ctrlplane/dashboard/components"
+)
+
+// TemplatesPage renders the deployment templates list page.
+templ TemplatesPage(data TemplateListPageData) {
+	<div class="space-y-6">
+		<div class="flex items-center justify-between">
+			<div class="flex items-center gap-3">
+				<h1 class="text-3xl font-bold">Deployment Templates</h1>
+				@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+					{ strconv.Itoa(data.Templates.Total) }
+				}
+			</div>
+			<div class="flex items-center gap-2">
+				@button.Button(button.Props{
+					Size: button.SizeSm,
+					Attributes: templ.Attributes{
+						"hx-get":      "./templates/create",
+						"hx-target":   "#content",
+						"hx-push-url": "true",
+						"hx-swap":     "innerHTML",
+					},
+				}) {
+					New Template
+				}
+			</div>
+		</div>
+
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Content() {
+				if len(data.Templates.Items) == 0 {
+					@components.EmptyState("file-text", "No templates", "Create a deployment template for reusable deploy configurations.")
+				} else {
+					@table.Table() {
+						@table.Header() {
+							@table.Row() {
+								@table.Head() { Name }
+								@table.Head() { Image }
+								@table.Head() { Strategy }
+								@table.Head() { Resources }
+								@table.Head() { Details }
+								@table.Head() { Created }
+							}
+						}
+						@table.Body() {
+							for _, tmpl := range data.Templates.Items {
+								@table.Row(table.RowProps{
+									Class: "cursor-pointer",
+									Attributes: templ.Attributes{
+										"hx-get":      "./templates/detail?template_id=" + tmpl.ID.String(),
+										"hx-target":   "#content",
+										"hx-push-url": "true",
+										"hx-swap":     "innerHTML",
+									},
+								}) {
+									@table.Cell() {
+										<div class="space-y-0.5">
+											<span class="font-medium">{ tmpl.Name }</span>
+											if tmpl.Description != "" {
+												<p class="text-xs text-muted-foreground">{ tmpl.Description }</p>
+											}
+										</div>
+									}
+									@table.Cell() {
+										<span class="font-mono text-xs">{ tmpl.Image }</span>
+									}
+									@table.Cell() {
+										@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+											{ tmpl.Strategy }
+										}
+									}
+									@table.Cell() {
+										<span class="text-xs text-muted-foreground">{ compactResourceSummary(tmpl.Resources) }</span>
+									}
+									@table.Cell() {
+										<div class="flex flex-wrap items-center gap-1">
+											if len(tmpl.Ports) > 0 {
+												@badge.Badge(badge.Props{Variant: badge.VariantSecondary, Class: "text-[10px] px-1.5 py-0"}) {
+													{ strconv.Itoa(len(tmpl.Ports)) } ports
+												}
+											}
+											if len(tmpl.Volumes) > 0 {
+												@badge.Badge(badge.Props{Variant: badge.VariantSecondary, Class: "text-[10px] px-1.5 py-0"}) {
+													{ strconv.Itoa(len(tmpl.Volumes)) } vols
+												}
+											}
+											if len(tmpl.Secrets) > 0 {
+												@badge.Badge(badge.Props{Variant: badge.VariantSecondary, Class: "text-[10px] px-1.5 py-0"}) {
+													{ strconv.Itoa(len(tmpl.Secrets)) } secrets
+												}
+											}
+											if len(tmpl.ConfigFiles) > 0 {
+												@badge.Badge(badge.Props{Variant: badge.VariantSecondary, Class: "text-[10px] px-1.5 py-0"}) {
+													{ strconv.Itoa(len(tmpl.ConfigFiles)) } configs
+												}
+											}
+											if len(tmpl.Ports) == 0 && len(tmpl.Volumes) == 0 && len(tmpl.Secrets) == 0 && len(tmpl.ConfigFiles) == 0 {
+												<span class="text-xs text-muted-foreground">--</span>
+											}
+										</div>
+									}
+									@table.Cell() {
+										<span class="text-muted-foreground">{ tmpl.CreatedAt.Format("Jan 02, 2006") }</span>
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	</div>
+}

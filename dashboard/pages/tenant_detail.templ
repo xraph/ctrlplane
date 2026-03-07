@@ -1,0 +1,203 @@
+package pages
+
+import (
+	"strconv"
+
+	"github.com/xraph/forgeui/components/badge"
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/card"
+
+	"github.com/xraph/ctrlplane/admin"
+	"github.com/xraph/ctrlplane/dashboard/components"
+)
+
+// TenantDetailPage renders the tenant detail view.
+templ TenantDetailPage(tenant *admin.Tenant, quota *admin.QuotaUsage) {
+	<div class="space-y-6">
+		<!-- Back -->
+		<div class="flex items-center gap-3">
+			<a class="text-sm text-muted-foreground hover:text-foreground transition-colors"
+				hx-get="./tenants"
+				hx-target="#content"
+				hx-push-url="true"
+				hx-swap="innerHTML">&larr; Back to Tenants</a>
+		</div>
+
+		<!-- Header -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Content(card.ContentProps{Class: "p-6"}) {
+				<div class="flex items-start justify-between">
+					<div class="space-y-2">
+						<div class="flex items-center gap-3">
+							<h1 class="text-2xl font-bold">{ tenant.Name }</h1>
+							@components.TenantStatusBadge(tenant.Status)
+							@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+								{ tenant.Plan }
+							}
+						</div>
+						<div class="flex items-center gap-4 text-sm text-muted-foreground">
+							<span>Slug: <span class="font-mono text-xs text-foreground">{ tenant.Slug }</span></span>
+							if tenant.ExternalID != "" {
+								<span>External: <span class="font-mono text-xs text-foreground">{ tenant.ExternalID }</span></span>
+							}
+							<span class="font-mono text-xs">{ tenant.ID.String() }</span>
+						</div>
+					</div>
+					<div class="flex items-center gap-2">
+						@tenantActions(tenant)
+					</div>
+				</div>
+			}
+		}
+
+		<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+			<!-- Tenant Info -->
+			@card.Card(card.Props{Class: "rounded-sm"}) {
+				@card.Header() {
+					@card.Title() {
+						Details
+					}
+				}
+				@card.Content() {
+					<div class="space-y-2 text-sm">
+						<div class="flex justify-between">
+							<span class="text-muted-foreground">Created</span>
+							<span>{ tenant.CreatedAt.Format("Jan 02, 2006 15:04") }</span>
+						</div>
+						<div class="flex justify-between">
+							<span class="text-muted-foreground">Updated</span>
+							<span>{ tenant.UpdatedAt.Format("Jan 02, 2006 15:04") }</span>
+						</div>
+						if tenant.SuspendedAt != nil {
+							<div class="flex justify-between">
+								<span class="text-muted-foreground">Suspended At</span>
+								<span class="text-destructive">{ tenant.SuspendedAt.Format("Jan 02, 2006 15:04") }</span>
+							</div>
+						}
+					</div>
+				}
+			}
+
+			<!-- Metadata -->
+			if len(tenant.Metadata) > 0 {
+				@card.Card(card.Props{Class: "rounded-sm"}) {
+					@card.Header() {
+						@card.Title() {
+							Metadata
+						}
+					}
+					@card.Content() {
+						<div class="space-y-2 text-sm">
+							for k, v := range tenant.Metadata {
+								<div class="flex justify-between">
+									<span class="text-muted-foreground font-mono text-xs">{ k }</span>
+									<span class="font-mono text-xs">{ v }</span>
+								</div>
+							}
+						</div>
+					}
+				}
+			}
+		</div>
+
+		<!-- Quota Usage -->
+		if quota != nil {
+			@card.Card(card.Props{Class: "rounded-sm"}) {
+				@card.Header() {
+					@card.Title() {
+						Resource Quota
+					}
+					@card.Description() {
+						Current usage against allocated limits.
+					}
+				}
+				@card.Content() {
+					<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+						@components.ResourceGauge("Instances", quota.Used.Instances, quota.Quota.MaxInstances, "")
+						@components.ResourceGauge("CPU", quota.Used.CPUMillis, quota.Quota.MaxCPUMillis, "m")
+						@components.ResourceGauge("Memory", quota.Used.MemoryMB, quota.Quota.MaxMemoryMB, "MB")
+						@components.ResourceGauge("Disk", quota.Used.DiskMB, quota.Quota.MaxDiskMB, "MB")
+						@components.ResourceGauge("Domains", quota.Used.Domains, quota.Quota.MaxDomains, "")
+						@components.ResourceGauge("Secrets", quota.Used.Secrets, quota.Quota.MaxSecrets, "")
+					</div>
+				}
+			}
+		}
+
+		<!-- Quota Limits (raw numbers) -->
+		if quota != nil {
+			@card.Card(card.Props{Class: "rounded-sm"}) {
+				@card.Header() {
+					@card.Title() {
+						Quota Limits
+					}
+				}
+				@card.Content() {
+					<div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 text-center">
+						@quotaLimit("Instances", quota.Quota.MaxInstances, "")
+						@quotaLimit("CPU", quota.Quota.MaxCPUMillis, "m")
+						@quotaLimit("Memory", quota.Quota.MaxMemoryMB, "MB")
+						@quotaLimit("Disk", quota.Quota.MaxDiskMB, "MB")
+						@quotaLimit("Domains", quota.Quota.MaxDomains, "")
+						@quotaLimit("Secrets", quota.Quota.MaxSecrets, "")
+					</div>
+				}
+			}
+		}
+	</div>
+}
+
+templ tenantActions(tenant *admin.Tenant) {
+	switch tenant.Status {
+		case admin.TenantActive:
+			@button.Button(button.Props{
+				Variant: button.VariantOutline,
+				Size:    button.SizeSm,
+				Attributes: templ.Attributes{
+					"hx-get":      "./tenants/detail?tenant_id=" + tenant.ID.String() + "&action=suspend",
+					"hx-target":   "#content",
+					"hx-swap":     "innerHTML",
+					"hx-confirm":  "Suspend tenant '" + tenant.Name + "'?",
+				},
+			}) {
+				Suspend
+			}
+		case admin.TenantSuspended:
+			@button.Button(button.Props{
+				Variant: button.VariantDefault,
+				Size:    button.SizeSm,
+				Attributes: templ.Attributes{
+					"hx-get":    "./tenants/detail?tenant_id=" + tenant.ID.String() + "&action=unsuspend",
+					"hx-target": "#content",
+					"hx-swap":   "innerHTML",
+				},
+			}) {
+				Unsuspend
+			}
+	}
+	if tenant.Status != admin.TenantDeleted {
+		@button.Button(button.Props{
+			Variant: button.VariantDestructive,
+			Size:    button.SizeSm,
+			Attributes: templ.Attributes{
+				"hx-get":      "./tenants/detail?tenant_id=" + tenant.ID.String() + "&action=delete",
+				"hx-target":   "#content",
+				"hx-swap":     "innerHTML",
+				"hx-confirm":  "Delete tenant '" + tenant.Name + "'? This cannot be undone.",
+			},
+		}) {
+			Delete
+		}
+	}
+}
+
+templ quotaLimit(label string, value int, unit string) {
+	<div class="space-y-1">
+		<div class="text-xs text-muted-foreground">{ label }</div>
+		if value > 0 {
+			<div class="text-lg font-bold">{ strconv.Itoa(value) }{ unit }</div>
+		} else {
+			<div class="text-lg font-bold text-muted-foreground">Unlimited</div>
+		}
+	</div>
+}

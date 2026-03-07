@@ -1,0 +1,33 @@
+package components
+
+import (
+	"github.com/xraph/forgeui/components/table"
+)
+
+// EnvVarEditor renders a read-only table of environment variable key-value pairs.
+templ EnvVarEditor(env map[string]string) {
+	if len(env) == 0 {
+		@EmptyState("file-text", "No environment variables", "No environment variables configured.")
+	} else {
+		@table.Table() {
+			@table.Header() {
+				@table.Row() {
+					@table.Head() { Key }
+					@table.Head() { Value }
+				}
+			}
+			@table.Body() {
+				for k, v := range env {
+					@table.Row() {
+						@table.Cell() {
+							<span class="font-mono text-xs font-medium">{ k }</span>
+						}
+						@table.Cell() {
+							<span class="font-mono text-xs text-muted-foreground">{ v }</span>
+						}
+					}
+				}
+			}
+		}
+	}
+}

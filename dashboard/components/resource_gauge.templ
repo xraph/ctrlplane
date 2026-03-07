@@ -1,0 +1,31 @@
+package components
+
+import (
+	"strconv"
+
+	"github.com/xraph/forgeui/components/progress"
+)
+
+// ResourceGauge renders a progress bar showing resource usage.
+templ ResourceGauge(label string, used int, limit int, unit string) {
+	<div class="space-y-2">
+		<div class="flex items-center justify-between text-sm">
+			<span class="text-muted-foreground">{ label }</span>
+			<span class="font-medium">{ strconv.Itoa(used) }/{ strconv.Itoa(limit) } { unit }</span>
+		</div>
+		@progress.Progress(progress.Props{Value: pctUsed(used, limit), Class: "h-2"})
+	</div>
+}
+
+func pctUsed(used, limit int) int {
+	if limit <= 0 {
+		return 0
+	}
+
+	pct := (used * 100) / limit
+	if pct > 100 {
+		return 100
+	}
+
+	return pct
+}

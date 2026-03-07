@@ -1,0 +1,58 @@
+package components
+
+import (
+	"github.com/xraph/forgeui/components/badge"
+	"github.com/xraph/forgeui/components/table"
+
+	"github.com/xraph/ctrlplane/admin"
+)
+
+// TenantTable renders a table of tenants.
+templ TenantTable(tenants []*admin.Tenant) {
+	if len(tenants) == 0 {
+		@EmptyState("building-2", "No tenants", "Create a tenant to start managing resources.")
+	} else {
+		@table.Table() {
+			@table.Header() {
+				@table.Row() {
+					@table.Head() { Name }
+					@table.Head() { Slug }
+					@table.Head() { Plan }
+					@table.Head() { Status }
+					@table.Head() { Created }
+				}
+			}
+			@table.Body() {
+				for _, t := range tenants {
+					@table.Row(table.RowProps{
+						Class: "cursor-pointer",
+						Attributes: templ.Attributes{
+							"hx-get":      "./tenants/detail?tenant_id=" + t.ID.String(),
+							"hx-target":   "#content",
+							"hx-push-url": "true",
+							"hx-swap":     "innerHTML",
+						},
+					}) {
+						@table.Cell() {
+							<span class="font-medium">{ t.Name }</span>
+						}
+						@table.Cell() {
+							<span class="text-muted-foreground font-mono text-xs">{ t.Slug }</span>
+						}
+						@table.Cell() {
+							@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+								{ t.Plan }
+							}
+						}
+						@table.Cell() {
+							@TenantStatusBadge(t.Status)
+						}
+						@table.Cell() {
+							<span class="text-muted-foreground">{ t.CreatedAt.Format("Jan 02, 2006") }</span>
+						}
+					}
+				}
+			}
+		}
+	}
+}

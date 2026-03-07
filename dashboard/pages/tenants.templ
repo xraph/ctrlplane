@@ -1,0 +1,81 @@
+package pages
+
+import (
+	"strconv"
+
+	"github.com/xraph/forgeui/components/badge"
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/components/input"
+
+	"github.com/xraph/ctrlplane/admin"
+	"github.com/xraph/ctrlplane/dashboard/components"
+)
+
+// TenantsPage renders the tenant list page.
+templ TenantsPage(result *admin.TenantListResult) {
+	<div class="space-y-6">
+		<div class="flex items-center justify-between">
+			<div class="flex items-center gap-3">
+				<h1 class="text-3xl font-bold">Tenants</h1>
+				@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+					{ strconv.Itoa(result.Total) }
+				}
+			</div>
+		</div>
+
+		<!-- Filters -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Content() {
+				<div class="flex items-center gap-4">
+					<div
+						class="flex-1"
+						hx-get="."
+						hx-trigger="keyup changed delay:300ms"
+						hx-target="closest div.space-y-6"
+						hx-swap="outerHTML"
+					>
+						@input.Input(input.Props{
+							Type:        input.TypeSearch,
+							Name:        "search",
+							Placeholder: "Filter tenants...",
+						})
+					</div>
+					<div class="flex items-center gap-2">
+						<a class="text-sm px-3 py-1.5 rounded-sm border hover:bg-muted transition-colors"
+							hx-get="./tenants"
+							hx-target="#content"
+							hx-push-url="true">All</a>
+						<a class="text-sm px-3 py-1.5 rounded-sm border hover:bg-muted transition-colors"
+							hx-get="./tenants?status=active"
+							hx-target="#content"
+							hx-push-url="true">Active</a>
+						<a class="text-sm px-3 py-1.5 rounded-sm border hover:bg-muted transition-colors"
+							hx-get="./tenants?status=suspended"
+							hx-target="#content"
+							hx-push-url="true">Suspended</a>
+					</div>
+				</div>
+			}
+		}
+
+		<!-- Table -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Content() {
+				@components.TenantTable(result.Items)
+			}
+		}
+
+		<!-- Pagination -->
+		if result.NextCursor != "" {
+			<div class="flex justify-center">
+				<a class="text-sm px-4 py-2 rounded-sm border hover:bg-muted transition-colors"
+					hx-get={ "./tenants?cursor=" + result.NextCursor }
+					hx-target="#content"
+					hx-push-url="true"
+					hx-swap="innerHTML">
+					Load More
+				</a>
+			</div>
+		}
+	</div>
+}

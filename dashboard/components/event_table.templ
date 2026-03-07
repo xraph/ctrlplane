@@ -1,0 +1,59 @@
+package components
+
+import (
+	"github.com/xraph/forgeui/components/table"
+
+	"github.com/xraph/ctrlplane/event"
+)
+
+// EventTable renders a table of events.
+templ EventTable(events []*event.Event) {
+	if len(events) == 0 {
+		@EmptyState("bell", "No events", "No events have been recorded yet.")
+	} else {
+		@table.Table() {
+			@table.Header() {
+				@table.Row() {
+					@table.Head() { Time }
+					@table.Head() { Type }
+					@table.Head() { Tenant }
+					@table.Head() { Instance }
+					@table.Head() { Actor }
+				}
+			}
+			@table.Body() {
+				for _, ev := range events {
+					@table.Row() {
+						@table.Cell() {
+							<span class="text-muted-foreground text-xs">{ ev.Timestamp.Format("15:04:05") }</span>
+						}
+						@table.Cell() {
+							@EventTypeBadge(ev.Type)
+						}
+						@table.Cell() {
+							<span class="text-muted-foreground text-xs">{ truncStr(ev.TenantID, 20) }</span>
+						}
+						@table.Cell() {
+							if ev.InstanceID.String() != "" {
+								<a class="font-mono text-xs hover:underline cursor-pointer"
+									hx-get={ "./instances/detail?instance_id=" + ev.InstanceID.String() }
+									hx-target="#content"
+									hx-push-url="true"
+									hx-swap="innerHTML">{ truncStr(ev.InstanceID.String(), 20) }</a>
+							} else {
+								<span class="text-muted-foreground">-</span>
+							}
+						}
+						@table.Cell() {
+							if ev.ActorID != "" {
+								<span class="text-muted-foreground text-xs">{ truncStr(ev.ActorID, 20) }</span>
+							} else {
+								<span class="text-muted-foreground">-</span>
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}

@@ -429,12 +429,17 @@ func run() error {
 	// -----------------------------------------------------------------------
 	// 4. Configure and register the Ctrl Plane extension
 	// -----------------------------------------------------------------------
+	dockerProv, err := docker.New(
+		docker.WithHost(dockerHost),
+		docker.WithNetwork(dockerNetwork),
+	)
+	if err != nil {
+		return fmt.Errorf("docker provider: %w", err)
+	}
+
 	cpExt := extension.New(
-		extension.WithStore(app.WithStore(dataStore)),
-		extension.WithProvider("docker", docker.New(docker.Config{
-			Host:    dockerHost,
-			Network: dockerNetwork,
-		})),
+		extension.WithStore(dataStore),
+		extension.WithProvider("docker", dockerProv),
 		extension.WithBasePath(basePath),
 		extension.WithAuthProvider(&auth.NoopProvider{
 			DefaultTenantID: "default",

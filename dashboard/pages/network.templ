@@ -1,0 +1,146 @@
+package pages
+
+import (
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/components/table"
+	"github.com/xraph/forgeui/components/tabs"
+
+	"github.com/xraph/ctrlplane/dashboard/components"
+	"github.com/xraph/ctrlplane/instance"
+	"github.com/xraph/ctrlplane/network"
+)
+
+// NetworkSelectInstancePage renders a page prompting the user to select an instance.
+templ NetworkSelectInstancePage(instances []*instance.Instance) {
+	<div class="space-y-6">
+		<div class="flex items-center gap-3">
+			<h1 class="text-3xl font-bold">Network</h1>
+		</div>
+
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Header() {
+				@card.Title() {
+					Select an Instance
+				}
+				@card.Description() {
+					Choose an instance to manage its network configuration.
+				}
+			}
+			@card.Content() {
+				if len(instances) == 0 {
+					@components.EmptyState("server", "No instances", "Create an instance first.")
+				} else {
+					@table.Table() {
+						@table.Header() {
+							@table.Row() {
+								@table.Head() { Name }
+								@table.Head() { State }
+								@table.Head() { Provider }
+								@table.Head() { Region }
+							}
+						}
+						@table.Body() {
+							for _, inst := range instances {
+								@table.Row(table.RowProps{
+									Class: "cursor-pointer",
+									Attributes: templ.Attributes{
+										"hx-get":      "./network?instance_id=" + inst.ID.String(),
+										"hx-target":   "#content",
+										"hx-push-url": "true",
+										"hx-swap":     "innerHTML",
+									},
+								}) {
+									@table.Cell() {
+										<span class="font-medium">{ inst.Name }</span>
+									}
+									@table.Cell() {
+										@components.InstanceStateBadge(inst.State)
+									}
+									@table.Cell() {
+										<span class="text-muted-foreground">{ inst.ProviderName }</span>
+									}
+									@table.Cell() {
+										<span class="text-muted-foreground">{ inst.Region }</span>
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	</div>
+}
+
+// NetworkPage renders the network management page for an instance.
+templ NetworkPage(inst *instance.Instance, domains []network.Domain, routes []network.Route, activeTab string) {
+	<div class="space-y-6">
+		<div class="flex items-center justify-between">
+			<div class="flex items-center gap-3">
+				<h1 class="text-3xl font-bold">Network</h1>
+			</div>
+			<div class="flex items-center gap-2">
+				<span class="text-sm text-muted-foreground">Instance:</span>
+				<a class="text-sm font-medium hover:underline cursor-pointer"
+					hx-get={ "./instances/detail?instance_id=" + inst.ID.String() }
+					hx-target="#content"
+					hx-push-url="true"
+					hx-swap="innerHTML">{ inst.Name }</a>
+				<a class="text-sm text-muted-foreground hover:text-foreground cursor-pointer"
+					hx-get="./network"
+					hx-target="#content"
+					hx-push-url="true"
+					hx-swap="innerHTML">Change</a>
+			</div>
+		</div>
+
+		@tabs.Tabs() {
+			@tabs.List() {
+				@tabs.Trigger(tabs.TriggerProps{
+					Value:    "domains",
+					IsActive: activeTab == "domains",
+					Attributes: templ.Attributes{
+						"hx-get":      "./network?instance_id=" + inst.ID.String() + "&tab=domains",
+						"hx-target":   "#content",
+						"hx-push-url": "true",
+						"hx-swap":     "innerHTML",
+					},
+				}) {
+					Domains
+				}
+				@tabs.Trigger(tabs.TriggerProps{
+					Value:    "routes",
+					IsActive: activeTab == "routes",
+					Attributes: templ.Attributes{
+						"hx-get":      "./network?instance_id=" + inst.ID.String() + "&tab=routes",
+						"hx-target":   "#content",
+						"hx-push-url": "true",
+						"hx-swap":     "innerHTML",
+					},
+				}) {
+					Routes
+				}
+			}
+
+			@tabs.Content(tabs.ContentProps{Value: "domains", IsActive: activeTab == "domains"}) {
+				<div class="mt-4">
+					@card.Card(card.Props{Class: "rounded-sm"}) {
+						@card.Content() {
+							@components.DomainTable(domains, inst.ID.String())
+						}
+					}
+				</div>
+			}
+
+			@tabs.Content(tabs.ContentProps{Value: "routes", IsActive: activeTab == "routes"}) {
+				<div class="mt-4">
+					@card.Card(card.Props{Class: "rounded-sm"}) {
+						@card.Content() {
+							@components.RouteTable(routes, inst.ID.String())
+						}
+					}
+				</div>
+			}
+		}
+	</div>
+}

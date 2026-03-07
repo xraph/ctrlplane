@@ -1,0 +1,17 @@
+package widgets
+
+import (
+	"strconv"
+
+	"github.com/xraph/ctrlplane/dashboard/components"
+)
+
+// HealthSummaryWidget renders the health summary widget with status counts.
+templ HealthSummaryWidget(counts components.HealthCounts) {
+	<div class="grid grid-cols-2 gap-4">
+		@components.StatCard("heart-pulse", "Healthy", strconv.Itoa(counts.Healthy), "instances")
+		@components.StatCard("alert-triangle", "Degraded", strconv.Itoa(counts.Degraded), "instances")
+		@components.StatCard("x-circle", "Unhealthy", strconv.Itoa(counts.Unhealthy), "instances")
+		@components.StatCard("help-circle", "Unknown", strconv.Itoa(counts.Unknown), "instances")
+	</div>
+}

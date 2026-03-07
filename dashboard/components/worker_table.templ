@@ -1,0 +1,69 @@
+package components
+
+import (
+	"strconv"
+
+	"github.com/xraph/forgeui/components/table"
+
+	"github.com/xraph/ctrlplane/worker"
+)
+
+// WorkerTable renders a table of background workers.
+templ WorkerTable(workers []worker.WorkerInfo) {
+	if len(workers) == 0 {
+		@EmptyState("activity", "No workers", "No background workers are registered.")
+	} else {
+		@table.Table() {
+			@table.Header() {
+				@table.Row() {
+					@table.Head() { Name }
+					@table.Head() { Interval }
+					@table.Head() { Status }
+					@table.Head() { Last Run }
+					@table.Head() { Run Count }
+					@table.Head() { Last Error }
+				}
+			}
+			@table.Body() {
+				for _, w := range workers {
+					@table.Row(table.RowProps{
+						Class: "cursor-pointer",
+						Attributes: templ.Attributes{
+							"hx-get":      "./workers/detail?worker_name=" + w.Name,
+							"hx-target":   "#content",
+							"hx-push-url": "true",
+							"hx-swap":     "innerHTML",
+						},
+					}) {
+						@table.Cell() {
+							<span class="font-medium">{ w.Name }</span>
+						}
+						@table.Cell() {
+							<span class="text-muted-foreground">{ formatWorkerInterval(w.Interval) }</span>
+						}
+						@table.Cell() {
+							@WorkerStatusBadge(w.Running)
+						}
+						@table.Cell() {
+							if w.LastRun != nil {
+								<span class="text-muted-foreground">{ w.LastRun.Format("Jan 02 15:04:05") }</span>
+							} else {
+								<span class="text-muted-foreground">-</span>
+							}
+						}
+						@table.Cell() {
+							<span class="text-muted-foreground">{ strconv.FormatInt(w.RunCount, 10) }</span>
+						}
+						@table.Cell() {
+							if w.LastErr != "" {
+								<span class="text-destructive text-xs">{ truncStr(w.LastErr, 40) }</span>
+							} else {
+								<span class="text-muted-foreground">-</span>
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}

@@ -686,3 +686,55 @@ func fromAuditEntryModel(m *auditEntryModel) admin.AuditEntry {
 		ResourceID: m.ResourceID,
 	}
 }
+
+// ── Template ─────────────────────────────────────────────────────────────────
+
+type templateModel struct {
+	grove.BaseModel `grove:"table:cp_templates"`
+
+	ID          string            `bson:"_id"                   grove:"id,pk"`
+	TenantID    string            `bson:"tenant_id"             grove:"tenant_id"`
+	Name        string            `bson:"name"                  grove:"name"`
+	Description string            `bson:"description,omitempty" grove:"description"`
+	Image       string            `bson:"image"                 grove:"image"`
+	Strategy    string            `bson:"strategy"              grove:"strategy"`
+	Env         map[string]string `bson:"env,omitempty"`
+	CommitSHA   string            `bson:"commit_sha,omitempty"  grove:"commit_sha"`
+	Notes       string            `bson:"notes,omitempty"       grove:"notes"`
+	CreatedAt   time.Time         `bson:"created_at"            grove:"created_at"`
+	UpdatedAt   time.Time         `bson:"updated_at"            grove:"updated_at"`
+}
+
+func toTemplateModel(t *deploy.Template) *templateModel {
+	return &templateModel{
+		ID:          t.ID.String(),
+		TenantID:    t.TenantID,
+		Name:        t.Name,
+		Description: t.Description,
+		Image:       t.Image,
+		Strategy:    t.Strategy,
+		Env:         t.Env,
+		CommitSHA:   t.CommitSHA,
+		Notes:       t.Notes,
+		CreatedAt:   t.CreatedAt,
+		UpdatedAt:   t.UpdatedAt,
+	}
+}
+
+func fromTemplateModel(m *templateModel) *deploy.Template {
+	return &deploy.Template{
+		Entity: ctrlplane.Entity{
+			ID:        id.MustParse(m.ID),
+			CreatedAt: m.CreatedAt,
+			UpdatedAt: m.UpdatedAt,
+		},
+		TenantID:    m.TenantID,
+		Name:        m.Name,
+		Description: m.Description,
+		Image:       m.Image,
+		Strategy:    m.Strategy,
+		Env:         m.Env,
+		CommitSHA:   m.CommitSHA,
+		Notes:       m.Notes,
+	}
+}

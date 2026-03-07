@@ -6,6 +6,7 @@ import (
 	"github.com/xraph/ctrlplane/event"
 	"github.com/xraph/ctrlplane/plugin"
 	"github.com/xraph/ctrlplane/provider"
+	"github.com/xraph/ctrlplane/secrets"
 	"github.com/xraph/ctrlplane/store"
 )
 
@@ -61,6 +62,15 @@ func WithEventBus(b event.Bus) Option {
 func WithDefaultProvider(name string) Option {
 	return func(cp *CtrlPlane) error {
 		cp.providers.SetDefault(name)
+
+		return nil
+	}
+}
+
+// WithVault sets the secret storage backend.
+func WithVault(v secrets.Vault) Option {
+	return func(cp *CtrlPlane) error {
+		cp.vault = v
 
 		return nil
 	}

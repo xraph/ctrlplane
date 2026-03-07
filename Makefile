@@ -99,7 +99,16 @@ clean c:
 ## fmt (f): Format code
 fmt f:
 	@echo "$(BLUE)Formatting code...$(NC)"
-	@gofmt -s -w .
+	@COUNT=0; \
+	ROOT_DIR=$$(pwd); \
+	for modfile in $$(find . -name "go.mod" -type f | grep -v "/vendor/" | sort); do \
+		dir=$$(dirname $$modfile); \
+		echo "  Formatting $$dir..."; \
+		cd "$$ROOT_DIR/$$dir" && $(GO) fmt ./...; \
+		COUNT=$$((COUNT + 1)); \
+	done; \
+	cd "$$ROOT_DIR"; \
+	echo "$(GREEN)✓ Formatted $$COUNT module(s)$(NC)"
 	@command -v goimports >/dev/null 2>&1 && goimports -w -local github.com/xraph/ctrlplane . || echo "$(YELLOW)goimports not found, skipping (run: go install golang.org/x/tools/cmd/goimports@latest)$(NC)"
 	@echo "$(GREEN)✓ Formatting complete$(NC)"
 

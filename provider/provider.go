@@ -3,9 +3,25 @@ package provider
 import (
 	"context"
 	"io"
+	"time"
 
 	"github.com/xraph/ctrlplane/id"
 )
+
+// HealthChecker is an optional interface that providers can implement
+// to support health and connectivity testing from the dashboard.
+type HealthChecker interface {
+	// HealthCheck tests connectivity and returns a health status.
+	HealthCheck(ctx context.Context) (*HealthStatus, error)
+}
+
+// HealthStatus reports provider health after a connectivity test.
+type HealthStatus struct {
+	Healthy   bool          `db:"healthy"    json:"healthy"`
+	Message   string        `db:"message"    json:"message"`
+	Latency   time.Duration `db:"latency"    json:"latency"`
+	CheckedAt time.Time     `db:"checked_at" json:"checked_at"`
+}
 
 // Provider is the unified interface for infrastructure operations.
 // Each cloud/orchestrator (K8s, Nomad, AWS ECS, Docker, etc.) implements this.

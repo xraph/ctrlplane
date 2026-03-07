@@ -1,0 +1,178 @@
+package pages
+
+import (
+	"strings"
+
+	"github.com/xraph/forgeui/components/badge"
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/components/table"
+
+	"github.com/xraph/ctrlplane/dashboard/components"
+)
+
+// eventCategory returns the category prefix of an event type.
+func eventCategory(t string) string {
+	if idx := strings.Index(t, "."); idx > 0 {
+		return t[:idx]
+	}
+
+	return t
+}
+
+// EventsPage renders the events stream page.
+templ EventsPage(data EventsPageData) {
+	<div class="space-y-6">
+		<div class="flex items-center justify-between">
+			<h1 class="text-3xl font-bold">Events</h1>
+		</div>
+
+		<!-- Filter Bar -->
+		<div class="flex gap-2 flex-wrap">
+			<a class={ "text-sm px-3 py-1.5 rounded-sm border transition-colors cursor-pointer", templ.KV("bg-primary text-primary-foreground", data.FilterType == ""), templ.KV("hover:bg-muted", data.FilterType != "") }
+				hx-get="./events"
+				hx-target="#content"
+				hx-push-url="true"
+				hx-swap="innerHTML"
+			>
+				All
+			</a>
+			<a class={ "text-sm px-3 py-1.5 rounded-sm border transition-colors cursor-pointer", templ.KV("bg-primary text-primary-foreground", data.FilterType == "instance"), templ.KV("hover:bg-muted", data.FilterType != "instance") }
+				hx-get="./events?type=instance"
+				hx-target="#content"
+				hx-push-url="true"
+				hx-swap="innerHTML"
+			>
+				Instance
+			</a>
+			<a class={ "text-sm px-3 py-1.5 rounded-sm border transition-colors cursor-pointer", templ.KV("bg-primary text-primary-foreground", data.FilterType == "deploy"), templ.KV("hover:bg-muted", data.FilterType != "deploy") }
+				hx-get="./events?type=deploy"
+				hx-target="#content"
+				hx-push-url="true"
+				hx-swap="innerHTML"
+			>
+				Deploy
+			</a>
+			<a class={ "text-sm px-3 py-1.5 rounded-sm border transition-colors cursor-pointer", templ.KV("bg-primary text-primary-foreground", data.FilterType == "health"), templ.KV("hover:bg-muted", data.FilterType != "health") }
+				hx-get="./events?type=health"
+				hx-target="#content"
+				hx-push-url="true"
+				hx-swap="innerHTML"
+			>
+				Health
+			</a>
+			<a class={ "text-sm px-3 py-1.5 rounded-sm border transition-colors cursor-pointer", templ.KV("bg-primary text-primary-foreground", data.FilterType == "domain"), templ.KV("hover:bg-muted", data.FilterType != "domain") }
+				hx-get="./events?type=domain"
+				hx-target="#content"
+				hx-push-url="true"
+				hx-swap="innerHTML"
+			>
+				Network
+			</a>
+			<a class={ "text-sm px-3 py-1.5 rounded-sm border transition-colors cursor-pointer", templ.KV("bg-primary text-primary-foreground", data.FilterType == "tenant"), templ.KV("hover:bg-muted", data.FilterType != "tenant") }
+				hx-get="./events?type=tenant"
+				hx-target="#content"
+				hx-push-url="true"
+				hx-swap="innerHTML"
+			>
+				Admin
+			</a>
+		</div>
+
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Content() {
+				if len(data.Events) == 0 {
+					@components.EmptyState("bell", "No events", "No events found for the selected filter.")
+				} else {
+					<div
+						hx-get={ "./events?type=" + data.FilterType }
+						hx-trigger="every 5s"
+						hx-target="#content"
+						hx-swap="innerHTML"
+					>
+						@table.Table() {
+							@table.Header() {
+								@table.Row() {
+									@table.Head() { Timestamp }
+									@table.Head() { Type }
+									@table.Head() { Tenant }
+									@table.Head() { Instance }
+									@table.Head() { Actor }
+								}
+							}
+							@table.Body() {
+								for _, evt := range data.Events {
+									@table.Row() {
+										@table.Cell() {
+											<span class="text-muted-foreground text-xs font-mono">{ evt.Timestamp.Format("15:04:05.000") }</span>
+										}
+										@table.Cell() {
+											@eventTypeBadge(string(evt.Type))
+										}
+										@table.Cell() {
+											if evt.TenantID != "" {
+												<span class="text-xs font-mono">{ evt.TenantID }</span>
+											} else {
+												<span class="text-muted-foreground">-</span>
+											}
+										}
+										@table.Cell() {
+											if !evt.InstanceID.IsNil() {
+												<a class="text-xs font-mono hover:underline cursor-pointer"
+													hx-get={ "./instances/detail?instance_id=" + evt.InstanceID.String() }
+													hx-target="#content"
+													hx-push-url="true"
+													hx-swap="innerHTML"
+												>
+													{ evt.InstanceID.String() }
+												</a>
+											} else {
+												<span class="text-muted-foreground">-</span>
+											}
+										}
+										@table.Cell() {
+											if evt.ActorID != "" {
+												<span class="text-xs">{ evt.ActorID }</span>
+											} else {
+												<span class="text-muted-foreground">-</span>
+											}
+										}
+									}
+								}
+							}
+						}
+					</div>
+				}
+			}
+		}
+	</div>
+}
+
+// eventTypeBadge renders a colored badge for an event type.
+templ eventTypeBadge(t string) {
+	switch eventCategory(t) {
+		case "instance":
+			@badge.Badge(badge.Props{Variant: badge.VariantDefault}) {
+				{ t }
+			}
+		case "deploy":
+			@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+				{ t }
+			}
+		case "health":
+			<span class="inline-flex items-center rounded-sm px-2 py-0.5 text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">
+				{ t }
+			</span>
+		case "domain", "cert":
+			<span class="inline-flex items-center rounded-sm px-2 py-0.5 text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400">
+				{ t }
+			</span>
+		case "tenant", "quota":
+			<span class="inline-flex items-center rounded-sm px-2 py-0.5 text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-400">
+				{ t }
+			</span>
+		default:
+			@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+				{ t }
+			}
+	}
+}

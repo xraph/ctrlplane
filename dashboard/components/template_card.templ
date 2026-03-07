@@ -1,0 +1,94 @@
+package components
+
+import (
+	"strconv"
+
+	"github.com/xraph/forgeui/components/badge"
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/card"
+
+	"github.com/xraph/ctrlplane/deploy"
+)
+
+// templateDeployURL builds the deploy URL for a template card, preserving instanceID if present.
+func templateDeployURL(t *deploy.Template, instanceID string) string {
+	url := "./deployments/create?template_id=" + t.ID.String()
+	if instanceID != "" {
+		url += "&instance_id=" + instanceID
+	}
+
+	return url
+}
+
+// TemplateCard renders a gallery card for a deployment template.
+// Used on the deploy create page template gallery tab.
+templ TemplateCard(t *deploy.Template, instanceID string) {
+	@card.Card(card.Props{Class: "rounded-sm flex flex-col"}) {
+		@card.Content(card.ContentProps{Class: "p-4 flex-1"}) {
+			<div class="space-y-3">
+				<!-- Name -->
+				<div class="flex items-start justify-between gap-2">
+					<h3 class="font-semibold text-sm leading-tight">{ t.Name }</h3>
+					@badge.Badge(badge.Props{Variant: badge.VariantOutline, Class: "text-[10px] px-1.5 py-0 shrink-0"}) {
+						{ t.Strategy }
+					}
+				</div>
+
+				<!-- Description -->
+				if t.Description != "" {
+					<p class="text-xs text-muted-foreground leading-relaxed">{ truncateDescription(t.Description, 100) }</p>
+				}
+
+				<!-- Image -->
+				<div class="flex items-center gap-1.5">
+					<span class="text-[10px] text-muted-foreground uppercase tracking-wide">Image</span>
+					<span class="font-mono text-xs text-muted-foreground truncate">{ t.Image }</span>
+				</div>
+
+				<!-- Resource summary -->
+				<div class="flex items-center gap-1.5">
+					<span class="text-[10px] text-muted-foreground uppercase tracking-wide">Resources</span>
+					<span class="text-xs text-muted-foreground">{ compactResourceSummary(t.Resources) }</span>
+				</div>
+
+				<!-- Count badges -->
+				<div class="flex flex-wrap items-center gap-1">
+					if len(t.Ports) > 0 {
+						@badge.Badge(badge.Props{Variant: badge.VariantSecondary, Class: "text-[10px] px-1.5 py-0"}) {
+							{ strconv.Itoa(len(t.Ports)) } ports
+						}
+					}
+					if len(t.Volumes) > 0 {
+						@badge.Badge(badge.Props{Variant: badge.VariantSecondary, Class: "text-[10px] px-1.5 py-0"}) {
+							{ strconv.Itoa(len(t.Volumes)) } vols
+						}
+					}
+					if len(t.Secrets) > 0 {
+						@badge.Badge(badge.Props{Variant: badge.VariantSecondary, Class: "text-[10px] px-1.5 py-0"}) {
+							{ strconv.Itoa(len(t.Secrets)) } secrets
+						}
+					}
+					if len(t.ConfigFiles) > 0 {
+						@badge.Badge(badge.Props{Variant: badge.VariantSecondary, Class: "text-[10px] px-1.5 py-0"}) {
+							{ strconv.Itoa(len(t.ConfigFiles)) } configs
+						}
+					}
+				</div>
+			</div>
+		}
+		@card.Footer(card.FooterProps{Class: "p-4 pt-0"}) {
+			@button.Button(button.Props{
+				Size:  button.SizeSm,
+				Class: "w-full",
+				Attributes: templ.Attributes{
+					"hx-get":      templateDeployURL(t, instanceID),
+					"hx-target":   "#content",
+					"hx-push-url": "true",
+					"hx-swap":     "innerHTML",
+				},
+			}) {
+				Deploy
+			}
+		}
+	}
+}

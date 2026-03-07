@@ -1,0 +1,16 @@
+package components
+
+// PRGRedirect renders a script that replaces the browser URL via history.replaceState.
+// This implements the Post/Redirect/Get pattern for HTMX forms: after a successful
+// POST, the browser URL is updated so that a page refresh performs a GET to the
+// result page instead of resubmitting the form.
+templ PRGRedirect(url string) {
+	if url != "" {
+		@prgReplaceURL(url)
+	}
+}
+
+// prgReplaceURL replaces the current browser URL without triggering navigation.
+script prgReplaceURL(url string) {
+	history.replaceState(null, '', url);
+}

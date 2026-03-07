@@ -18,6 +18,7 @@ import (
 	"github.com/xraph/ctrlplane/plugin"
 	"github.com/xraph/ctrlplane/provider"
 	"github.com/xraph/ctrlplane/secrets"
+	"github.com/xraph/ctrlplane/secrets/memoryvault"
 	"github.com/xraph/ctrlplane/store"
 	"github.com/xraph/ctrlplane/telemetry"
 	"github.com/xraph/ctrlplane/worker"
@@ -27,6 +28,7 @@ import (
 type CtrlPlane struct {
 	config      ctrlplane.Config
 	store       store.Store
+	vault       secrets.Vault
 	auth        auth.Provider
 	providers   *provider.Registry
 	events      event.Bus
@@ -91,6 +93,16 @@ func (cp *CtrlPlane) Events() event.Bus {
 	return cp.events
 }
 
+// Vault returns the vault backend used for secret storage.
+func (cp *CtrlPlane) Vault() secrets.Vault {
+	return cp.vault
+}
+
+// Scheduler returns the background worker scheduler.
+func (cp *CtrlPlane) Scheduler() *worker.Scheduler {
+	return cp.scheduler
+}
+
 // Extensions returns the plugin registry.
 func (cp *CtrlPlane) Extensions() *plugin.Registry {
 	return cp.extensions
@@ -128,11 +140,16 @@ func (cp *CtrlPlane) Stop(ctx context.Context) error {
 
 // wireServices instantiates all service implementations and background workers.
 func (cp *CtrlPlane) wireServices() {
+	// Default to an in-memory vault when none was provided via WithVault.
+	if cp.vault == nil {
+		cp.vault = memoryvault.New()
+	}
+
 	// Instance service.
 	cp.Instances = instance.NewService(cp.store, cp.providers, cp.events, cp.auth)
 
 	// Deploy service with strategies.
-	deploySvc := deploy.NewService(cp.store, cp.store, cp.providers, cp.events, cp.auth)
+	deploySvc := deploy.NewService(cp.store, cp.store, cp.providers, cp.events, cp.auth, cp.vault)
 	deploySvc.RegisterStrategy(strategies.NewRolling())
 	deploySvc.RegisterStrategy(strategies.NewBlueGreen())
 	deploySvc.RegisterStrategy(strategies.NewCanary())
@@ -149,8 +166,8 @@ func (cp *CtrlPlane) wireServices() {
 	// Network service (no external router by default).
 	cp.Network = network.NewService(cp.store, nil, cp.events, cp.auth)
 
-	// Secrets service (no vault by default; users should provide one via options).
-	cp.Secrets = secrets.NewService(cp.store, nil, cp.auth)
+	// Secrets service backed by the configured vault.
+	cp.Secrets = secrets.NewService(cp.store, cp.vault, cp.auth)
 
 	// Admin service.
 	cp.Admin = admin.NewService(cp.store, cp.store, cp.store, cp.store, cp.providers, cp.events, cp.auth)

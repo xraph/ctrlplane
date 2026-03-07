@@ -1,21 +1,21 @@
 package postgres
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/xraph/grove"
 
+	ctrlplane "github.com/xraph/ctrlplane"
 	"github.com/xraph/ctrlplane/admin"
 	"github.com/xraph/ctrlplane/deploy"
 	"github.com/xraph/ctrlplane/health"
 	"github.com/xraph/ctrlplane/id"
 	"github.com/xraph/ctrlplane/instance"
 	"github.com/xraph/ctrlplane/network"
+	"github.com/xraph/ctrlplane/provider"
 	"github.com/xraph/ctrlplane/secrets"
 	"github.com/xraph/ctrlplane/telemetry"
-
-	ctrlplane "github.com/xraph/ctrlplane"
-	"github.com/xraph/ctrlplane/provider"
 )
 
 // tenantModel is the database model for admin.Tenant.
@@ -253,6 +253,23 @@ type auditEntryModel struct {
 	ResourceID string    `grove:"resource_id"`
 	Details    []byte    `grove:"details,type:jsonb"`
 	CreatedAt  time.Time `grove:"created_at,notnull"`
+}
+
+// templateModel is the database model for deploy.Template.
+type templateModel struct {
+	grove.BaseModel `grove:"table:cp_templates"`
+
+	ID          string    `grove:"id,pk"`
+	TenantID    string    `grove:"tenant_id,notnull"`
+	Name        string    `grove:"name,notnull"`
+	Description string    `grove:"description"`
+	Image       string    `grove:"image,notnull"`
+	Strategy    string    `grove:"strategy,notnull"`
+	Env         []byte    `grove:"env,type:jsonb"`
+	CommitSHA   string    `grove:"commit_sha"`
+	Notes       string    `grove:"notes"`
+	CreatedAt   time.Time `grove:"created_at,notnull"`
+	UpdatedAt   time.Time `grove:"updated_at,notnull"`
 }
 
 // --- Conversion helpers ---
@@ -514,5 +531,54 @@ func toAuditEntryModel(entry *admin.AuditEntry) *auditEntryModel {
 		Resource:   entry.Resource,
 		ResourceID: entry.ResourceID,
 		CreatedAt:  entry.CreatedAt,
+	}
+}
+
+func toTemplateModel(t *deploy.Template) *templateModel {
+	var envBytes []byte
+
+	if len(t.Env) > 0 {
+		data, err := json.Marshal(t.Env)
+		if err == nil {
+			envBytes = data
+		}
+	}
+
+	return &templateModel{
+		ID:          t.ID.String(),
+		TenantID:    t.TenantID,
+		Name:        t.Name,
+		Description: t.Description,
+		Image:       t.Image,
+		Strategy:    t.Strategy,
+		Env:         envBytes,
+		CommitSHA:   t.CommitSHA,
+		Notes:       t.Notes,
+		CreatedAt:   t.CreatedAt,
+		UpdatedAt:   t.UpdatedAt,
+	}
+}
+
+func fromTemplateModel(m *templateModel) *deploy.Template {
+	env := make(map[string]string)
+
+	if len(m.Env) > 0 {
+		_ = json.Unmarshal(m.Env, &env)
+	}
+
+	return &deploy.Template{
+		Entity: ctrlplane.Entity{
+			ID:        id.MustParse(m.ID),
+			CreatedAt: m.CreatedAt,
+			UpdatedAt: m.UpdatedAt,
+		},
+		TenantID:    m.TenantID,
+		Name:        m.Name,
+		Description: m.Description,
+		Image:       m.Image,
+		Strategy:    m.Strategy,
+		Env:         env,
+		CommitSHA:   m.CommitSHA,
+		Notes:       m.Notes,
 	}
 }

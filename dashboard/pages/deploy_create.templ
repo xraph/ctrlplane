@@ -1,0 +1,339 @@
+package pages
+
+import (
+	"strconv"
+
+	"github.com/xraph/forgeui/components/badge"
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/components/label"
+
+	"github.com/xraph/ctrlplane/dashboard/components"
+)
+
+// DeployCreatePage renders the create deployment form page with dual-mode layout.
+// It provides a Custom Deploy form and a Template Gallery, switchable via tabs.
+templ DeployCreatePage(data DeployFormData) {
+	<!-- PRG: replace browser URL after POST so refresh does a GET instead of resubmitting. -->
+	@components.PRGRedirect(data.RedirectURL)
+
+	<div class="space-y-6">
+		<!-- Back navigation -->
+		<div class="flex items-center gap-3">
+			<a class="text-sm text-muted-foreground hover:text-foreground transition-colors"
+				hx-get="./deployments"
+				hx-target="#content"
+				hx-push-url="true"
+				hx-swap="innerHTML">&larr; Back to Deployments</a>
+		</div>
+
+		<div class="flex items-center gap-3">
+			<h1 class="text-3xl font-bold">New Deployment</h1>
+		</div>
+
+		<!-- Error/Success banners -->
+		if data.Error != "" {
+			<div class="rounded-sm border border-destructive/50 bg-destructive/10 p-4 text-sm text-destructive">
+				{ data.Error }
+			</div>
+		}
+
+		if data.Success != "" {
+			<div class="rounded-sm border border-green-500/50 bg-green-500/10 p-4 text-sm text-green-700 dark:text-green-400">
+				{ data.Success }
+			</div>
+		}
+
+		<!-- Tab Toggle -->
+		<div class="flex items-center border-b">
+			<button
+				type="button"
+				id="tab-custom"
+				class="px-4 py-2 text-sm font-medium border-b-2 transition-colors"
+				onclick="switchDeployTab('custom')"
+			>
+				Custom Deploy
+			</button>
+			<button
+				type="button"
+				id="tab-gallery"
+				class="px-4 py-2 text-sm font-medium border-b-2 transition-colors"
+				onclick="switchDeployTab('gallery')"
+			>
+				Template Gallery
+				if len(data.Templates) > 0 {
+					@badge.Badge(badge.Props{Variant: badge.VariantSecondary, Class: "ml-1.5 text-[10px] px-1.5 py-0"}) {
+						{ strconv.Itoa(len(data.Templates)) }
+					}
+				}
+			</button>
+		</div>
+
+		<!-- Panel: Custom Deploy -->
+		<div id="panel-custom">
+			<!-- Template pre-fill banner -->
+			if data.SelectedTemplate != nil {
+				<div class="rounded-sm border border-blue-500/50 bg-blue-500/10 p-4 text-sm text-blue-700 dark:text-blue-400 mb-4">
+					Pre-filled from template: <strong>{ data.SelectedTemplate.Name }</strong>
+				</div>
+			}
+
+			<!-- Config files info -->
+			if data.SelectedTemplate != nil && len(data.SelectedTemplate.ConfigFiles) > 0 {
+				<div class="rounded-sm border border-amber-500/50 bg-amber-500/10 p-4 text-sm text-amber-700 dark:text-amber-400 mb-4 flex items-center gap-2">
+					<span class="font-medium">Config Files (vault-backed):</span>
+					<span>{ strconv.Itoa(len(data.SelectedTemplate.ConfigFiles)) } files will be deployed</span>
+				</div>
+			}
+
+			<!-- Secret references info -->
+			if data.SelectedTemplate != nil && len(data.SelectedTemplate.Secrets) > 0 {
+				<div class="rounded-sm border border-violet-500/50 bg-violet-500/10 p-4 text-sm text-violet-700 dark:text-violet-400 mb-4 flex items-center gap-2">
+					<span class="font-medium">Secret References:</span>
+					<span>{ strconv.Itoa(len(data.SelectedTemplate.Secrets)) } secrets will be injected</span>
+				</div>
+			}
+
+			@card.Card(card.Props{Class: "rounded-sm"}) {
+				@card.Header() {
+					@card.Title() {
+						Deploy Configuration
+					}
+					@card.Description() {
+						Create a new deployment for an instance.
+					}
+				}
+				@card.Content() {
+					<form
+						hx-post="./deployments/create"
+						hx-target="#content"
+						hx-swap="innerHTML"
+						class="space-y-6"
+					>
+						<!-- Instance Selection -->
+						<div class="space-y-2">
+							@label.Label(label.Props{For: "instance_id"}) {
+								Instance
+							}
+							if data.Instance != nil {
+								<input type="hidden" name="instance_id" value={ data.Instance.ID.String() }/>
+								<div class="flex items-center gap-2 rounded-sm border px-3 py-2 text-sm">
+									<span class="font-medium">{ data.Instance.Name }</span>
+									<span class="text-muted-foreground font-mono text-xs">{ data.Instance.ID.String() }</span>
+									@components.InstanceStateBadge(data.Instance.State)
+								</div>
+							} else {
+								<select
+									name="instance_id"
+									id="instance_id"
+									class="flex h-9 w-full rounded-sm border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+									required
+								>
+									<option value="">Select an instance...</option>
+									for _, inst := range data.Instances {
+										<option value={ inst.ID.String() }>{ inst.Name } ({ string(inst.State) })</option>
+									}
+								</select>
+							}
+						</div>
+
+						<!-- Image -->
+						<div class="space-y-2">
+							@label.Label(label.Props{For: "image"}) {
+								Image
+							}
+							<input
+								type="text"
+								name="image"
+								id="image"
+								placeholder="e.g. myapp:latest or registry.io/myapp:v1.2.3"
+								class="flex h-9 w-full rounded-sm border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+								required
+								if data.SelectedTemplate != nil {
+									value={ data.SelectedTemplate.Image }
+								}
+							/>
+						</div>
+
+						<!-- Strategy -->
+						<div class="space-y-2">
+							@label.Label(label.Props{For: "strategy"}) {
+								Strategy
+							}
+							if data.SelectedTemplate != nil {
+								@components.StrategySelect(data.SelectedTemplate.Strategy)
+							} else {
+								@components.StrategySelect("")
+							}
+						</div>
+
+						<!-- Commit SHA -->
+						<div class="space-y-2">
+							@label.Label(label.Props{For: "commit_sha"}) {
+								Commit SHA
+							}
+							<input
+								type="text"
+								name="commit_sha"
+								id="commit_sha"
+								placeholder="e.g. a1b2c3d4e5f6"
+								class="flex h-9 w-full rounded-sm border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+								if data.SelectedTemplate != nil {
+									value={ data.SelectedTemplate.CommitSHA }
+								}
+							/>
+						</div>
+
+						<!-- Notes -->
+						<div class="space-y-2">
+							@label.Label(label.Props{For: "notes"}) {
+								Notes
+							}
+							<textarea
+								name="notes"
+								id="notes"
+								rows="3"
+								placeholder="Optional deployment notes..."
+								class="flex min-h-[60px] w-full rounded-sm border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+							>
+								if data.SelectedTemplate != nil {
+									{ data.SelectedTemplate.Notes }
+								}
+							</textarea>
+						</div>
+
+						<!-- Environment Variables -->
+						<div class="space-y-2">
+							@label.Label(label.Props{}) {
+								Environment Variables
+							}
+							<input type="hidden" name="env_json" id="deploy_env_json"
+								if data.SelectedTemplate != nil {
+									value={ envToJSON(data.SelectedTemplate.Env) }
+								} else {
+									value="{}"
+								}
+							/>
+							<div id="deploy-env-rows" class="space-y-2"></div>
+							<button
+								type="button"
+								class="inline-flex items-center justify-center whitespace-nowrap rounded-sm text-sm font-medium transition-colors border border-input bg-background shadow-sm hover:bg-accent hover:text-accent-foreground h-8 px-3"
+								onclick="addDeployEnvRow()"
+							>
+								Add Variable
+							</button>
+						</div>
+
+						<!-- Submit -->
+						<div class="flex justify-end pt-4 border-t">
+							@button.Button(button.Props{
+								Type: "submit",
+								Attributes: templ.Attributes{
+									"onclick": "serializeDeployEnvVars()",
+								},
+							}) {
+								Deploy
+							}
+						</div>
+					</form>
+				}
+			}
+		</div>
+
+		<!-- Panel: Template Gallery (hidden by default) -->
+		<div id="panel-gallery" style="display: none;">
+			if len(data.Templates) > 0 {
+				<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+					for _, tmpl := range data.Templates {
+						@components.TemplateCard(tmpl, deployInstanceID(data))
+					}
+				</div>
+			} else {
+				@components.EmptyState("file-text", "No templates", "Create deployment templates for quick reusable deploys.")
+			}
+		</div>
+	</div>
+
+	<!-- Deploy page scripts -->
+	@deployPageScript(data)
+}
+
+// deployInstanceID extracts the instance ID string from the deploy form data.
+func deployInstanceID(data DeployFormData) string {
+	if data.Instance != nil {
+		return data.Instance.ID.String()
+	}
+
+	return ""
+}
+
+// deployPageScript provides the JS for tab switching and env var management.
+templ deployPageScript(data DeployFormData) {
+	<script>
+	// --- Tab Switching ---
+	function switchDeployTab(tab) {
+		var panelCustom = document.getElementById('panel-custom');
+		var panelGallery = document.getElementById('panel-gallery');
+		var tabCustom = document.getElementById('tab-custom');
+		var tabGallery = document.getElementById('tab-gallery');
+
+		if (tab === 'custom') {
+			panelCustom.style.display = '';
+			panelGallery.style.display = 'none';
+			tabCustom.className = 'px-4 py-2 text-sm font-medium border-b-2 border-primary text-foreground transition-colors';
+			tabGallery.className = 'px-4 py-2 text-sm font-medium border-b-2 border-transparent text-muted-foreground hover:text-foreground transition-colors';
+		} else {
+			panelCustom.style.display = 'none';
+			panelGallery.style.display = '';
+			tabCustom.className = 'px-4 py-2 text-sm font-medium border-b-2 border-transparent text-muted-foreground hover:text-foreground transition-colors';
+			tabGallery.className = 'px-4 py-2 text-sm font-medium border-b-2 border-primary text-foreground transition-colors';
+		}
+	}
+
+	// --- Env Var Management ---
+	function addDeployEnvRow(key, value) {
+		key = key || '';
+		value = value || '';
+		var container = document.getElementById('deploy-env-rows');
+		var row = document.createElement('div');
+		row.className = 'flex items-center gap-2';
+		row.innerHTML = '<input type="text" placeholder="KEY" value="' + key + '" class="flex h-8 w-1/3 rounded-sm border border-input bg-transparent px-2 py-1 text-sm font-mono" />' +
+			'<input type="text" placeholder="value" value="' + value + '" class="flex h-8 flex-1 rounded-sm border border-input bg-transparent px-2 py-1 text-sm font-mono" />' +
+			'<button type="button" onclick="this.parentElement.remove()" class="inline-flex items-center justify-center h-8 w-8 rounded-sm text-sm text-muted-foreground hover:text-destructive hover:bg-destructive/10">&#x2715;</button>';
+		container.appendChild(row);
+	}
+
+	function serializeDeployEnvVars() {
+		var container = document.getElementById('deploy-env-rows');
+		var rows = container.querySelectorAll('div');
+		var env = {};
+		rows.forEach(function(row) {
+			var inputs = row.querySelectorAll('input');
+			if (inputs.length >= 2 && inputs[0].value.trim()) {
+				env[inputs[0].value.trim()] = inputs[1].value;
+			}
+		});
+		document.getElementById('deploy_env_json').value = JSON.stringify(env);
+	}
+
+	// --- Initialize ---
+	(function() {
+		// Default to Custom Deploy tab. When a template is selected,
+		// the user arrives here from the gallery so custom tab is correct.
+		switchDeployTab('custom');
+
+		// Pre-populate env vars from template.
+		var envField = document.getElementById('deploy_env_json');
+		if (envField && envField.value && envField.value !== '{}') {
+			try {
+				var env = JSON.parse(envField.value);
+				for (var k in env) {
+					if (env.hasOwnProperty(k)) {
+						addDeployEnvRow(k, env[k]);
+					}
+				}
+			} catch(e) {}
+		}
+	})();
+	</script>
+}

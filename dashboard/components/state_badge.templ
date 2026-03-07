@@ -1,0 +1,156 @@
+package components
+
+import (
+	"github.com/xraph/forgeui/components/badge"
+
+	"github.com/xraph/ctrlplane/admin"
+	"github.com/xraph/ctrlplane/deploy"
+	"github.com/xraph/ctrlplane/health"
+	"github.com/xraph/ctrlplane/provider"
+)
+
+// InstanceStateBadge renders a badge for an instance state.
+templ InstanceStateBadge(state provider.InstanceState) {
+	switch state {
+		case provider.StateRunning:
+			@badge.Badge(badge.Props{Variant: badge.VariantDefault}) {
+				Running
+			}
+		case provider.StateStopped:
+			@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+				Stopped
+			}
+		case provider.StateFailed:
+			@badge.Badge(badge.Props{Variant: badge.VariantDestructive}) {
+				Failed
+			}
+		case provider.StateProvisioning:
+			@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+				Provisioning
+			}
+		case provider.StateStarting:
+			@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+				Starting
+			}
+		case provider.StateStopping:
+			@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+				Stopping
+			}
+		case provider.StateDestroying:
+			@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+				Destroying
+			}
+		case provider.StateDestroyed:
+			@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+				Destroyed
+			}
+		default:
+			@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+				{ string(state) }
+			}
+	}
+}
+
+// DeployStateBadge renders a badge for a deployment state.
+templ DeployStateBadge(state deploy.DeployState) {
+	switch state {
+		case deploy.DeploySucceeded:
+			@badge.Badge(badge.Props{Variant: badge.VariantDefault}) {
+				Succeeded
+			}
+		case deploy.DeployFailed:
+			@badge.Badge(badge.Props{Variant: badge.VariantDestructive}) {
+				Failed
+			}
+		case deploy.DeployPending:
+			@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+				Pending
+			}
+		case deploy.DeployRunning:
+			@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+				Running
+			}
+		case deploy.DeployCancelled:
+			@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+				Cancelled
+			}
+		case deploy.DeployRolledBack:
+			@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+				Rolled Back
+			}
+		default:
+			@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+				{ string(state) }
+			}
+	}
+}
+
+// HealthStatusBadge renders a badge for a health status.
+templ HealthStatusBadge(status health.Status) {
+	switch status {
+		case health.StatusHealthy:
+			<span class="inline-flex items-center rounded-sm px-2 py-0.5 text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">
+				Healthy
+			</span>
+		case health.StatusDegraded:
+			<span class="inline-flex items-center rounded-sm px-2 py-0.5 text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400">
+				Degraded
+			</span>
+		case health.StatusUnhealthy:
+			@badge.Badge(badge.Props{Variant: badge.VariantDestructive}) {
+				Unhealthy
+			}
+		default:
+			@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+				Unknown
+			}
+	}
+}
+
+// TenantStatusBadge renders a badge for a tenant status.
+templ TenantStatusBadge(status admin.TenantStatus) {
+	switch status {
+		case admin.TenantActive:
+			@badge.Badge(badge.Props{Variant: badge.VariantDefault}) {
+				Active
+			}
+		case admin.TenantSuspended:
+			@badge.Badge(badge.Props{Variant: badge.VariantDestructive}) {
+				Suspended
+			}
+		case admin.TenantDeleted:
+			@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+				Deleted
+			}
+		default:
+			@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+				{ string(status) }
+			}
+	}
+}
+
+// WorkerStatusBadge renders a badge for a worker running status.
+templ WorkerStatusBadge(running bool) {
+	if running {
+		<span class="inline-flex items-center rounded-sm px-2 py-0.5 text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">
+			Running
+		</span>
+	} else {
+		@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+			Idle
+		}
+	}
+}
+
+// BoolBadge renders a badge for a boolean value.
+templ BoolBadge(value bool, trueLabel string, falseLabel string) {
+	if value {
+		@badge.Badge(badge.Props{Variant: badge.VariantDefault}) {
+			{ trueLabel }
+		}
+	} else {
+		@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+			{ falseLabel }
+		}
+	}
+}

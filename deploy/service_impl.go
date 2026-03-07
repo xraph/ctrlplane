@@ -11,6 +11,7 @@ import (
 	"github.com/xraph/ctrlplane/id"
 	"github.com/xraph/ctrlplane/instance"
 	"github.com/xraph/ctrlplane/provider"
+	"github.com/xraph/ctrlplane/secrets"
 )
 
 // service is the concrete implementation of Service.
@@ -20,6 +21,7 @@ type service struct {
 	providers  *provider.Registry
 	events     event.Bus
 	auth       auth.Provider
+	vault      secrets.Vault
 	strategies map[string]Strategy
 }
 
@@ -30,6 +32,7 @@ func NewService(
 	providers *provider.Registry,
 	events event.Bus,
 	authProvider auth.Provider,
+	vault secrets.Vault,
 ) *service {
 	return &service{
 		store:      store,
@@ -37,6 +40,7 @@ func NewService(
 		providers:  providers,
 		events:     events,
 		auth:       authProvider,
+		vault:      vault,
 		strategies: make(map[string]Strategy),
 	}
 }
@@ -114,6 +118,17 @@ func (s *service) Deploy(ctx context.Context, req DeployRequest) (*Deployment, e
 			"release_id":    rel.ID.String(),
 			"image":         req.Image,
 		}))
+
+	// Store config files from template in vault (if deploying from template with config files).
+	if s.vault != nil && len(req.ConfigFiles) > 0 {
+		for _, cf := range req.ConfigFiles {
+			vaultKey := fmt.Sprintf("%s/%s/%s", claims.TenantID, req.InstanceID, cf.Name)
+
+			if err := s.vault.Store(ctx, vaultKey, []byte(cf.Content)); err != nil {
+				return nil, fmt.Errorf("deploy: store config file %q in vault: %w", cf.Name, err)
+			}
+		}
+	}
 
 	// Look up the strategy implementation.
 	st, ok := s.strategies[strategy]
@@ -378,6 +393,170 @@ func (s *service) ListReleases(ctx context.Context, instanceID id.ID, opts ListO
 	result, err := s.store.ListReleases(ctx, claims.TenantID, instanceID, opts)
 	if err != nil {
 		return nil, fmt.Errorf("list releases for instance %s: %w", instanceID, err)
+	}
+
+	return result, nil
+}
+
+// --- Template CRUD ---
+
+// CreateTemplate creates a new reusable deployment template.
+func (s *service) CreateTemplate(ctx context.Context, req CreateTemplateRequest) (*Template, error) {
+	claims, err := auth.RequireClaims(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("create template: authenticate: %w", err)
+	}
+
+	strategy := req.Strategy
+	if strategy == "" {
+		strategy = "rolling"
+	}
+
+	tmpl := &Template{
+		Entity:      ctrlplane.NewEntity(id.PrefixTemplate),
+		TenantID:    claims.TenantID,
+		Name:        req.Name,
+		Description: req.Description,
+		Image:       req.Image,
+		Strategy:    strategy,
+		Resources:   req.Resources,
+		Ports:       req.Ports,
+		Volumes:     req.Volumes,
+		HealthCheck: req.HealthCheck,
+		Env:         req.Env,
+		Secrets:     req.Secrets,
+		ConfigFiles: req.ConfigFiles,
+		Labels:      req.Labels,
+		Annotations: req.Annotations,
+		CommitSHA:   req.CommitSHA,
+		Notes:       req.Notes,
+	}
+
+	if err := s.store.InsertTemplate(ctx, tmpl); err != nil {
+		return nil, fmt.Errorf("create template: insert: %w", err)
+	}
+
+	return tmpl, nil
+}
+
+// GetTemplate returns a specific deployment template.
+func (s *service) GetTemplate(ctx context.Context, templateID id.ID) (*Template, error) {
+	claims, err := auth.RequireClaims(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("get template: authenticate: %w", err)
+	}
+
+	tmpl, err := s.store.GetTemplate(ctx, claims.TenantID, templateID)
+	if err != nil {
+		return nil, fmt.Errorf("get template %s: %w", templateID, err)
+	}
+
+	return tmpl, nil
+}
+
+// UpdateTemplate updates an existing deployment template.
+func (s *service) UpdateTemplate(ctx context.Context, templateID id.ID, req UpdateTemplateRequest) (*Template, error) {
+	claims, err := auth.RequireClaims(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("update template: authenticate: %w", err)
+	}
+
+	tmpl, err := s.store.GetTemplate(ctx, claims.TenantID, templateID)
+	if err != nil {
+		return nil, fmt.Errorf("update template: get %s: %w", templateID, err)
+	}
+
+	if req.Name != nil {
+		tmpl.Name = *req.Name
+	}
+
+	if req.Description != nil {
+		tmpl.Description = *req.Description
+	}
+
+	if req.Image != nil {
+		tmpl.Image = *req.Image
+	}
+
+	if req.Strategy != nil {
+		tmpl.Strategy = *req.Strategy
+	}
+
+	if req.Resources != nil {
+		tmpl.Resources = *req.Resources
+	}
+
+	if req.Ports != nil {
+		tmpl.Ports = req.Ports
+	}
+
+	if req.Volumes != nil {
+		tmpl.Volumes = req.Volumes
+	}
+
+	if req.HealthCheck != nil {
+		tmpl.HealthCheck = req.HealthCheck
+	}
+
+	if req.Env != nil {
+		tmpl.Env = req.Env
+	}
+
+	if req.Secrets != nil {
+		tmpl.Secrets = req.Secrets
+	}
+
+	if req.ConfigFiles != nil {
+		tmpl.ConfigFiles = req.ConfigFiles
+	}
+
+	if req.Labels != nil {
+		tmpl.Labels = req.Labels
+	}
+
+	if req.Annotations != nil {
+		tmpl.Annotations = req.Annotations
+	}
+
+	if req.CommitSHA != nil {
+		tmpl.CommitSHA = *req.CommitSHA
+	}
+
+	if req.Notes != nil {
+		tmpl.Notes = *req.Notes
+	}
+
+	if err := s.store.UpdateTemplate(ctx, tmpl); err != nil {
+		return nil, fmt.Errorf("update template %s: %w", templateID, err)
+	}
+
+	return tmpl, nil
+}
+
+// DeleteTemplate removes a deployment template.
+func (s *service) DeleteTemplate(ctx context.Context, templateID id.ID) error {
+	claims, err := auth.RequireClaims(ctx)
+	if err != nil {
+		return fmt.Errorf("delete template: authenticate: %w", err)
+	}
+
+	if err := s.store.DeleteTemplate(ctx, claims.TenantID, templateID); err != nil {
+		return fmt.Errorf("delete template %s: %w", templateID, err)
+	}
+
+	return nil
+}
+
+// ListTemplates lists deployment templates for the current tenant.
+func (s *service) ListTemplates(ctx context.Context, opts ListOptions) (*TemplateListResult, error) {
+	claims, err := auth.RequireClaims(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list templates: authenticate: %w", err)
+	}
+
+	result, err := s.store.ListTemplates(ctx, claims.TenantID, opts)
+	if err != nil {
+		return nil, fmt.Errorf("list templates: %w", err)
 	}
 
 	return result, nil

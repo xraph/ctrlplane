@@ -1,0 +1,66 @@
+package pages
+
+import (
+	"strconv"
+
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/components/table"
+
+	"github.com/xraph/ctrlplane/dashboard/components"
+	"github.com/xraph/ctrlplane/health"
+)
+
+// HealthPage renders the aggregate health overview for all instances.
+templ HealthPage(rows []InstanceHealthRow) {
+	<div class="space-y-6">
+		<div class="flex items-center gap-3">
+			<h1 class="text-3xl font-bold">Health Overview</h1>
+		</div>
+
+		<!-- Summary Cards -->
+		<div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+			@components.StatCard("heart-pulse", "Healthy", strconv.Itoa(countByStatus(rows, health.StatusHealthy)), "instances")
+			@components.StatCard("alert-triangle", "Degraded", strconv.Itoa(countByStatus(rows, health.StatusDegraded)), "instances")
+			@components.StatCard("x-circle", "Unhealthy", strconv.Itoa(countByStatus(rows, health.StatusUnhealthy)), "instances")
+			@components.StatCard("help-circle", "Unknown", strconv.Itoa(countByStatus(rows, health.StatusUnknown)), "instances")
+		</div>
+
+		<!-- Health Table -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Content() {
+				if len(rows) == 0 {
+					@components.EmptyState("heart-pulse", "No instances", "No instances to display health data for.")
+				} else {
+					@table.Table() {
+						@table.Header() {
+							@table.Row() {
+								@table.Head() { Instance }
+								@table.Head() { Status }
+								@table.Head() { Uptime }
+								@table.Head() { Checks }
+								@table.Head() { Last Checked }
+							}
+						}
+						@table.Body() {
+							for _, row := range rows {
+								@components.HealthSummaryRow(row.Instance.Name, row.Instance.ID.String(), row.Health)
+							}
+						}
+					}
+				}
+			}
+		}
+	</div>
+}
+
+func countByStatus(rows []InstanceHealthRow, status health.Status) int {
+	count := 0
+
+	for _, r := range rows {
+		if r.Health != nil && r.Health.Status == status {
+			count++
+		}
+	}
+
+	return count
+}
