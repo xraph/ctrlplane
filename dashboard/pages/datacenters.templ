@@ -1,0 +1,73 @@
+package pages
+
+import (
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/card"
+
+	"github.com/xraph/ctrlplane/dashboard/components"
+	"github.com/xraph/ctrlplane/datacenter"
+)
+
+// DatacentersPageData holds data for the datacenters list page.
+type DatacentersPageData struct {
+	Datacenters    []*datacenter.Datacenter
+	InstanceCounts map[string]int
+	Total          int
+	StatusFilter   string
+}
+
+// DatacentersPage renders the datacenter list page.
+templ DatacentersPage(data DatacentersPageData) {
+	<div class="space-y-6">
+		<div class="flex items-center justify-between">
+			<h1 class="text-3xl font-bold">Datacenters</h1>
+			@button.Button(button.Props{
+				Size: button.SizeSm,
+				Attributes: templ.Attributes{
+					"hx-get":      "./datacenters/create",
+					"hx-target":   "#content",
+					"hx-push-url": "true",
+					"hx-swap":     "innerHTML",
+				},
+			}) {
+				New Datacenter
+			}
+		</div>
+
+		<div class="flex items-center gap-2">
+			@statusFilterButton("All", "", data.StatusFilter)
+			@statusFilterButton("Active", "active", data.StatusFilter)
+			@statusFilterButton("Maintenance", "maintenance", data.StatusFilter)
+			@statusFilterButton("Draining", "draining", data.StatusFilter)
+			@statusFilterButton("Offline", "offline", data.StatusFilter)
+		</div>
+
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Content() {
+				@components.DatacenterTable(data.Datacenters, data.InstanceCounts)
+			}
+		}
+	</div>
+}
+
+templ statusFilterButton(label string, value string, current string) {
+	if value == current {
+		<a class="text-sm px-3 py-1.5 rounded-sm bg-primary text-primary-foreground cursor-pointer"
+			hx-get={ "./datacenters?status=" + value }
+			hx-target="#content"
+			hx-push-url="true"
+			hx-swap="innerHTML"
+		>
+			{ label }
+		</a>
+	} else {
+		<a class="text-sm px-3 py-1.5 rounded-sm border hover:bg-muted transition-colors cursor-pointer"
+			hx-get={ "./datacenters?status=" + value }
+			hx-target="#content"
+			hx-push-url="true"
+			hx-swap="innerHTML"
+		>
+			{ label }
+		</a>
+	}
+}

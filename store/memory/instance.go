@@ -79,6 +79,10 @@ func (s *Store) List(_ context.Context, tenantID string, opts instance.ListOptio
 			continue
 		}
 
+		if opts.Datacenter != "" && idStr(inst.DatacenterID) != opts.Datacenter {
+			continue
+		}
+
 		clone := *inst
 		items = append(items, &clone)
 	}

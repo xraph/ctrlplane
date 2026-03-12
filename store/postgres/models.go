@@ -8,6 +8,7 @@ import (
 
 	ctrlplane "github.com/xraph/ctrlplane"
 	"github.com/xraph/ctrlplane/admin"
+	"github.com/xraph/ctrlplane/datacenter"
 	"github.com/xraph/ctrlplane/deploy"
 	"github.com/xraph/ctrlplane/health"
 	"github.com/xraph/ctrlplane/id"
@@ -580,5 +581,114 @@ func fromTemplateModel(m *templateModel) *deploy.Template {
 		Env:         env,
 		CommitSHA:   m.CommitSHA,
 		Notes:       m.Notes,
+	}
+}
+
+// datacenterModel is the database model for datacenter.Datacenter.
+type datacenterModel struct {
+	grove.BaseModel `grove:"table:cp_datacenters"`
+
+	ID            string     `grove:"id,pk"`
+	TenantID      string     `grove:"tenant_id,notnull"`
+	Name          string     `grove:"name,notnull"`
+	Slug          string     `grove:"slug,notnull"`
+	ProviderName  string     `grove:"provider_name,notnull"`
+	Region        string     `grove:"region,notnull"`
+	Zone          string     `grove:"zone"`
+	Status        string     `grove:"status,notnull"`
+	Latitude      float64    `grove:"latitude"`
+	Longitude     float64    `grove:"longitude"`
+	Country       string     `grove:"country"`
+	City          string     `grove:"city"`
+	MaxInstances  int        `grove:"max_instances"`
+	MaxCPUMillis  int        `grove:"max_cpu_millis"`
+	MaxMemoryMB   int        `grove:"max_memory_mb"`
+	Labels        []byte     `grove:"labels,type:jsonb"`
+	Metadata      []byte     `grove:"metadata,type:jsonb"`
+	LastCheckedAt *time.Time `grove:"last_checked_at"`
+	CreatedAt     time.Time  `grove:"created_at,notnull"`
+	UpdatedAt     time.Time  `grove:"updated_at,notnull"`
+}
+
+func toDatacenterModel(dc *datacenter.Datacenter) *datacenterModel {
+	var labelsBytes, metadataBytes []byte
+
+	if len(dc.Labels) > 0 {
+		data, err := json.Marshal(dc.Labels)
+		if err == nil {
+			labelsBytes = data
+		}
+	}
+
+	if len(dc.Metadata) > 0 {
+		data, err := json.Marshal(dc.Metadata)
+		if err == nil {
+			metadataBytes = data
+		}
+	}
+
+	return &datacenterModel{
+		ID:            dc.ID.String(),
+		TenantID:      dc.TenantID,
+		Name:          dc.Name,
+		Slug:          dc.Slug,
+		ProviderName:  dc.ProviderName,
+		Region:        dc.Region,
+		Zone:          dc.Zone,
+		Status:        string(dc.Status),
+		Latitude:      dc.Location.Latitude,
+		Longitude:     dc.Location.Longitude,
+		Country:       dc.Location.Country,
+		City:          dc.Location.City,
+		MaxInstances:  dc.Capacity.MaxInstances,
+		MaxCPUMillis:  dc.Capacity.MaxCPUMillis,
+		MaxMemoryMB:   dc.Capacity.MaxMemoryMB,
+		Labels:        labelsBytes,
+		Metadata:      metadataBytes,
+		LastCheckedAt: dc.LastCheckedAt,
+		CreatedAt:     dc.CreatedAt,
+		UpdatedAt:     dc.UpdatedAt,
+	}
+}
+
+func fromDatacenterModel(m *datacenterModel) *datacenter.Datacenter {
+	labels := make(map[string]string)
+	metadata := make(map[string]string)
+
+	if len(m.Labels) > 0 {
+		_ = json.Unmarshal(m.Labels, &labels)
+	}
+
+	if len(m.Metadata) > 0 {
+		_ = json.Unmarshal(m.Metadata, &metadata)
+	}
+
+	return &datacenter.Datacenter{
+		Entity: ctrlplane.Entity{
+			ID:        id.MustParse(m.ID),
+			CreatedAt: m.CreatedAt,
+			UpdatedAt: m.UpdatedAt,
+		},
+		TenantID:     m.TenantID,
+		Name:         m.Name,
+		Slug:         m.Slug,
+		ProviderName: m.ProviderName,
+		Region:       m.Region,
+		Zone:         m.Zone,
+		Status:       datacenter.Status(m.Status),
+		Location: datacenter.Location{
+			Latitude:  m.Latitude,
+			Longitude: m.Longitude,
+			Country:   m.Country,
+			City:      m.City,
+		},
+		Capacity: datacenter.Capacity{
+			MaxInstances: m.MaxInstances,
+			MaxCPUMillis: m.MaxCPUMillis,
+			MaxMemoryMB:  m.MaxMemoryMB,
+		},
+		Labels:        labels,
+		Metadata:      metadata,
+		LastCheckedAt: m.LastCheckedAt,
 	}
 }

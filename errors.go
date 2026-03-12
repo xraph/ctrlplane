@@ -40,4 +40,7 @@ var (
 
 	// ErrInvalidConfig indicates the provided configuration is invalid.
 	ErrInvalidConfig = errors.New("ctrlplane: invalid configuration")
+
+	// ErrDatacenterUnavailable indicates the datacenter is not accepting new instances.
+	ErrDatacenterUnavailable = errors.New("ctrlplane: datacenter unavailable")
 )

@@ -9,6 +9,7 @@ import (
 	ctrlplane "github.com/xraph/ctrlplane"
 	"github.com/xraph/ctrlplane/admin"
 	"github.com/xraph/ctrlplane/auth"
+	"github.com/xraph/ctrlplane/datacenter"
 	"github.com/xraph/ctrlplane/deploy"
 	"github.com/xraph/ctrlplane/deploy/strategies"
 	"github.com/xraph/ctrlplane/event"
@@ -37,13 +38,14 @@ type CtrlPlane struct {
 	pendingExts []plugin.Extension
 
 	// Services are the public subsystem interfaces.
-	Instances instance.Service
-	Deploys   deploy.Service
-	Health    health.Service
-	Telemetry telemetry.Service
-	Network   network.Service
-	Secrets   secrets.Service
-	Admin     admin.Service
+	Datacenters datacenter.Service
+	Instances   instance.Service
+	Deploys     deploy.Service
+	Health      health.Service
+	Telemetry   telemetry.Service
+	Network     network.Service
+	Secrets     secrets.Service
+	Admin       admin.Service
 }
 
 // New creates a CtrlPlane with the given options.
@@ -98,6 +100,24 @@ func (cp *CtrlPlane) Vault() secrets.Vault {
 	return cp.vault
 }
 
+// vaultSetter is satisfied by services that support late-binding a vault.
+type vaultSetter interface {
+	SetVault(v secrets.Vault)
+}
+
+// SetVault replaces the vault and propagates it to dependent services.
+func (cp *CtrlPlane) SetVault(v secrets.Vault) {
+	cp.vault = v
+
+	if vs, ok := cp.Deploys.(vaultSetter); ok {
+		vs.SetVault(v)
+	}
+
+	if vs, ok := cp.Secrets.(vaultSetter); ok {
+		vs.SetVault(v)
+	}
+}
+
 // Scheduler returns the background worker scheduler.
 func (cp *CtrlPlane) Scheduler() *worker.Scheduler {
 	return cp.scheduler
@@ -145,8 +165,11 @@ func (cp *CtrlPlane) wireServices() {
 		cp.vault = memoryvault.New()
 	}
 
+	// Datacenter service (wired before instances so it can serve as resolver).
+	cp.Datacenters = datacenter.NewService(cp.store, cp.providers, cp.events, cp.auth)
+
 	// Instance service.
-	cp.Instances = instance.NewService(cp.store, cp.providers, cp.events, cp.auth)
+	cp.Instances = instance.NewService(cp.store, cp.providers, cp.events, cp.auth, cp.Datacenters)
 
 	// Deploy service with strategies.
 	deploySvc := deploy.NewService(cp.store, cp.store, cp.providers, cp.events, cp.auth, cp.vault)

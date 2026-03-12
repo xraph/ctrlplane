@@ -54,6 +54,21 @@ const (
 	QuotaExceeded   Type = "quota.exceeded"
 )
 
+// Datacenter events.
+const (
+	DatacenterCreated       Type = "datacenter.created"
+	DatacenterUpdated       Type = "datacenter.updated"
+	DatacenterDeleted       Type = "datacenter.deleted"
+	DatacenterStatusChanged Type = "datacenter.status_changed"
+)
+
+// Route events for gateway hooks.
+const (
+	RouteAdded   Type = "route.added"
+	RouteUpdated Type = "route.updated"
+	RouteRemoved Type = "route.removed"
+)
+
 // Event is the envelope for all ctrlplane events.
 type Event struct {
 	ID         id.ID          `json:"id"`
@@ -92,6 +107,17 @@ func (e *Event) WithActor(actorID string) *Event {
 // WithPayload sets the payload on the event.
 func (e *Event) WithPayload(payload map[string]any) *Event {
 	e.Payload = payload
+
+	return e
+}
+
+// WithDatacenter sets the datacenter ID on the event payload.
+func (e *Event) WithDatacenter(datacenterID id.ID) *Event {
+	if e.Payload == nil {
+		e.Payload = make(map[string]any)
+	}
+
+	e.Payload["datacenter_id"] = datacenterID.String()
 
 	return e
 }

@@ -15,19 +15,22 @@ import (
 
 // service implements the Service interface.
 type service struct {
-	store     Store
-	providers *provider.Registry
-	events    event.Bus
-	auth      auth.Provider
+	store       Store
+	providers   *provider.Registry
+	datacenters DatacenterResolver
+	events      event.Bus
+	auth        auth.Provider
 }
 
 // NewService creates a new instance service.
-func NewService(store Store, providers *provider.Registry, events event.Bus, auth auth.Provider) Service {
+// The dcResolver parameter is optional and may be nil when datacenters are not in use.
+func NewService(store Store, providers *provider.Registry, events event.Bus, auth auth.Provider, dcResolver DatacenterResolver) Service {
 	return &service{
-		store:     store,
-		providers: providers,
-		events:    events,
-		auth:      auth,
+		store:       store,
+		providers:   providers,
+		datacenters: dcResolver,
+		events:      events,
+		auth:        auth,
 	}
 }
 
@@ -38,11 +41,22 @@ func (s *service) Create(ctx context.Context, req CreateRequest) (*Instance, err
 		return nil, fmt.Errorf("create instance: %w", err)
 	}
 
-	// Resolve the provider: use the requested name or fall back to default.
+	// Resolve the provider: datacenter → explicit name → default.
 	var p provider.Provider
 
-	if req.ProviderName != "" {
-		p, err = s.providers.Get(req.ProviderName)
+	providerName := req.ProviderName
+
+	if !req.DatacenterID.IsNil() && s.datacenters != nil {
+		dcProvider, dcErr := s.datacenters.ResolveProvider(ctx, req.DatacenterID)
+		if dcErr != nil {
+			return nil, fmt.Errorf("create instance: resolve datacenter provider: %w", dcErr)
+		}
+
+		providerName = dcProvider
+	}
+
+	if providerName != "" {
+		p, err = s.providers.Get(providerName)
 	} else {
 		p, err = s.providers.Default()
 	}
@@ -57,6 +71,7 @@ func (s *service) Create(ctx context.Context, req CreateRequest) (*Instance, err
 		TenantID:     claims.TenantID,
 		Name:         req.Name,
 		Slug:         slugify(req.Name),
+		DatacenterID: req.DatacenterID,
 		ProviderName: info.Name,
 		Region:       req.Region,
 		State:        provider.StateProvisioning,

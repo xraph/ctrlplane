@@ -159,7 +159,18 @@ func (e *Extension) Init(fapp forge.App) error {
 }
 
 // Start begins background workers.
+// It also retries vault resolution from the DI container, since all extensions
+// have registered their services by the time Start is called.
 func (e *Extension) Start(ctx context.Context) error {
+	// Late-resolve vault from DI if not explicitly provided.
+	// During Register, the vault extension may not have registered yet.
+	if !e.vaultProvided && !e.useVault {
+		if v, err := vessel.Inject[secrets.Vault](e.App().Container()); err == nil {
+			e.Logger().Info("ctrlplane: resolved vault from container")
+			e.cp.SetVault(v)
+		}
+	}
+
 	return e.cp.Start(ctx)
 }
 
@@ -300,14 +311,17 @@ func (e *Extension) resolveVault(fapp forge.App) (secrets.Vault, error) {
 	}
 
 	// Auto-discover default secrets.Vault from DI container.
+	// This may fail during Register if the vault extension has not registered yet.
+	// Start() retries resolution after all extensions have registered.
 	if v, err := vessel.Inject[secrets.Vault](fapp.Container()); err == nil {
 		e.Logger().Info("ctrlplane: auto-discovered vault from container")
 
 		return v, nil
 	}
 
-	// No vault available — fall back to an in-memory vault.
-	e.Logger().Warn("ctrlplane: no vault found, using in-memory vault")
+	// No vault available yet — fall back to an in-memory vault.
+	// Start() will retry DI resolution when the container is fully populated.
+	e.Logger().Debug("ctrlplane: no vault found during register, using in-memory vault (will retry in start)")
 
 	return memoryvault.New(), nil
 }

@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"github.com/xraph/forgeui/components/button"
 	"github.com/xraph/forgeui/components/card"
 	"github.com/xraph/forgeui/components/table"
 	"github.com/xraph/forgeui/components/tabs"
@@ -123,7 +124,41 @@ templ NetworkPage(inst *instance.Instance, domains []network.Domain, routes []ne
 			}
 
 			@tabs.Content(tabs.ContentProps{Value: "domains", IsActive: activeTab == "domains"}) {
-				<div class="mt-4">
+				<div class="mt-4 space-y-4">
+					@card.Card(card.Props{Class: "rounded-sm"}) {
+						@card.Header() {
+							@card.Title() {
+								Add Domain
+							}
+							@card.Description() {
+								Register a custom domain for this instance.
+							}
+						}
+						@card.Content() {
+							<form class="flex items-end gap-3"
+								hx-get={ "./network?instance_id=" + inst.ID.String() + "&tab=domains&action=add_domain" }
+								hx-target="#content"
+								hx-swap="innerHTML"
+							>
+								<div class="flex-1 space-y-1">
+									<label class="text-sm font-medium">Hostname</label>
+									<input type="text" name="hostname" placeholder="app.example.com" required
+										class="flex h-9 w-full rounded-sm border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"/>
+								</div>
+								<div class="flex items-center gap-2">
+									<input type="checkbox" name="tls_enabled" value="true" id="tls_enabled"
+										class="h-4 w-4 rounded border-gray-300"/>
+									<label for="tls_enabled" class="text-sm font-medium">TLS</label>
+								</div>
+								@button.Button(button.Props{
+									Size: button.SizeSm,
+									Attributes: templ.Attributes{"type": "submit"},
+								}) {
+									Add Domain
+								}
+							</form>
+						}
+					}
 					@card.Card(card.Props{Class: "rounded-sm"}) {
 						@card.Content() {
 							@components.DomainTable(domains, inst.ID.String())
@@ -133,7 +168,51 @@ templ NetworkPage(inst *instance.Instance, domains []network.Domain, routes []ne
 			}
 
 			@tabs.Content(tabs.ContentProps{Value: "routes", IsActive: activeTab == "routes"}) {
-				<div class="mt-4">
+				<div class="mt-4 space-y-4">
+					@card.Card(card.Props{Class: "rounded-sm"}) {
+						@card.Header() {
+							@card.Title() {
+								Add Route
+							}
+							@card.Description() {
+								Create a traffic route to this instance.
+							}
+						}
+						@card.Content() {
+							<form class="flex items-end gap-3"
+								hx-get={ "./network?instance_id=" + inst.ID.String() + "&tab=routes&action=add_route" }
+								hx-target="#content"
+								hx-swap="innerHTML"
+							>
+								<div class="flex-1 space-y-1">
+									<label class="text-sm font-medium">Path</label>
+									<input type="text" name="path" placeholder="/" required
+										class="flex h-9 w-full rounded-sm border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"/>
+								</div>
+								<div class="w-24 space-y-1">
+									<label class="text-sm font-medium">Port</label>
+									<input type="number" name="port" placeholder="8080" required min="1" max="65535"
+										class="flex h-9 w-full rounded-sm border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"/>
+								</div>
+								<div class="w-28 space-y-1">
+									<label class="text-sm font-medium">Protocol</label>
+									<select name="protocol"
+										class="flex h-9 w-full rounded-sm border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
+										<option value="http">HTTP</option>
+										<option value="https">HTTPS</option>
+										<option value="tcp">TCP</option>
+										<option value="grpc">gRPC</option>
+									</select>
+								</div>
+								@button.Button(button.Props{
+									Size: button.SizeSm,
+									Attributes: templ.Attributes{"type": "submit"},
+								}) {
+									Add Route
+								}
+							</form>
+						}
+					}
 					@card.Card(card.Props{Class: "rounded-sm"}) {
 						@card.Content() {
 							@components.RouteTable(routes, inst.ID.String())

@@ -6,6 +6,7 @@ import (
 	"github.com/xraph/grove"
 
 	"github.com/xraph/ctrlplane/admin"
+	"github.com/xraph/ctrlplane/datacenter"
 	"github.com/xraph/ctrlplane/deploy"
 	"github.com/xraph/ctrlplane/health"
 	"github.com/xraph/ctrlplane/id"
@@ -736,5 +737,88 @@ func fromTemplateModel(m *templateModel) *deploy.Template {
 		Env:         m.Env,
 		CommitSHA:   m.CommitSHA,
 		Notes:       m.Notes,
+	}
+}
+
+// ── Datacenter ──────────────────────────────────────────────────────────────
+
+type datacenterModel struct {
+	grove.BaseModel `grove:"table:cp_datacenters"`
+
+	ID            string            `bson:"_id"                       grove:"id,pk"`
+	TenantID      string            `bson:"tenant_id"                 grove:"tenant_id"`
+	Name          string            `bson:"name"                      grove:"name"`
+	Slug          string            `bson:"slug"                      grove:"slug"`
+	ProviderName  string            `bson:"provider_name"             grove:"provider_name"`
+	Region        string            `bson:"region"                    grove:"region"`
+	Zone          string            `bson:"zone,omitempty"            grove:"zone"`
+	Status        string            `bson:"status"                    grove:"status"`
+	Latitude      float64           `bson:"latitude,omitempty"        grove:"latitude"`
+	Longitude     float64           `bson:"longitude,omitempty"       grove:"longitude"`
+	Country       string            `bson:"country,omitempty"         grove:"country"`
+	City          string            `bson:"city,omitempty"            grove:"city"`
+	MaxInstances  int               `bson:"max_instances,omitempty"   grove:"max_instances"`
+	MaxCPUMillis  int               `bson:"max_cpu_millis,omitempty"  grove:"max_cpu_millis"`
+	MaxMemoryMB   int               `bson:"max_memory_mb,omitempty"   grove:"max_memory_mb"`
+	Labels        map[string]string `bson:"labels,omitempty"`
+	Metadata      map[string]string `bson:"metadata,omitempty"`
+	LastCheckedAt *time.Time        `bson:"last_checked_at,omitempty" grove:"last_checked_at"`
+	CreatedAt     time.Time         `bson:"created_at"                grove:"created_at"`
+	UpdatedAt     time.Time         `bson:"updated_at"                grove:"updated_at"`
+}
+
+func toDatacenterModel(dc *datacenter.Datacenter) *datacenterModel {
+	return &datacenterModel{
+		ID:            idStr(dc.ID),
+		TenantID:      dc.TenantID,
+		Name:          dc.Name,
+		Slug:          dc.Slug,
+		ProviderName:  dc.ProviderName,
+		Region:        dc.Region,
+		Zone:          dc.Zone,
+		Status:        string(dc.Status),
+		Latitude:      dc.Location.Latitude,
+		Longitude:     dc.Location.Longitude,
+		Country:       dc.Location.Country,
+		City:          dc.Location.City,
+		MaxInstances:  dc.Capacity.MaxInstances,
+		MaxCPUMillis:  dc.Capacity.MaxCPUMillis,
+		MaxMemoryMB:   dc.Capacity.MaxMemoryMB,
+		Labels:        dc.Labels,
+		Metadata:      dc.Metadata,
+		LastCheckedAt: dc.LastCheckedAt,
+		CreatedAt:     dc.CreatedAt,
+		UpdatedAt:     dc.UpdatedAt,
+	}
+}
+
+func fromDatacenterModel(m *datacenterModel) *datacenter.Datacenter {
+	return &datacenter.Datacenter{
+		Entity: ctrlplane.Entity{
+			ID:        id.MustParse(m.ID),
+			CreatedAt: m.CreatedAt,
+			UpdatedAt: m.UpdatedAt,
+		},
+		TenantID:     m.TenantID,
+		Name:         m.Name,
+		Slug:         m.Slug,
+		ProviderName: m.ProviderName,
+		Region:       m.Region,
+		Zone:         m.Zone,
+		Status:       datacenter.Status(m.Status),
+		Location: datacenter.Location{
+			Latitude:  m.Latitude,
+			Longitude: m.Longitude,
+			Country:   m.Country,
+			City:      m.City,
+		},
+		Capacity: datacenter.Capacity{
+			MaxInstances: m.MaxInstances,
+			MaxCPUMillis: m.MaxCPUMillis,
+			MaxMemoryMB:  m.MaxMemoryMB,
+		},
+		Labels:        m.Labels,
+		Metadata:      m.Metadata,
+		LastCheckedAt: m.LastCheckedAt,
 	}
 }

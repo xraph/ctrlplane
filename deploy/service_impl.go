@@ -45,6 +45,11 @@ func NewService(
 	}
 }
 
+// SetVault replaces the vault backend used for config file storage.
+func (s *service) SetVault(v secrets.Vault) {
+	s.vault = v
+}
+
 // RegisterStrategy adds a deployment strategy to the service.
 func (s *service) RegisterStrategy(st Strategy) {
 	s.strategies[st.Name()] = st

@@ -15,6 +15,7 @@ type Instance struct {
 	TenantID       string                 `db:"tenant_id"       json:"tenant_id"`
 	Name           string                 `db:"name"            json:"name"`
 	Slug           string                 `db:"slug"            json:"slug"`
+	DatacenterID   id.ID                  `db:"datacenter_id"   json:"datacenter_id,omitzero"`
 	ProviderName   string                 `db:"provider_name"   json:"provider_name"`
 	ProviderRef    string                 `db:"provider_ref"    json:"provider_ref"`
 	Region         string                 `db:"region"          json:"region"`

@@ -1,0 +1,148 @@
+package pages
+
+import (
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/card"
+
+	"github.com/xraph/ctrlplane/admin"
+)
+
+// DatacenterFormData holds data for the datacenter create form.
+type DatacenterFormData struct {
+	Providers   []admin.ProviderStatus
+	Error       string
+	Success     string
+	RedirectURL string
+}
+
+// DatacenterFormPage renders the create datacenter form.
+templ DatacenterFormPage(data DatacenterFormData) {
+	<div class="space-y-6">
+		<div class="flex items-center gap-3">
+			<a class="text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+				hx-get="./datacenters"
+				hx-target="#content"
+				hx-push-url="true"
+				hx-swap="innerHTML">&larr; Back to Datacenters</a>
+		</div>
+
+		<div class="flex items-center gap-3">
+			<h1 class="text-3xl font-bold">New Datacenter</h1>
+		</div>
+
+		if data.Error != "" {
+			<div class="rounded-sm border border-destructive/50 bg-destructive/10 p-4 text-sm text-destructive">
+				{ data.Error }
+			</div>
+		}
+
+		if data.Success != "" {
+			<div class="rounded-sm border border-green-500/50 bg-green-500/10 p-4 text-sm text-green-700 dark:text-green-400">
+				{ data.Success }
+			</div>
+			if data.RedirectURL != "" {
+				<meta http-equiv="refresh" content={ "1;url=" + data.RedirectURL }/>
+			}
+		}
+
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Header() {
+				@card.Title() {
+					Datacenter Configuration
+				}
+				@card.Description() {
+					Define a new deployment location backed by a registered provider.
+				}
+			}
+			@card.Content() {
+				<form
+					hx-post="./datacenters/create"
+					hx-target="#content"
+					hx-swap="innerHTML"
+					class="space-y-6"
+				>
+					<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+						<div class="space-y-1">
+							<label class="text-sm font-medium">Name</label>
+							<input type="text" name="name" placeholder="US East Production" required
+								class="flex h-9 w-full rounded-sm border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"/>
+						</div>
+						<div class="space-y-1">
+							<label class="text-sm font-medium">Provider</label>
+							<select name="provider_name" required
+								class="flex h-9 w-full rounded-sm border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
+								<option value="">Select a provider</option>
+								for _, p := range data.Providers {
+									<option value={ p.Name }>{ p.Name }</option>
+								}
+							</select>
+						</div>
+					</div>
+
+					<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+						<div class="space-y-1">
+							<label class="text-sm font-medium">Region</label>
+							<input type="text" name="region" placeholder="us-east-1" required
+								class="flex h-9 w-full rounded-sm border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"/>
+						</div>
+						<div class="space-y-1">
+							<label class="text-sm font-medium">Zone</label>
+							<input type="text" name="zone" placeholder="us-east-1a"
+								class="flex h-9 w-full rounded-sm border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"/>
+						</div>
+					</div>
+
+					<div class="border-t pt-4">
+						<h4 class="text-sm font-medium mb-3">Location (optional)</h4>
+						<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+							<div class="space-y-1">
+								<label class="text-sm font-medium">Country</label>
+								<input type="text" name="country" placeholder="US"
+									class="flex h-9 w-full rounded-sm border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"/>
+							</div>
+							<div class="space-y-1">
+								<label class="text-sm font-medium">City</label>
+								<input type="text" name="city" placeholder="Ashburn"
+									class="flex h-9 w-full rounded-sm border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"/>
+							</div>
+						</div>
+					</div>
+
+					<div class="border-t pt-4">
+						<h4 class="text-sm font-medium mb-3">Capacity Limits (optional)</h4>
+						<div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+							<div class="space-y-1">
+								<label class="text-sm font-medium">Max Instances</label>
+								<input type="number" name="max_instances" placeholder="0" min="0"
+									class="flex h-9 w-full rounded-sm border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"/>
+							</div>
+							<div class="space-y-1">
+								<label class="text-sm font-medium">Max CPU (millicores)</label>
+								<input type="number" name="max_cpu_millis" placeholder="0" min="0"
+									class="flex h-9 w-full rounded-sm border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"/>
+							</div>
+							<div class="space-y-1">
+								<label class="text-sm font-medium">Max Memory (MB)</label>
+								<input type="number" name="max_memory_mb" placeholder="0" min="0"
+									class="flex h-9 w-full rounded-sm border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"/>
+							</div>
+						</div>
+					</div>
+
+					<div class="flex justify-end gap-2 pt-4">
+						<a class="inline-flex items-center justify-center rounded-sm text-sm font-medium h-9 px-4 py-2 border hover:bg-muted transition-colors cursor-pointer"
+							hx-get="./datacenters"
+							hx-target="#content"
+							hx-push-url="true"
+							hx-swap="innerHTML">Cancel</a>
+						@button.Button(button.Props{
+							Attributes: templ.Attributes{"type": "submit"},
+						}) {
+							Create Datacenter
+						}
+					</div>
+				</form>
+			}
+		}
+	</div>
+}

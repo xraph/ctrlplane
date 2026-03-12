@@ -43,9 +43,17 @@ type Service interface {
 	Unsuspend(ctx context.Context, instanceID id.ID) error
 }
 
+// DatacenterResolver resolves a datacenter's provider name without introducing
+// a circular import between the instance and datacenter packages.
+type DatacenterResolver interface {
+	// ResolveProvider returns the provider name for a given datacenter.
+	ResolveProvider(ctx context.Context, datacenterID id.ID) (string, error)
+}
+
 // CreateRequest holds the parameters for creating a new instance.
 type CreateRequest struct {
 	Name         string                `json:"name"                    validate:"required"`
+	DatacenterID id.ID                 `json:"datacenter_id,omitzero"`
 	ProviderName string                `json:"provider_name,omitempty"`
 	Region       string                `json:"region,omitempty"`
 	Image        string                `json:"image"                   validate:"required"`
@@ -71,11 +79,12 @@ type ScaleRequest struct {
 
 // ListOptions configures instance listing with optional filters and pagination.
 type ListOptions struct {
-	State    string `json:"state,omitempty"`
-	Label    string `json:"label,omitempty"`
-	Provider string `json:"provider,omitempty"`
-	Cursor   string `json:"cursor,omitempty"`
-	Limit    int    `json:"limit,omitempty"`
+	State      string `json:"state,omitempty"`
+	Label      string `json:"label,omitempty"`
+	Provider   string `json:"provider,omitempty"`
+	Datacenter string `json:"datacenter,omitempty"`
+	Cursor     string `json:"cursor,omitempty"`
+	Limit      int    `json:"limit,omitempty"`
 }
 
 // ListResult holds a page of instances with cursor-based pagination.

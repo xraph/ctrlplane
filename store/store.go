@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/xraph/ctrlplane/admin"
+	"github.com/xraph/ctrlplane/datacenter"
 	"github.com/xraph/ctrlplane/deploy"
 	"github.com/xraph/ctrlplane/health"
 	"github.com/xraph/ctrlplane/instance"
@@ -22,6 +23,7 @@ type Store interface {
 	network.Store
 	secrets.Store
 	admin.Store
+	datacenter.Store
 
 	// Migrate runs all schema migrations.
 	Migrate(ctx context.Context) error

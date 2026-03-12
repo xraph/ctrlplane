@@ -186,6 +186,17 @@ func (s *service) AddRoute(ctx context.Context, req AddRouteRequest) (*Route, er
 		}
 	}
 
+	// Fire-and-forget event for gateway hooks.
+	_ = s.events.Publish(ctx, event.NewEvent(event.RouteAdded, claims.TenantID).
+		WithInstance(req.InstanceID).
+		WithActor(claims.SubjectID).
+		WithPayload(map[string]any{
+			"route_id": route.ID.String(),
+			"path":     route.Path,
+			"port":     route.Port,
+			"protocol": route.Protocol,
+		}))
+
 	return route, nil
 }
 
@@ -225,6 +236,15 @@ func (s *service) UpdateRoute(ctx context.Context, routeID id.ID, req UpdateRout
 		}
 	}
 
+	// Fire-and-forget event for gateway hooks.
+	_ = s.events.Publish(ctx, event.NewEvent(event.RouteUpdated, claims.TenantID).
+		WithInstance(route.InstanceID).
+		WithActor(claims.SubjectID).
+		WithPayload(map[string]any{
+			"route_id": route.ID.String(),
+			"path":     route.Path,
+		}))
+
 	return route, nil
 }
 
@@ -235,7 +255,7 @@ func (s *service) RemoveRoute(ctx context.Context, routeID id.ID) error {
 		return fmt.Errorf("remove route: %w", err)
 	}
 
-	_, err = s.store.GetRoute(ctx, claims.TenantID, routeID)
+	route, err := s.store.GetRoute(ctx, claims.TenantID, routeID)
 	if err != nil {
 		return fmt.Errorf("remove route: get: %w", err)
 	}
@@ -249,6 +269,15 @@ func (s *service) RemoveRoute(ctx context.Context, routeID id.ID) error {
 			return fmt.Errorf("remove route: router: %w", err)
 		}
 	}
+
+	// Fire-and-forget event for gateway hooks.
+	_ = s.events.Publish(ctx, event.NewEvent(event.RouteRemoved, claims.TenantID).
+		WithInstance(route.InstanceID).
+		WithActor(claims.SubjectID).
+		WithPayload(map[string]any{
+			"route_id": routeID.String(),
+			"path":     route.Path,
+		}))
 
 	return nil
 }

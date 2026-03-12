@@ -29,6 +29,7 @@ func buildNav() []contributor.NavItem {
 		{Label: "Workers", Path: "/workers", Icon: "settings", Group: "Infrastructure", Priority: 4},
 		{Label: "Events", Path: "/events", Icon: "bell", Group: "Infrastructure", Priority: 5},
 		{Label: "Templates", Path: "/templates", Icon: "file-text", Group: "Infrastructure", Priority: 6},
+		{Label: "Datacenters", Path: "/datacenters", Icon: "map-pin", Group: "Infrastructure", Priority: 7},
 		{Label: "Network", Path: "/network", Icon: "globe", Group: "Networking", Priority: 0},
 		{Label: "Secrets", Path: "/secrets", Icon: "key-round", Group: "Networking", Priority: 1},
 		{Label: "Tenants", Path: "/tenants", Icon: "building-2", Group: "Administration", Priority: 0},

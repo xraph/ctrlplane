@@ -1,0 +1,357 @@
+package pages
+
+import (
+	"strconv"
+
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/components/table"
+	"github.com/xraph/forgeui/components/tabs"
+
+	"github.com/xraph/ctrlplane/dashboard/components"
+	"github.com/xraph/ctrlplane/datacenter"
+	"github.com/xraph/ctrlplane/instance"
+)
+
+// DatacenterDetailData holds data for the datacenter detail page.
+type DatacenterDetailData struct {
+	Datacenter    *datacenter.Datacenter
+	Instances     []*instance.Instance
+	InstanceCount int
+	Tab           string
+}
+
+// DatacenterDetailPage renders the datacenter detail page.
+templ DatacenterDetailPage(data DatacenterDetailData) {
+	<div class="space-y-6">
+		<div class="flex items-center gap-3">
+			<a class="text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+				hx-get="./datacenters"
+				hx-target="#content"
+				hx-push-url="true"
+				hx-swap="innerHTML">&larr; Back to Datacenters</a>
+		</div>
+
+		<div class="flex items-center justify-between">
+			<div class="flex items-center gap-3">
+				<h1 class="text-3xl font-bold">{ data.Datacenter.Name }</h1>
+				@components.DatacenterStatusBadge(data.Datacenter.Status)
+			</div>
+			<div class="flex items-center gap-2">
+				if data.Datacenter.Status == datacenter.StatusActive {
+					@button.Button(button.Props{
+						Variant: button.VariantOutline,
+						Size:    button.SizeSm,
+						Attributes: templ.Attributes{
+							"hx-get":    "./datacenters/detail?datacenter_id=" + data.Datacenter.ID.String() + "&action=set_maintenance",
+							"hx-target": "#content",
+							"hx-swap":   "innerHTML",
+						},
+					}) {
+						Set Maintenance
+					}
+				}
+				if data.Datacenter.Status == datacenter.StatusMaintenance || data.Datacenter.Status == datacenter.StatusDraining {
+					@button.Button(button.Props{
+						Size: button.SizeSm,
+						Attributes: templ.Attributes{
+							"hx-get":    "./datacenters/detail?datacenter_id=" + data.Datacenter.ID.String() + "&action=set_active",
+							"hx-target": "#content",
+							"hx-swap":   "innerHTML",
+						},
+					}) {
+						Set Active
+					}
+				}
+				if data.Datacenter.Status != datacenter.StatusOffline {
+					@button.Button(button.Props{
+						Variant: button.VariantOutline,
+						Size:    button.SizeSm,
+						Attributes: templ.Attributes{
+							"hx-get":    "./datacenters/detail?datacenter_id=" + data.Datacenter.ID.String() + "&action=set_offline",
+							"hx-target": "#content",
+							"hx-swap":   "innerHTML",
+						},
+					}) {
+						Set Offline
+					}
+				}
+				if data.InstanceCount == 0 {
+					@button.Button(button.Props{
+						Variant: button.VariantDestructive,
+						Size:    button.SizeSm,
+						Attributes: templ.Attributes{
+							"hx-get":     "./datacenters/detail?datacenter_id=" + data.Datacenter.ID.String() + "&action=delete",
+							"hx-target":  "#content",
+							"hx-swap":    "innerHTML",
+							"hx-confirm": "Delete datacenter '" + data.Datacenter.Name + "'? This cannot be undone.",
+						},
+					}) {
+						Delete
+					}
+				}
+			</div>
+		</div>
+
+		@tabs.Tabs() {
+			@tabs.List() {
+				@tabs.Trigger(tabs.TriggerProps{
+					Value:    "info",
+					IsActive: data.Tab == "info",
+					Attributes: templ.Attributes{
+						"hx-get":      "./datacenters/detail?datacenter_id=" + data.Datacenter.ID.String() + "&tab=info",
+						"hx-target":   "#content",
+						"hx-push-url": "true",
+						"hx-swap":     "innerHTML",
+					},
+				}) {
+					Info
+				}
+				@tabs.Trigger(tabs.TriggerProps{
+					Value:    "instances",
+					IsActive: data.Tab == "instances",
+					Attributes: templ.Attributes{
+						"hx-get":      "./datacenters/detail?datacenter_id=" + data.Datacenter.ID.String() + "&tab=instances",
+						"hx-target":   "#content",
+						"hx-push-url": "true",
+						"hx-swap":     "innerHTML",
+					},
+				}) {
+					Instances
+				}
+				@tabs.Trigger(tabs.TriggerProps{
+					Value:    "capacity",
+					IsActive: data.Tab == "capacity",
+					Attributes: templ.Attributes{
+						"hx-get":      "./datacenters/detail?datacenter_id=" + data.Datacenter.ID.String() + "&tab=capacity",
+						"hx-target":   "#content",
+						"hx-push-url": "true",
+						"hx-swap":     "innerHTML",
+					},
+				}) {
+					Capacity
+				}
+			}
+
+			@tabs.Content(tabs.ContentProps{Value: "info", IsActive: data.Tab == "info"}) {
+				<div class="mt-4">
+					@datacenterInfoCard(data.Datacenter)
+				</div>
+			}
+
+			@tabs.Content(tabs.ContentProps{Value: "instances", IsActive: data.Tab == "instances"}) {
+				<div class="mt-4">
+					@datacenterInstancesCard(data.Instances, data.Datacenter.ID.String())
+				</div>
+			}
+
+			@tabs.Content(tabs.ContentProps{Value: "capacity", IsActive: data.Tab == "capacity"}) {
+				<div class="mt-4">
+					@datacenterCapacityCard(data.Datacenter, data.InstanceCount)
+				</div>
+			}
+		}
+	</div>
+}
+
+templ datacenterInfoCard(dc *datacenter.Datacenter) {
+	@card.Card(card.Props{Class: "rounded-sm"}) {
+		@card.Header() {
+			@card.Title() {
+				Datacenter Information
+			}
+		}
+		@card.Content() {
+			<div class="grid grid-cols-2 gap-4 text-sm">
+				<div>
+					<span class="text-muted-foreground">ID</span>
+					<p class="font-mono text-xs mt-1">{ dc.ID.String() }</p>
+				</div>
+				<div>
+					<span class="text-muted-foreground">Slug</span>
+					<p class="font-mono mt-1">{ dc.Slug }</p>
+				</div>
+				<div>
+					<span class="text-muted-foreground">Provider</span>
+					<p class="font-medium mt-1">{ dc.ProviderName }</p>
+				</div>
+				<div>
+					<span class="text-muted-foreground">Region</span>
+					<p class="font-medium mt-1">{ dc.Region }</p>
+				</div>
+				<div>
+					<span class="text-muted-foreground">Zone</span>
+					if dc.Zone != "" {
+						<p class="font-medium mt-1">{ dc.Zone }</p>
+					} else {
+						<p class="text-muted-foreground mt-1">-</p>
+					}
+				</div>
+				<div>
+					<span class="text-muted-foreground">Status</span>
+					<div class="mt-1">
+						@components.DatacenterStatusBadge(dc.Status)
+					</div>
+				</div>
+				<div>
+					<span class="text-muted-foreground">Created</span>
+					<p class="mt-1">{ dc.CreatedAt.Format("Jan 02, 2006 15:04 UTC") }</p>
+				</div>
+				<div>
+					<span class="text-muted-foreground">Updated</span>
+					<p class="mt-1">{ dc.UpdatedAt.Format("Jan 02, 2006 15:04 UTC") }</p>
+				</div>
+			</div>
+
+			if dc.Location.Country != "" || dc.Location.City != "" {
+				<div class="mt-6 pt-4 border-t">
+					<h4 class="text-sm font-medium mb-3">Location</h4>
+					<div class="grid grid-cols-2 gap-4 text-sm">
+						<div>
+							<span class="text-muted-foreground">Country</span>
+							<p class="font-medium mt-1">{ dc.Location.Country }</p>
+						</div>
+						<div>
+							<span class="text-muted-foreground">City</span>
+							<p class="font-medium mt-1">{ dc.Location.City }</p>
+						</div>
+					</div>
+				</div>
+			}
+
+			if len(dc.Labels) > 0 {
+				<div class="mt-6 pt-4 border-t">
+					<h4 class="text-sm font-medium mb-3">Labels</h4>
+					<div class="flex flex-wrap gap-2">
+						for k, v := range dc.Labels {
+							<span class="inline-flex items-center rounded-sm px-2 py-0.5 text-xs font-mono bg-muted">
+								{ k }={ v }
+							</span>
+						}
+					</div>
+				</div>
+			}
+
+			if len(dc.Metadata) > 0 {
+				<div class="mt-6 pt-4 border-t">
+					<h4 class="text-sm font-medium mb-3">Metadata</h4>
+					<div class="space-y-1 text-sm">
+						for k, v := range dc.Metadata {
+							<div class="flex gap-2">
+								<span class="text-muted-foreground font-mono">{ k }:</span>
+								<span>{ v }</span>
+							</div>
+						}
+					</div>
+				</div>
+			}
+		}
+	}
+}
+
+templ datacenterInstancesCard(instances []*instance.Instance, datacenterID string) {
+	@card.Card(card.Props{Class: "rounded-sm"}) {
+		@card.Header() {
+			@card.Title() {
+				Instances
+			}
+			@card.Description() {
+				Instances deployed to this datacenter.
+			}
+		}
+		@card.Content() {
+			if len(instances) == 0 {
+				@components.EmptyState("server", "No instances", "No instances are deployed to this datacenter.")
+			} else {
+				@table.Table() {
+					@table.Header() {
+						@table.Row() {
+							@table.Head() { Name }
+							@table.Head() { State }
+							@table.Head() { Provider }
+							@table.Head() { Region }
+						}
+					}
+					@table.Body() {
+						for _, inst := range instances {
+							@table.Row(table.RowProps{
+								Class: "cursor-pointer",
+								Attributes: templ.Attributes{
+									"hx-get":      "./instances/detail?instance_id=" + inst.ID.String(),
+									"hx-target":   "#content",
+									"hx-push-url": "true",
+									"hx-swap":     "innerHTML",
+								},
+							}) {
+								@table.Cell() {
+									<span class="font-medium">{ inst.Name }</span>
+								}
+								@table.Cell() {
+									@components.InstanceStateBadge(inst.State)
+								}
+								@table.Cell() {
+									<span class="text-muted-foreground">{ inst.ProviderName }</span>
+								}
+								@table.Cell() {
+									<span class="text-muted-foreground">{ inst.Region }</span>
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+templ datacenterCapacityCard(dc *datacenter.Datacenter, instanceCount int) {
+	@card.Card(card.Props{Class: "rounded-sm"}) {
+		@card.Header() {
+			@card.Title() {
+				Capacity
+			}
+			@card.Description() {
+				Resource limits and current usage for this datacenter.
+			}
+		}
+		@card.Content() {
+			<div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+				@capacityCard("Instances", instanceCount, dc.Capacity.MaxInstances)
+				@capacityCard("CPU (millicores)", 0, dc.Capacity.MaxCPUMillis)
+				@capacityCard("Memory (MB)", 0, dc.Capacity.MaxMemoryMB)
+			</div>
+		}
+	}
+}
+
+templ capacityCard(label string, current int, max int) {
+	<div class="p-4 rounded-sm border">
+		<div class="text-sm text-muted-foreground">{ label }</div>
+		<div class="mt-2 text-2xl font-bold">
+			{ strconv.Itoa(current) }
+			if max > 0 {
+				<span class="text-sm font-normal text-muted-foreground"> / { strconv.Itoa(max) }</span>
+			} else {
+				<span class="text-sm font-normal text-muted-foreground"> / unlimited</span>
+			}
+		</div>
+		if max > 0 {
+			<div class="mt-2 w-full bg-muted rounded-full h-2">
+				<div class="bg-primary rounded-full h-2" style={ "width:" + strconv.Itoa(capacityPercent(current, max)) + "%" }></div>
+			</div>
+		}
+	</div>
+}
+
+func capacityPercent(current, max int) int {
+	if max == 0 {
+		return 0
+	}
+
+	pct := (current * 100) / max
+	if pct > 100 {
+		return 100
+	}
+
+	return pct
+}

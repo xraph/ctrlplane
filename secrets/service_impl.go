@@ -26,6 +26,11 @@ func NewService(store Store, vault Vault, auth auth.Provider) Service {
 	}
 }
 
+// SetVault replaces the vault backend used for secret storage.
+func (s *service) SetVault(v Vault) {
+	s.vault = v
+}
+
 // Set creates or updates a secret for an instance.
 func (s *service) Set(ctx context.Context, req SetRequest) (*Secret, error) {
 	claims, err := auth.RequireClaims(ctx)

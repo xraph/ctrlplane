@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/xraph/ctrlplane/admin"
+	"github.com/xraph/ctrlplane/datacenter"
 	"github.com/xraph/ctrlplane/deploy"
 	"github.com/xraph/ctrlplane/health"
 	"github.com/xraph/ctrlplane/id"
@@ -39,6 +40,8 @@ type Store struct {
 
 	templates map[string]*deploy.Template
 
+	datacenters map[string]*datacenter.Datacenter
+
 	tenants      map[string]*admin.Tenant
 	auditEntries []admin.AuditEntry
 }
@@ -56,6 +59,7 @@ func New() *Store {
 		certificates:  make(map[string]*network.Certificate),
 		secretStore:   make(map[string]*secrets.Secret),
 		templates:     make(map[string]*deploy.Template),
+		datacenters:   make(map[string]*datacenter.Datacenter),
 		tenants:       make(map[string]*admin.Tenant),
 	}
 }

@@ -17,11 +17,13 @@ import (
 	"github.com/xraph/ctrlplane/dashboard/pages"
 	"github.com/xraph/ctrlplane/dashboard/settings"
 	"github.com/xraph/ctrlplane/dashboard/widgets"
+	"github.com/xraph/ctrlplane/datacenter"
 	"github.com/xraph/ctrlplane/deploy"
 	"github.com/xraph/ctrlplane/event"
 	"github.com/xraph/ctrlplane/health"
 	"github.com/xraph/ctrlplane/id"
 	"github.com/xraph/ctrlplane/instance"
+	"github.com/xraph/ctrlplane/network"
 	"github.com/xraph/ctrlplane/provider"
 )
 
@@ -116,6 +118,12 @@ func (c *Contributor) RenderPage(ctx context.Context, route string, params contr
 		return c.renderTemplateCreate(ctx, params)
 	case "/templates/edit":
 		return c.renderTemplateEdit(ctx, params)
+	case "/datacenters":
+		return c.renderDatacenters(ctx, params)
+	case "/datacenters/detail":
+		return c.renderDatacenterDetail(ctx, params)
+	case "/datacenters/create":
+		return c.renderDatacenterCreate(ctx, params)
 	default:
 		return nil, fmt.Errorf("unknown route %q: %w", route, contributor.ErrPageNotFound)
 	}
@@ -473,6 +481,32 @@ func (c *Contributor) renderNetwork(ctx context.Context, params contributor.Para
 
 func (c *Contributor) handleNetworkAction(ctx context.Context, action string, params contributor.Params) error {
 	switch action {
+	case "add_domain":
+		hostname := params.QueryParams["hostname"]
+		if hostname == "" {
+			return nil
+		}
+
+		instanceIDStr := params.QueryParams["instance_id"]
+		if instanceIDStr == "" {
+			return nil
+		}
+
+		instanceID, err := id.Parse(instanceIDStr)
+		if err != nil {
+			return fmt.Errorf("parse instance_id: %w", err)
+		}
+
+		tlsEnabled := params.QueryParams["tls_enabled"] == "true"
+
+		_, err = c.cp.Network.AddDomain(ctx, network.AddDomainRequest{
+			InstanceID: instanceID,
+			Hostname:   hostname,
+			TLSEnabled: tlsEnabled,
+		})
+
+		return err
+
 	case "verify_domain":
 		domainIDStr := params.QueryParams["domain_id"]
 		if domainIDStr == "" {
@@ -513,6 +547,38 @@ func (c *Contributor) handleNetworkAction(ctx context.Context, action string, pa
 		}
 
 		_, err = c.cp.Network.ProvisionCert(ctx, domainID)
+
+		return err
+
+	case "add_route":
+		instanceIDStr := params.QueryParams["instance_id"]
+		if instanceIDStr == "" {
+			return nil
+		}
+
+		instanceID, err := id.Parse(instanceIDStr)
+		if err != nil {
+			return fmt.Errorf("parse instance_id: %w", err)
+		}
+
+		path := params.QueryParams["path"]
+		if path == "" {
+			return nil
+		}
+
+		port, portErr := strconv.Atoi(params.QueryParams["port"])
+		if portErr != nil {
+			return fmt.Errorf("parse port: %w", portErr)
+		}
+
+		protocol := params.QueryParams["protocol"]
+
+		_, err = c.cp.Network.AddRoute(ctx, network.AddRouteRequest{
+			InstanceID: instanceID,
+			Path:       path,
+			Port:       port,
+			Protocol:   protocol,
+		})
 
 		return err
 
@@ -959,6 +1025,15 @@ func (c *Contributor) renderEvents(ctx context.Context, params contributor.Param
 			event.TenantCreated, event.TenantSuspended,
 			event.TenantDeleted, event.QuotaExceeded,
 		}
+	case "datacenter":
+		eventTypes = []event.Type{
+			event.DatacenterCreated, event.DatacenterUpdated,
+			event.DatacenterDeleted, event.DatacenterStatusChanged,
+		}
+	case "route":
+		eventTypes = []event.Type{
+			event.RouteAdded, event.RouteUpdated, event.RouteRemoved,
+		}
 	}
 
 	events := c.cp.Events().RecentEvents(100, eventTypes...)
@@ -1365,6 +1440,183 @@ func parseIntFormField(value string) int {
 	}
 
 	return n
+}
+
+// --- Datacenter Pages ---
+
+func (c *Contributor) renderDatacenters(ctx context.Context, params contributor.Params) (templ.Component, error) {
+	opts := datacenter.ListOptions{
+		Status: params.QueryParams["status"],
+		Limit:  100,
+	}
+
+	result, err := c.cp.Datacenters.List(ctx, opts)
+	if err != nil {
+		return nil, fmt.Errorf("dashboard: list datacenters: %w", err)
+	}
+
+	// Build instance counts per datacenter.
+	instanceCounts := make(map[string]int)
+
+	for _, dc := range result.Items {
+		count, countErr := c.cp.Store().CountInstancesByDatacenter(ctx, dashboardClaims.TenantID, dc.ID)
+		if countErr == nil {
+			instanceCounts[dc.ID.String()] = count
+		}
+	}
+
+	return pages.DatacentersPage(pages.DatacentersPageData{
+		Datacenters:    result.Items,
+		InstanceCounts: instanceCounts,
+		Total:          result.Total,
+		StatusFilter:   params.QueryParams["status"],
+	}), nil
+}
+
+func (c *Contributor) renderDatacenterDetail(ctx context.Context, params contributor.Params) (templ.Component, error) {
+	dcIDStr := params.QueryParams["datacenter_id"]
+	if dcIDStr == "" {
+		return nil, fmt.Errorf("dashboard: missing datacenter_id: %w", contributor.ErrPageNotFound)
+	}
+
+	dcID, err := id.Parse(dcIDStr)
+	if err != nil {
+		return nil, fmt.Errorf("dashboard: parse datacenter_id: %w", err)
+	}
+
+	// Handle actions before rendering.
+	if action := params.QueryParams["action"]; action != "" {
+		if handleErr := c.handleDatacenterAction(ctx, dcID, action); handleErr != nil {
+			// If delete succeeded, redirect to list.
+			if action == "delete" {
+				return c.renderDatacenters(ctx, params)
+			}
+
+			return nil, fmt.Errorf("dashboard: datacenter action %q: %w", action, handleErr)
+		}
+
+		// After successful delete, redirect to list page.
+		if action == "delete" {
+			return c.renderDatacenters(ctx, params)
+		}
+	}
+
+	dc, err := c.cp.Datacenters.Get(ctx, dcID)
+	if err != nil {
+		return nil, fmt.Errorf("dashboard: get datacenter: %w", err)
+	}
+
+	tab := params.QueryParams["tab"]
+	if tab == "" {
+		tab = "info"
+	}
+
+	data := pages.DatacenterDetailData{
+		Datacenter: dc,
+		Tab:        tab,
+	}
+
+	// Load instance count.
+	count, countErr := c.cp.Store().CountInstancesByDatacenter(ctx, dashboardClaims.TenantID, dcID)
+	if countErr == nil {
+		data.InstanceCount = count
+	}
+
+	// Load instances for the instances tab.
+	if tab == "instances" {
+		instResult, instErr := c.cp.Instances.List(ctx, instance.ListOptions{
+			Datacenter: dcID.String(),
+			Limit:      50,
+		})
+		if instErr == nil {
+			data.Instances = instResult.Items
+		}
+	}
+
+	return pages.DatacenterDetailPage(data), nil
+}
+
+func (c *Contributor) handleDatacenterAction(ctx context.Context, dcID id.ID, action string) error {
+	switch action {
+	case "set_active":
+		return c.cp.Datacenters.SetStatus(ctx, dcID, datacenter.StatusActive)
+	case "set_maintenance":
+		return c.cp.Datacenters.SetStatus(ctx, dcID, datacenter.StatusMaintenance)
+	case "set_draining":
+		return c.cp.Datacenters.SetStatus(ctx, dcID, datacenter.StatusDraining)
+	case "set_offline":
+		return c.cp.Datacenters.SetStatus(ctx, dcID, datacenter.StatusOffline)
+	case "delete":
+		return c.cp.Datacenters.Delete(ctx, dcID)
+	default:
+		return nil
+	}
+}
+
+func (c *Contributor) renderDatacenterCreate(ctx context.Context, params contributor.Params) (templ.Component, error) {
+	data := pages.DatacenterFormData{}
+
+	// Handle form submission.
+	if params.FormData != nil && params.FormData["name"] != "" {
+		var loc *datacenter.Location
+
+		country := params.FormData["country"]
+		city := params.FormData["city"]
+
+		if country != "" || city != "" {
+			loc = &datacenter.Location{
+				Country: country,
+				City:    city,
+			}
+		}
+
+		var capSpec *datacenter.Capacity
+
+		maxInst := parseIntFormField(params.FormData["max_instances"])
+		maxCPU := parseIntFormField(params.FormData["max_cpu_millis"])
+		maxMem := parseIntFormField(params.FormData["max_memory_mb"])
+
+		if maxInst > 0 || maxCPU > 0 || maxMem > 0 {
+			capSpec = &datacenter.Capacity{
+				MaxInstances: maxInst,
+				MaxCPUMillis: maxCPU,
+				MaxMemoryMB:  maxMem,
+			}
+		}
+
+		dc, createErr := c.cp.Datacenters.Create(ctx, datacenter.CreateRequest{
+			Name:         params.FormData["name"],
+			ProviderName: params.FormData["provider_name"],
+			Region:       params.FormData["region"],
+			Zone:         params.FormData["zone"],
+			Location:     loc,
+			Capacity:     capSpec,
+		})
+		if createErr != nil {
+			data.Error = createErr.Error()
+		} else {
+			data.Success = "Datacenter created successfully"
+			data.RedirectURL = "./datacenters/detail?datacenter_id=" + dc.ID.String()
+		}
+
+		// Reload providers for the form.
+		providers, provErr := c.cp.Admin.ListProviders(ctx)
+		if provErr == nil {
+			data.Providers = providers
+		}
+
+		return pages.DatacenterFormPage(data), nil
+	}
+
+	// Load providers for the form.
+	providers, err := c.cp.Admin.ListProviders(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("dashboard: list providers for datacenter form: %w", err)
+	}
+
+	data.Providers = providers
+
+	return pages.DatacenterFormPage(data), nil
 }
 
 // --- Settings Renderer ---

@@ -1,0 +1,33 @@
+package components
+
+import (
+	"github.com/xraph/forgeui/components/badge"
+
+	"github.com/xraph/ctrlplane/datacenter"
+)
+
+// DatacenterStatusBadge renders a badge for a datacenter status.
+templ DatacenterStatusBadge(status datacenter.Status) {
+	switch status {
+		case datacenter.StatusActive:
+			<span class="inline-flex items-center rounded-sm px-2 py-0.5 text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">
+				Active
+			</span>
+		case datacenter.StatusMaintenance:
+			<span class="inline-flex items-center rounded-sm px-2 py-0.5 text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400">
+				Maintenance
+			</span>
+		case datacenter.StatusDraining:
+			<span class="inline-flex items-center rounded-sm px-2 py-0.5 text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-400">
+				Draining
+			</span>
+		case datacenter.StatusOffline:
+			@badge.Badge(badge.Props{Variant: badge.VariantDestructive}) {
+				Offline
+			}
+		default:
+			@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+				{ string(status) }
+			}
+	}
+}

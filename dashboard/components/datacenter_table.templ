@@ -1,0 +1,68 @@
+package components
+
+import (
+	"strconv"
+
+	"github.com/xraph/forgeui/components/table"
+
+	"github.com/xraph/ctrlplane/datacenter"
+)
+
+// DatacenterTable renders a table of datacenters.
+templ DatacenterTable(datacenters []*datacenter.Datacenter, instanceCounts map[string]int) {
+	if len(datacenters) == 0 {
+		@EmptyState("map-pin", "No datacenters", "Create a datacenter to define a deployment location.")
+	} else {
+		@table.Table() {
+			@table.Header() {
+				@table.Row() {
+					@table.Head() { Name }
+					@table.Head() { Provider }
+					@table.Head() { Region }
+					@table.Head() { Zone }
+					@table.Head() { Status }
+					@table.Head() { Instances }
+				}
+			}
+			@table.Body() {
+				for _, dc := range datacenters {
+					@table.Row(table.RowProps{
+						Class: "cursor-pointer",
+						Attributes: templ.Attributes{
+							"hx-get":      "./datacenters/detail?datacenter_id=" + dc.ID.String(),
+							"hx-target":   "#content",
+							"hx-push-url": "true",
+							"hx-swap":     "innerHTML",
+						},
+					}) {
+						@table.Cell() {
+							<div>
+								<span class="font-medium">{ dc.Name }</span>
+								<span class="ml-2 text-xs text-muted-foreground font-mono">{ dc.Slug }</span>
+							</div>
+						}
+						@table.Cell() {
+							<span class="text-muted-foreground">{ dc.ProviderName }</span>
+						}
+						@table.Cell() {
+							<span class="text-muted-foreground">{ dc.Region }</span>
+						}
+						@table.Cell() {
+							if dc.Zone != "" {
+								<span class="text-muted-foreground">{ dc.Zone }</span>
+							} else {
+								<span class="text-muted-foreground">-</span>
+							}
+						}
+						@table.Cell() {
+							@DatacenterStatusBadge(dc.Status)
+						}
+						@table.Cell() {
+							<span class="text-muted-foreground">{ strconv.Itoa(instanceCounts[dc.ID.String()]) }</span>
+						}
+					}
+				}
+			}
+		}
+	}
+}
