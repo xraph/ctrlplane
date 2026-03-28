@@ -43,7 +43,7 @@ extensions:
   ctrlplane:
     database_url: "postgres://localhost:5432/ctrlplane"
     default_provider: "k8s"
-    base_path: "/api/cp"
+    base_path: "/ctrlplane"
     health_interval: "30s"
     telemetry_flush_interval: "10s"
     max_instances_per_tenant: 100
@@ -83,7 +83,7 @@ When `RequireConfig` is `true` and no config is found under either key, `Registe
 |--------|---------|
 | `WithAuthProvider(p)` | Set the auth provider |
 | `WithProvider(name, p)` | Register a cloud provider |
-| `WithBasePath(path)` | Set the URL prefix (default: `/api/cp`) |
+| `WithBasePath(path)` | Set the URL prefix (default: `/ctrlplane`) |
 | `WithConfig(cfg)` | Set extension configuration directly |
 | `WithStore(opt)` | Pass a store option to the underlying Ctrl Plane |
 | `WithExtension(x)` | Register a plugin extension (lifecycle hooks) |

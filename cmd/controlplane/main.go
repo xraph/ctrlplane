@@ -43,7 +43,7 @@ func run() error {
 	cpExt := extension.New(
 		extension.WithStore(memory.New()),
 		extension.WithProvider("docker", dockerProv),
-		extension.WithBasePath("/api/cp"),
+		extension.WithBasePath("/ctrlplane"),
 	)
 
 	// Use the extension with Forge

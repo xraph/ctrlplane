@@ -44,7 +44,7 @@ type Config struct {
 func DefaultConfig() Config {
 	return Config{
 		Config:   ctrlplane.DefaultCtrlPlaneConfig(),
-		BasePath: "/api/cp",
+		BasePath: "/ctrlplane",
 	}
 }
 

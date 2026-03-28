@@ -104,7 +104,7 @@ cpExt := extension.New(
         Host:    dockerHost,
         Network: dockerNetwork,
     })),
-    extension.WithBasePath("/api/cp"),
+    extension.WithBasePath("/ctrlplane"),
     extension.WithAuthProvider(&auth.NoopProvider{
         DefaultTenantID: "default",
         DefaultClaims:   &auth.Claims{
@@ -118,7 +118,7 @@ cpExt := extension.New(
 forgeApp.RegisterExtension(cpExt)
 ```
 
-The extension mounts all 50+ Ctrl Plane API routes under `/api/cp` and starts background workers for reconciliation, health checks, and telemetry collection.
+The extension mounts all 50+ Ctrl Plane API routes under `/ctrlplane` and starts background workers for reconciliation, health checks, and telemetry collection.
 
 ## Step 4: Event subscriptions
 
@@ -229,15 +229,15 @@ Once the server is running, try these commands:
 curl -s http://localhost:8080/api/platform/status | jq
 
 # List seeded tenants
-curl -s http://localhost:8080/api/cp/v1/admin/tenants | jq
+curl -s http://localhost:8080/ctrlplane/v1/admin/tenants | jq
 
 # Create an instance
-curl -s -X POST http://localhost:8080/api/cp/v1/instances \
+curl -s -X POST http://localhost:8080/ctrlplane/v1/instances \
   -H "Content-Type: application/json" \
   -d '{"name":"my-app","provider":"docker","config":{"image":"nginx:alpine"}}' | jq
 
 # List instances
-curl -s http://localhost:8080/api/cp/v1/instances | jq
+curl -s http://localhost:8080/ctrlplane/v1/instances | jq
 
 # Health check
 curl -s http://localhost:8080/api/platform/health | jq

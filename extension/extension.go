@@ -152,7 +152,11 @@ func (e *Extension) Init(fapp forge.App) error {
 	e.api = api.New(e.cp, fapp.Router())
 
 	if !e.config.DisableRoutes {
-		e.api.RegisterRoutes(fapp.Router())
+		basePath := e.config.BasePath
+		if basePath == "" {
+			basePath = "/ctrlplane"
+		}
+		e.api.RegisterRoutes(fapp.Router().Group(basePath))
 	}
 
 	return nil

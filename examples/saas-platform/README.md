@@ -23,7 +23,7 @@ Open the interactive API docs at [http://localhost:8080/docs](http://localhost:8
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CP_STORE` | `memory` | Store backend: `memory`, `bun`, `badger`, `mongo` |
-| `CP_BASE_PATH` | `/api/cp` | URL prefix for all Ctrl Plane routes |
+| `CP_BASE_PATH` | `/ctrlplane` | URL prefix for all Ctrl Plane routes |
 | `CP_SEED` | `true` | Create demo tenants on startup |
 | `CP_DOCKER_HOST` | *(auto)* | Docker daemon address |
 | `CP_DOCKER_NETWORK` | `bridge` | Docker network for containers |
@@ -80,7 +80,7 @@ go run ./examples/saas-platform
 
 ## Custom Platform Endpoints
 
-In addition to the full Ctrl Plane API (under `/api/cp`), this example adds:
+In addition to the full Ctrl Plane API (under `/ctrlplane`), this example adds:
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -101,13 +101,13 @@ curl -s http://localhost:8080/api/platform/status | jq
 ### List tenants (seeded)
 
 ```bash
-curl -s http://localhost:8080/api/cp/v1/admin/tenants | jq
+curl -s http://localhost:8080/ctrlplane/v1/admin/tenants | jq
 ```
 
 ### Create an instance
 
 ```bash
-curl -s -X POST http://localhost:8080/api/cp/v1/instances \
+curl -s -X POST http://localhost:8080/ctrlplane/v1/instances \
   -H "Content-Type: application/json" \
   -d '{
     "name": "my-app",
@@ -123,7 +123,7 @@ curl -s -X POST http://localhost:8080/api/cp/v1/instances \
 ### List instances
 
 ```bash
-curl -s http://localhost:8080/api/cp/v1/instances | jq
+curl -s http://localhost:8080/ctrlplane/v1/instances | jq
 ```
 
 ### Check platform health

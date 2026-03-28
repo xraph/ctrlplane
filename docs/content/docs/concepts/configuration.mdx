@@ -86,7 +86,7 @@ extensions:
   ctrlplane:
     database_url: "postgres://localhost:5432/ctrlplane"
     default_provider: "k8s"
-    base_path: "/api/cp"
+    base_path: "/ctrlplane"
     health_interval: "30s"
     telemetry_flush_interval: "10s"
     max_instances_per_tenant: 100
@@ -101,7 +101,7 @@ In addition to the global config fields, the extension config adds:
 
 | Field | Type | Description | Default |
 |-------|------|-------------|---------|
-| `base_path` | `string` | URL prefix for all ctrlplane routes | `/api/cp` |
+| `base_path` | `string` | URL prefix for all ctrlplane routes | `/ctrlplane` |
 | `disable_routes` | `bool` | Disable automatic route registration | `false` |
 | `disable_migrate` | `bool` | Disable automatic database migration | `false` |
 

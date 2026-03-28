@@ -377,7 +377,7 @@ func run() error {
 	// 1. Read configuration from environment
 	// -----------------------------------------------------------------------
 	storeType := envOrDefault("CP_STORE", "memory")
-	basePath := envOrDefault("CP_BASE_PATH", "/api/cp")
+	basePath := envOrDefault("CP_BASE_PATH", "/ctrlplane")
 	seed := envBool("CP_SEED", true)
 	dockerHost := envOrDefault("CP_DOCKER_HOST", "")
 	dockerNetwork := envOrDefault("CP_DOCKER_NETWORK", "bridge")
