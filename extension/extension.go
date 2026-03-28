@@ -156,6 +156,7 @@ func (e *Extension) Init(fapp forge.App) error {
 		if basePath == "" {
 			basePath = "/ctrlplane"
 		}
+
 		e.api.RegisterRoutes(fapp.Router().Group(basePath))
 	}
 
