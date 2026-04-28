@@ -62,19 +62,25 @@ func (s *Store) GetDatacenterByID(_ context.Context, tenantID string, datacenter
 		return nil, fmt.Errorf("%w: datacenter %s", ctrlplane.ErrNotFound, datacenterID)
 	}
 
-	if dc.TenantID != tenantID {
+	if dc.TenantID != tenantID && dc.TenantID != "" {
 		return nil, fmt.Errorf("%w: datacenter %s", ctrlplane.ErrNotFound, datacenterID)
 	}
 
 	return &dc, nil
 }
 
-// GetDatacenterBySlug retrieves a datacenter by slug within a tenant.
+// GetDatacenterBySlug retrieves a datacenter by slug. Tenant-scoped
+// hits take precedence over platform-shared (tenant_id="") ones.
 func (s *Store) GetDatacenterBySlug(_ context.Context, tenantID string, slug string) (*datacenter.Datacenter, error) {
 	var dcID string
 
 	err := s.db.View(func(txn *badger.Txn) error {
-		return s.get(txn, prefixDatacenterSlug+tenantID+":"+slug, &dcID)
+		// Try the tenant-scoped slug index first; fall back to the
+		// shared one (tenant_id="" → key "dcsg::<slug>").
+		if err := s.get(txn, prefixDatacenterSlug+tenantID+":"+slug, &dcID); err == nil {
+			return nil
+		}
+		return s.get(txn, prefixDatacenterSlug+":"+slug, &dcID)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("%w: datacenter slug %s", ctrlplane.ErrNotFound, slug)
@@ -103,7 +109,7 @@ func (s *Store) ListDatacenters(_ context.Context, tenantID string, opts datacen
 				return err
 			}
 
-			if dc.TenantID != tenantID {
+			if dc.TenantID != tenantID && dc.TenantID != "" {
 				return nil
 			}
 

@@ -25,12 +25,16 @@ func (s *Store) InsertDatacenter(ctx context.Context, dc *datacenter.Datacenter)
 	return nil
 }
 
-// GetDatacenterByID retrieves a datacenter by ID within a tenant.
+// GetDatacenterByID retrieves a datacenter by ID. Returns the DC when
+// it belongs to tenantID OR when it's platform-shared (tenant_id="").
 func (s *Store) GetDatacenterByID(ctx context.Context, tenantID string, datacenterID id.ID) (*datacenter.Datacenter, error) {
 	var model datacenterModel
 
 	err := s.mdb.NewFind(&model).
-		Filter(bson.M{"_id": datacenterID.String(), "tenant_id": tenantID}).
+		Filter(bson.M{
+			"_id":       datacenterID.String(),
+			"tenant_id": bson.M{"$in": bson.A{tenantID, ""}},
+		}).
 		Scan(ctx)
 	if err != nil {
 		if isNoDocuments(err) {
@@ -43,29 +47,43 @@ func (s *Store) GetDatacenterByID(ctx context.Context, tenantID string, datacent
 	return fromDatacenterModel(&model), nil
 }
 
-// GetDatacenterBySlug retrieves a datacenter by slug within a tenant.
+// GetDatacenterBySlug retrieves a datacenter by slug. Tenant-scoped
+// hits take precedence over platform-shared ones with the same slug
+// (we sort tenant-owned first via a synthetic order field).
 func (s *Store) GetDatacenterBySlug(ctx context.Context, tenantID string, slug string) (*datacenter.Datacenter, error) {
-	var model datacenterModel
+	var models []datacenterModel
 
-	err := s.mdb.NewFind(&model).
-		Filter(bson.M{"tenant_id": tenantID, "slug": slug}).
+	err := s.mdb.NewFind(&models).
+		Filter(bson.M{
+			"slug":      slug,
+			"tenant_id": bson.M{"$in": bson.A{tenantID, ""}},
+		}).
+		Limit(2).
 		Scan(ctx)
 	if err != nil {
-		if isNoDocuments(err) {
-			return nil, fmt.Errorf("%w: datacenter slug %s", ctrlplane.ErrNotFound, slug)
-		}
-
 		return nil, fmt.Errorf("mongo: get datacenter by slug: %w", err)
 	}
+	if len(models) == 0 {
+		return nil, fmt.Errorf("%w: datacenter slug %s", ctrlplane.ErrNotFound, slug)
+	}
 
-	return fromDatacenterModel(&model), nil
+	// Prefer the tenant-owned hit when both exist for the same slug.
+	pick := &models[0]
+	for i := range models {
+		if models[i].TenantID == tenantID {
+			pick = &models[i]
+			break
+		}
+	}
+	return fromDatacenterModel(pick), nil
 }
 
-// ListDatacenters returns a filtered, paginated list of datacenters for a tenant.
+// ListDatacenters returns datacenters visible to tenantID — both
+// tenant-owned and platform-shared (tenant_id="").
 func (s *Store) ListDatacenters(ctx context.Context, tenantID string, opts datacenter.ListOptions) (*datacenter.ListResult, error) {
 	var models []datacenterModel
 
-	filter := bson.M{"tenant_id": tenantID}
+	filter := bson.M{"tenant_id": bson.M{"$in": bson.A{tenantID, ""}}}
 
 	if opts.Status != "" {
 		filter["status"] = opts.Status

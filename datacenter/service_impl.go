@@ -43,6 +43,13 @@ func (s *service) Create(ctx context.Context, req CreateRequest) (*Datacenter, e
 		return nil, fmt.Errorf("create datacenter: %w", provErr)
 	}
 
+	// Empty TenantID on the claims means "create as platform-shared".
+	// Only system admins may do that — regular customers always get
+	// their own claims.TenantID stamped on the DC.
+	if claims.TenantID == "" && !claims.IsSystemAdmin() {
+		return nil, fmt.Errorf("create datacenter: %w", ctrlplane.ErrForbidden)
+	}
+
 	dc := NewDatacenter()
 	dc.TenantID = claims.TenantID
 	dc.Name = req.Name

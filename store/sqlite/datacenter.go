@@ -21,12 +21,13 @@ func (s *Store) InsertDatacenter(ctx context.Context, dc *datacenter.Datacenter)
 	return nil
 }
 
-// GetDatacenterByID retrieves a datacenter by ID within a tenant.
+// GetDatacenterByID retrieves a datacenter by ID. Returns the DC when
+// it belongs to tenantID OR when it's platform-shared (TenantID = "").
 func (s *Store) GetDatacenterByID(ctx context.Context, tenantID string, datacenterID id.ID) (*datacenter.Datacenter, error) {
 	var model datacenterModel
 
 	err := s.sdb.NewSelect(&model).
-		Where("id = ? AND tenant_id = ?", datacenterID.String(), tenantID).
+		Where("id = ? AND (tenant_id = ? OR tenant_id = '')", datacenterID.String(), tenantID).
 		Scan(ctx)
 	if err != nil {
 		if isNoRows(err) {
@@ -39,29 +40,38 @@ func (s *Store) GetDatacenterByID(ctx context.Context, tenantID string, datacent
 	return fromDatacenterModel(&model), nil
 }
 
-// GetDatacenterBySlug retrieves a datacenter by slug within a tenant.
+// GetDatacenterBySlug retrieves a datacenter by slug. Tenant-scoped
+// hits take precedence over platform-shared ones with the same slug.
 func (s *Store) GetDatacenterBySlug(ctx context.Context, tenantID string, slug string) (*datacenter.Datacenter, error) {
-	var model datacenterModel
+	var models []datacenterModel
 
-	err := s.sdb.NewSelect(&model).
-		Where("tenant_id = ? AND slug = ?", tenantID, slug).
+	err := s.sdb.NewSelect(&models).
+		Where("slug = ? AND (tenant_id = ? OR tenant_id = '')", slug, tenantID).
+		Limit(2).
 		Scan(ctx)
 	if err != nil {
-		if isNoRows(err) {
-			return nil, fmt.Errorf("%w: datacenter slug %s", ctrlplane.ErrNotFound, slug)
-		}
-
 		return nil, fmt.Errorf("sqlite: get datacenter by slug: %w", err)
 	}
+	if len(models) == 0 {
+		return nil, fmt.Errorf("%w: datacenter slug %s", ctrlplane.ErrNotFound, slug)
+	}
 
-	return fromDatacenterModel(&model), nil
+	pick := &models[0]
+	for i := range models {
+		if models[i].TenantID == tenantID {
+			pick = &models[i]
+			break
+		}
+	}
+	return fromDatacenterModel(pick), nil
 }
 
-// ListDatacenters returns a filtered, paginated list of datacenters for a tenant.
+// ListDatacenters returns datacenters visible to tenantID — both
+// tenant-owned and platform-shared (TenantID = "").
 func (s *Store) ListDatacenters(ctx context.Context, tenantID string, opts datacenter.ListOptions) (*datacenter.ListResult, error) {
 	var models []datacenterModel
 
-	q := s.sdb.NewSelect(&models).Where("tenant_id = ?", tenantID)
+	q := s.sdb.NewSelect(&models).Where("tenant_id = ? OR tenant_id = ''", tenantID)
 
 	if opts.Status != "" {
 		q = q.Where("status = ?", opts.Status)
