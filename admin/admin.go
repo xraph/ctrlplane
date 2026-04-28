@@ -13,6 +13,12 @@ type Service interface {
 	// GetTenant returns a tenant by ID.
 	GetTenant(ctx context.Context, tenantID string) (*Tenant, error)
 
+	// GetTenantByExternalID returns a tenant by its ExternalID — the
+	// foreign-key field that callers use to link a ctrlplane tenant to
+	// an entity in another system (e.g. an Authsome organization).
+	// Returns ErrNotFound when no tenant carries the given external ID.
+	GetTenantByExternalID(ctx context.Context, externalID string) (*Tenant, error)
+
 	// ListTenants returns tenants with optional filtering.
 	ListTenants(ctx context.Context, opts ListTenantsOptions) (*TenantListResult, error)
 

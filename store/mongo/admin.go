@@ -38,6 +38,27 @@ func (s *Store) GetTenant(ctx context.Context, tenantID string) (*admin.Tenant, 
 	return fromTenantModel(&model), nil
 }
 
+func (s *Store) GetTenantByExternalID(ctx context.Context, externalID string) (*admin.Tenant, error) {
+	if externalID == "" {
+		return nil, fmt.Errorf("%w: empty external id", ctrlplane.ErrNotFound)
+	}
+
+	var model tenantModel
+
+	err := s.mdb.NewFind(&model).
+		Filter(bson.M{"external_id": externalID}).
+		Scan(ctx)
+	if err != nil {
+		if isNoDocuments(err) {
+			return nil, fmt.Errorf("%w: external id %s", ctrlplane.ErrNotFound, externalID)
+		}
+
+		return nil, fmt.Errorf("mongo: get tenant by external id failed: %w", err)
+	}
+
+	return fromTenantModel(&model), nil
+}
+
 func (s *Store) GetTenantBySlug(ctx context.Context, slug string) (*admin.Tenant, error) {
 	var model tenantModel
 

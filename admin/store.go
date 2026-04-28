@@ -13,6 +13,17 @@ type Store interface {
 	// GetTenantBySlug retrieves a tenant by slug.
 	GetTenantBySlug(ctx context.Context, slug string) (*Tenant, error)
 
+	// GetTenantByExternalID retrieves a tenant by its ExternalID. Used
+	// by callers that pair ctrlplane tenants with an external system's
+	// identifier (e.g. Authsome organization ID) and need to resolve
+	// the ctrlplane tenant from that external key without scanning
+	// every tenant.
+	//
+	// Returns ErrNotFound when no tenant carries the given external ID.
+	// An empty externalID always returns ErrNotFound; tenants without
+	// an ExternalID are not addressable through this call.
+	GetTenantByExternalID(ctx context.Context, externalID string) (*Tenant, error)
+
 	// ListTenants returns tenants with optional filtering.
 	ListTenants(ctx context.Context, opts ListTenantsOptions) (*TenantListResult, error)
 

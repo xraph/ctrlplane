@@ -81,6 +81,40 @@ func (s *Store) GetTenantBySlug(_ context.Context, slug string) (*admin.Tenant, 
 	return &tenant, nil
 }
 
+func (s *Store) GetTenantByExternalID(_ context.Context, externalID string) (*admin.Tenant, error) {
+	if externalID == "" {
+		return nil, fmt.Errorf("%w: empty external id", ctrlplane.ErrNotFound)
+	}
+
+	var match *admin.Tenant
+
+	err := s.db.View(func(txn *badger.Txn) error {
+		return s.iterate(txn, prefixTenant, func(_ string, val []byte) error {
+			if match != nil {
+				return nil
+			}
+			var tenant admin.Tenant
+			if err := json.Unmarshal(val, &tenant); err != nil {
+				return fmt.Errorf("badger: json unmarshal failed: %w", err)
+			}
+			if tenant.ExternalID == externalID {
+				clone := tenant
+				match = &clone
+			}
+			return nil
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if match == nil {
+		return nil, fmt.Errorf("%w: external id %s", ctrlplane.ErrNotFound, externalID)
+	}
+
+	return match, nil
+}
+
 func (s *Store) ListTenants(_ context.Context, opts admin.ListTenantsOptions) (*admin.TenantListResult, error) {
 	var items []*admin.Tenant
 

@@ -45,6 +45,25 @@ func (s *Store) GetTenant(_ context.Context, tenantID string) (*admin.Tenant, er
 	return nil, fmt.Errorf("%w: tenant %s", ctrlplane.ErrNotFound, tenantID)
 }
 
+func (s *Store) GetTenantByExternalID(_ context.Context, externalID string) (*admin.Tenant, error) {
+	if externalID == "" {
+		return nil, fmt.Errorf("%w: empty external id", ctrlplane.ErrNotFound)
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	for _, t := range s.tenants {
+		if t.ExternalID == externalID {
+			clone := *t
+
+			return &clone, nil
+		}
+	}
+
+	return nil, fmt.Errorf("%w: external id %s", ctrlplane.ErrNotFound, externalID)
+}
+
 func (s *Store) GetTenantBySlug(_ context.Context, slug string) (*admin.Tenant, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

@@ -48,6 +48,39 @@ func (s *Store) GetTenant(ctx context.Context, tenantID string) (*admin.Tenant, 
 	return tenant, nil
 }
 
+func (s *Store) GetTenantByExternalID(ctx context.Context, externalID string) (*admin.Tenant, error) {
+	if externalID == "" {
+		return nil, fmt.Errorf("%w: empty external id", ctrlplane.ErrNotFound)
+	}
+
+	var model tenantModel
+
+	err := s.pg.NewSelect(&model).
+		Where("external_id = $1", externalID).
+		Scan(ctx)
+	if err != nil {
+		if isNoRows(err) {
+			return nil, fmt.Errorf("%w: external id %s", ctrlplane.ErrNotFound, externalID)
+		}
+
+		return nil, fmt.Errorf("postgres: get tenant by external id failed: %w", err)
+	}
+
+	tenant := &admin.Tenant{
+		Entity: ctrlplane.Entity{
+			ID:        model.ID,
+			CreatedAt: model.CreatedAt,
+			UpdatedAt: model.UpdatedAt,
+		},
+		ExternalID: model.ExternalID,
+		Slug:       model.Slug,
+		Name:       model.Name,
+		Status:     admin.TenantStatus(model.Status),
+	}
+
+	return tenant, nil
+}
+
 func (s *Store) GetTenantBySlug(ctx context.Context, slug string) (*admin.Tenant, error) {
 	var model tenantModel
 

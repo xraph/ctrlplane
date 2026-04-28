@@ -111,6 +111,24 @@ func (s *service) GetTenant(ctx context.Context, tenantID string) (*Tenant, erro
 	return tenant, nil
 }
 
+// GetTenantByExternalID returns a tenant by its ExternalID. Same auth
+// model as GetTenant — any authenticated caller may resolve a tenant
+// they hold the external key for; the upstream system that issued
+// the key is the gatekeeper.
+func (s *service) GetTenantByExternalID(ctx context.Context, externalID string) (*Tenant, error) {
+	_, err := auth.RequireClaims(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("get tenant by external id: %w", err)
+	}
+
+	tenant, err := s.store.GetTenantByExternalID(ctx, externalID)
+	if err != nil {
+		return nil, fmt.Errorf("get tenant by external id: %w", err)
+	}
+
+	return tenant, nil
+}
+
 // ListTenants returns tenants with optional filtering.
 func (s *service) ListTenants(ctx context.Context, opts ListTenantsOptions) (*TenantListResult, error) {
 	claims, err := auth.RequireClaims(ctx)
