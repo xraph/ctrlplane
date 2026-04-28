@@ -380,9 +380,20 @@ func (s *service) ListProviders(ctx context.Context) ([]ProviderStatus, error) {
 			capStrings = append(capStrings, string(c))
 		}
 
+		var loc *ProviderLocation
+		if info.Location != nil {
+			loc = &ProviderLocation{
+				Latitude:  info.Location.Latitude,
+				Longitude: info.Location.Longitude,
+				Country:   info.Location.Country,
+				City:      info.Location.City,
+			}
+		}
+
 		statuses = append(statuses, ProviderStatus{
 			Name:         info.Name,
 			Region:       info.Region,
+			Location:     loc,
 			Healthy:      true,
 			Capabilities: capStrings,
 		})

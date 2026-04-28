@@ -38,12 +38,19 @@ func New(opts ...Option) (*Provider, error) {
 	return p, nil
 }
 
-// Info returns metadata about this provider.
+// Info returns metadata about this provider. Local Docker has a
+// fixed region of "local" with a default localhost location so studio
+// catalog endpoints surface a usable region in dev environments
+// where no datacenters have been registered yet.
 func (p *Provider) Info() provider.ProviderInfo {
 	return provider.ProviderInfo{
 		Name:    "docker",
 		Version: "1.0.0",
 		Region:  "local",
+		Location: &provider.Location{
+			Country: "Local",
+			City:    "Localhost",
+		},
 	}
 }
 

@@ -37,6 +37,8 @@ func New(opts ...Option) (*Provider, error) {
 		cfg: Config{
 			Namespace: "default",
 			Region:    "local",
+			Country:   "Local",
+			City:      "Localhost",
 		},
 	}
 
@@ -65,12 +67,18 @@ func New(opts ...Option) (*Provider, error) {
 	return p, nil
 }
 
-// Info returns metadata about this provider.
+// Info returns metadata about this provider, including a default
+// location so studio's catalog endpoints surface a usable region in
+// dev environments without explicit per-cluster geographic config.
 func (p *Provider) Info() provider.ProviderInfo {
 	return provider.ProviderInfo{
 		Name:    "kubernetes",
 		Version: "0.1.0",
 		Region:  p.cfg.Region,
+		Location: &provider.Location{
+			Country: p.cfg.Country,
+			City:    p.cfg.City,
+		},
 	}
 }
 

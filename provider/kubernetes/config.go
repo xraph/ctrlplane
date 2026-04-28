@@ -17,6 +17,18 @@ type Config struct {
 	// Region is the region label reported in provider info.
 	Region string `default:"local" env:"CP_K8S_REGION" json:"region"`
 
+	// Country is reported as part of the provider's Location in
+	// ProviderInfo. Defaults to "Local" so dev environments without
+	// explicit configuration still surface a usable region in the
+	// studio catalog. Override for production clusters with the real
+	// country (e.g. "US").
+	Country string `default:"Local" env:"CP_K8S_COUNTRY" json:"country"`
+
+	// City is reported as part of the provider's Location. Defaults
+	// to "Localhost" for the same reason as Country. Override for
+	// production with the cluster's geographic city.
+	City string `default:"Localhost" env:"CP_K8S_CITY" json:"city"`
+
 	// InCluster forces in-cluster configuration only, skipping the local
 	// kubeconfig fallback. Use this in production to prevent accidentally
 	// picking up a developer's local kubeconfig.

@@ -6,11 +6,25 @@ import (
 	"github.com/xraph/ctrlplane/id"
 )
 
-// ProviderInfo holds metadata about a provider.
+// Location holds geographic metadata for a provider's region. Same
+// shape as datacenter.Location but defined here so the provider
+// package doesn't depend on datacenter — keeps the import graph
+// pointing one way.
+type Location struct {
+	Latitude  float64 `json:"latitude,omitempty"`
+	Longitude float64 `json:"longitude,omitempty"`
+	Country   string  `json:"country,omitempty"`
+	City      string  `json:"city,omitempty"`
+}
+
+// ProviderInfo holds metadata about a provider. Location is optional —
+// providers that don't know where they are (e.g. a generic SaaS API
+// driver with no geographic identity) leave it nil.
 type ProviderInfo struct {
-	Name    string `json:"name"`
-	Version string `json:"version"`
-	Region  string `json:"region"`
+	Name     string    `json:"name"`
+	Version  string    `json:"version"`
+	Region   string    `json:"region"`
+	Location *Location `json:"location,omitempty"`
 }
 
 // ProvisionRequest describes what resources to create for an instance.

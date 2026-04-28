@@ -103,12 +103,26 @@ type SystemStats struct {
 }
 
 // ProviderStatus describes the operational status of a provider.
+// Location is propagated from provider.ProviderInfo when the driver
+// reports it; nil when the provider doesn't have a meaningful
+// geographic identity.
 type ProviderStatus struct {
-	Name         string   `json:"name"`
-	Region       string   `json:"region"`
-	Healthy      bool     `json:"healthy"`
-	Instances    int      `json:"instances"`
-	Capabilities []string `json:"capabilities"`
+	Name         string             `json:"name"`
+	Region       string             `json:"region"`
+	Location     *ProviderLocation  `json:"location,omitempty"`
+	Healthy      bool               `json:"healthy"`
+	Instances    int                `json:"instances"`
+	Capabilities []string           `json:"capabilities"`
+}
+
+// ProviderLocation mirrors provider.Location at the admin layer so
+// callers don't need to import the provider package just to read a
+// provider's location.
+type ProviderLocation struct {
+	Latitude  float64 `json:"latitude,omitempty"`
+	Longitude float64 `json:"longitude,omitempty"`
+	Country   string  `json:"country,omitempty"`
+	City      string  `json:"city,omitempty"`
 }
 
 // AuditQuery configures an audit log query.

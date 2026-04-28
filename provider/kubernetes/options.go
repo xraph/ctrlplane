@@ -50,6 +50,23 @@ func WithRegion(region string) Option {
 	}
 }
 
+// WithLocation sets the country/city pair reported in provider info.
+// Surfaced through the catalog/regions endpoint so the studio UI can
+// show where each region physically lives. Empty values fall back to
+// the config defaults ("Local"/"Localhost") so dev still shows a
+// non-empty location.
+func WithLocation(country, city string) Option {
+	return func(p *Provider) error {
+		if country != "" {
+			p.cfg.Country = country
+		}
+		if city != "" {
+			p.cfg.City = city
+		}
+		return nil
+	}
+}
+
 // WithLabels sets additional labels applied to all managed resources.
 func WithLabels(labels map[string]string) Option {
 	return func(p *Provider) error {
@@ -88,6 +105,14 @@ func WithConfig(cfg Config) Option {
 
 		if cfg.Region != "" {
 			p.cfg.Region = cfg.Region
+		}
+
+		if cfg.Country != "" {
+			p.cfg.Country = cfg.Country
+		}
+
+		if cfg.City != "" {
+			p.cfg.City = cfg.City
 		}
 
 		if cfg.InCluster {
