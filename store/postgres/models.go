@@ -37,19 +37,24 @@ type tenantModel struct {
 type instanceModel struct {
 	grove.BaseModel `grove:"table:cp_instances"`
 
-	ID           string    `grove:"id,pk"`
-	TenantID     string    `grove:"tenant_id,notnull"`
-	Slug         string    `grove:"slug,notnull"`
-	Name         string    `grove:"name,notnull"`
-	State        string    `grove:"state,notnull"`
-	ProviderName string    `grove:"provider_name,notnull"`
-	ProviderRef  string    `grove:"provider_ref"`
-	Region       string    `grove:"region"`
-	Image        string    `grove:"image"`
-	Config       []byte    `grove:"config,type:jsonb"`
-	Metadata     []byte    `grove:"metadata,type:jsonb"`
-	CreatedAt    time.Time `grove:"created_at,notnull"`
-	UpdatedAt    time.Time `grove:"updated_at,notnull"`
+	ID           string `grove:"id,pk"`
+	TenantID     string `grove:"tenant_id,notnull"`
+	Slug         string `grove:"slug,notnull"`
+	Name         string `grove:"name,notnull"`
+	State        string `grove:"state,notnull"`
+	ProviderName string `grove:"provider_name,notnull"`
+	ProviderRef  string `grove:"provider_ref"`
+	Region       string `grove:"region"`
+	Image        string `grove:"image"`
+	Config       []byte `grove:"config,type:jsonb"`
+	Metadata     []byte `grove:"metadata,type:jsonb"`
+	// Endpoints are produced by the provider (Provision / Status) and
+	// consumed by routing — TraefikRouter reads them to publish the
+	// public hostname. JSONB lets the slice round-trip the same way
+	// Labels/Metadata do on cp_datacenters.
+	Endpoints []byte    `grove:"endpoints,type:jsonb"`
+	CreatedAt time.Time `grove:"created_at,notnull"`
+	UpdatedAt time.Time `grove:"updated_at,notnull"`
 }
 
 // deploymentModel is the database model for deploy.Deployment.
@@ -276,6 +281,14 @@ type templateModel struct {
 // --- Conversion helpers ---
 
 func toInstanceModel(inst *instance.Instance) *instanceModel {
+	var endpointsBytes []byte
+
+	if len(inst.Endpoints) > 0 {
+		if data, err := json.Marshal(inst.Endpoints); err == nil {
+			endpointsBytes = data
+		}
+	}
+
 	return &instanceModel{
 		ID:           inst.ID.String(),
 		TenantID:     inst.TenantID,
@@ -286,12 +299,19 @@ func toInstanceModel(inst *instance.Instance) *instanceModel {
 		ProviderRef:  inst.ProviderRef,
 		Region:       inst.Region,
 		Image:        inst.Image,
+		Endpoints:    endpointsBytes,
 		CreatedAt:    inst.CreatedAt,
 		UpdatedAt:    inst.UpdatedAt,
 	}
 }
 
 func fromInstanceModel(m *instanceModel) *instance.Instance {
+	var endpoints []provider.Endpoint
+
+	if len(m.Endpoints) > 0 {
+		_ = json.Unmarshal(m.Endpoints, &endpoints)
+	}
+
 	return &instance.Instance{
 		Entity: ctrlplane.Entity{
 			ID:        id.MustParse(m.ID),
@@ -306,6 +326,7 @@ func fromInstanceModel(m *instanceModel) *instance.Instance {
 		ProviderRef:  m.ProviderRef,
 		Region:       m.Region,
 		Image:        m.Image,
+		Endpoints:    endpoints,
 	}
 }
 

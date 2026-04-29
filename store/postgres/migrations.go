@@ -449,5 +449,76 @@ CREATE INDEX IF NOT EXISTS idx_cp_audit_entries_created ON cp_audit_entries (cre
 				return err
 			},
 		},
+		// Datacenters table — was missing from the initial migration
+		// set, which meant the postgres backend silently couldn't host
+		// datacenters. Mongo deployments worked because mongo creates
+		// collections lazily on first insert and indexes are configured
+		// separately (see store/mongo/store.go::migrationIndexes).
+		//
+		// (tenant_id, slug) is unique by design: every backend layer
+		// pre-checks for duplicates in datacenter.service.Create, but
+		// the constraint here is the race-free backstop for concurrent
+		// creators (e.g. two studios booting simultaneously and both
+		// running the platform-shared datacenter seeder).
+		&migrate.Migration{
+			Name:    "create_cp_datacenters",
+			Version: "20240101000016",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `
+CREATE TABLE IF NOT EXISTS cp_datacenters (
+    id              TEXT PRIMARY KEY,
+    tenant_id       TEXT NOT NULL,
+    name            TEXT NOT NULL,
+    slug            TEXT NOT NULL,
+    provider_name   TEXT NOT NULL,
+    region          TEXT NOT NULL,
+    zone            TEXT NOT NULL DEFAULT '',
+    status          TEXT NOT NULL,
+    latitude        DOUBLE PRECISION NOT NULL DEFAULT 0,
+    longitude       DOUBLE PRECISION NOT NULL DEFAULT 0,
+    country         TEXT NOT NULL DEFAULT '',
+    city            TEXT NOT NULL DEFAULT '',
+    max_instances   INT NOT NULL DEFAULT 0,
+    max_cpu_millis  INT NOT NULL DEFAULT 0,
+    max_memory_mb   INT NOT NULL DEFAULT 0,
+    labels          JSONB,
+    metadata        JSONB,
+    last_checked_at TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cp_datacenters_tenant_slug ON cp_datacenters (tenant_id, slug);
+CREATE INDEX IF NOT EXISTS idx_cp_datacenters_provider ON cp_datacenters (provider_name);
+CREATE INDEX IF NOT EXISTS idx_cp_datacenters_region ON cp_datacenters (region);
+`)
+
+				return err
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `DROP TABLE IF EXISTS cp_datacenters`)
+
+				return err
+			},
+		},
+		// cp_instances was created without an endpoints column, so any
+		// pg-backed deployment dropped provider-supplied URLs/ports on
+		// every reload. Adding it as a forward-compatible ALTER preserves
+		// existing rows; the column defaults to NULL which fromInstanceModel
+		// already treats as "no endpoints".
+		&migrate.Migration{
+			Name:    "add_endpoints_to_cp_instances",
+			Version: "20240101000017",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `ALTER TABLE cp_instances ADD COLUMN IF NOT EXISTS endpoints JSONB`)
+
+				return err
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `ALTER TABLE cp_instances DROP COLUMN IF EXISTS endpoints`)
+
+				return err
+			},
+		},
 	)
 }
