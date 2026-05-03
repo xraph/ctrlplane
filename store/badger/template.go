@@ -9,12 +9,12 @@ import (
 	"github.com/dgraph-io/badger/v4"
 
 	ctrlplane "github.com/xraph/ctrlplane"
-	"github.com/xraph/ctrlplane/deploy"
 	"github.com/xraph/ctrlplane/id"
+	"github.com/xraph/ctrlplane/template"
 )
 
-// InsertTemplate persists a new deployment template.
-func (s *Store) InsertTemplate(_ context.Context, t *deploy.Template) error {
+// InsertTemplate persists a new workload template.
+func (s *Store) InsertTemplate(_ context.Context, t *template.Template) error {
 	return s.db.Update(func(txn *badger.Txn) error {
 		key := prefixTemplate + idStr(t.ID)
 
@@ -31,9 +31,9 @@ func (s *Store) InsertTemplate(_ context.Context, t *deploy.Template) error {
 	})
 }
 
-// GetTemplate retrieves a deployment template by ID within a tenant.
-func (s *Store) GetTemplate(_ context.Context, tenantID string, templateID id.ID) (*deploy.Template, error) {
-	var t deploy.Template
+// GetTemplate retrieves a workload template by ID within a tenant.
+func (s *Store) GetTemplate(_ context.Context, tenantID string, templateID id.ID) (*template.Template, error) {
+	var t template.Template
 
 	err := s.db.View(func(txn *badger.Txn) error {
 		key := prefixTemplate + idStr(templateID)
@@ -55,12 +55,12 @@ func (s *Store) GetTemplate(_ context.Context, tenantID string, templateID id.ID
 	return &t, nil
 }
 
-// UpdateTemplate persists changes to an existing deployment template.
-func (s *Store) UpdateTemplate(_ context.Context, t *deploy.Template) error {
+// UpdateTemplate persists changes to an existing template.
+func (s *Store) UpdateTemplate(_ context.Context, t *template.Template) error {
 	return s.db.Update(func(txn *badger.Txn) error {
 		key := prefixTemplate + idStr(t.ID)
 
-		var existing deploy.Template
+		var existing template.Template
 		if err := s.get(txn, key, &existing); err != nil {
 			return fmt.Errorf("%w: template %s", ctrlplane.ErrNotFound, t.ID)
 		}
@@ -71,12 +71,12 @@ func (s *Store) UpdateTemplate(_ context.Context, t *deploy.Template) error {
 	})
 }
 
-// DeleteTemplate removes a deployment template.
+// DeleteTemplate removes a template.
 func (s *Store) DeleteTemplate(_ context.Context, tenantID string, templateID id.ID) error {
 	return s.db.Update(func(txn *badger.Txn) error {
 		key := prefixTemplate + idStr(templateID)
 
-		var t deploy.Template
+		var t template.Template
 		if err := s.get(txn, key, &t); err != nil {
 			return fmt.Errorf("%w: template %s", ctrlplane.ErrNotFound, templateID)
 		}
@@ -89,13 +89,13 @@ func (s *Store) DeleteTemplate(_ context.Context, tenantID string, templateID id
 	})
 }
 
-// ListTemplates returns a paginated list of deployment templates for a tenant.
-func (s *Store) ListTemplates(_ context.Context, tenantID string, opts deploy.ListOptions) (*deploy.TemplateListResult, error) {
-	var items []*deploy.Template
+// ListTemplates returns a paginated list of templates for a tenant.
+func (s *Store) ListTemplates(_ context.Context, tenantID string, opts template.ListOptions) (*template.ListResult, error) {
+	var items []*template.Template
 
 	err := s.db.View(func(txn *badger.Txn) error {
 		return s.iterate(txn, prefixTemplate, func(_ string, val []byte) error {
-			var t deploy.Template
+			var t template.Template
 			if err := json.Unmarshal(val, &t); err != nil {
 				return fmt.Errorf("badger: json unmarshal failed: %w", err)
 			}
@@ -126,7 +126,7 @@ func (s *Store) ListTemplates(_ context.Context, tenantID string, opts deploy.Li
 
 	items = items[:limit]
 
-	return &deploy.TemplateListResult{
+	return &template.ListResult{
 		Items: items,
 		Total: total,
 	}, nil

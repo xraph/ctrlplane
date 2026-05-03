@@ -107,12 +107,12 @@ type SystemStats struct {
 // reports it; nil when the provider doesn't have a meaningful
 // geographic identity.
 type ProviderStatus struct {
-	Name         string             `json:"name"`
-	Region       string             `json:"region"`
-	Location     *ProviderLocation  `json:"location,omitempty"`
-	Healthy      bool               `json:"healthy"`
-	Instances    int                `json:"instances"`
-	Capabilities []string           `json:"capabilities"`
+	Name         string            `json:"name"`
+	Region       string            `json:"region"`
+	Location     *ProviderLocation `json:"location,omitempty"`
+	Healthy      bool              `json:"healthy"`
+	Instances    int               `json:"instances"`
+	Capabilities []string          `json:"capabilities"`
 }
 
 // ProviderLocation mirrors provider.Location at the admin layer so

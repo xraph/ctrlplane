@@ -22,7 +22,7 @@ func (s *Store) InsertDatacenter(ctx context.Context, dc *datacenter.Datacenter)
 }
 
 // GetDatacenterByID retrieves a datacenter by ID. Returns the DC when
-// it belongs to tenantID OR when it's platform-shared (TenantID = '').
+// it belongs to tenantID OR when it's platform-shared (TenantID = ”).
 func (s *Store) GetDatacenterByID(ctx context.Context, tenantID string, datacenterID id.ID) (*datacenter.Datacenter, error) {
 	var model datacenterModel
 
@@ -52,6 +52,7 @@ func (s *Store) GetDatacenterBySlug(ctx context.Context, tenantID string, slug s
 	if err != nil {
 		return nil, fmt.Errorf("postgres: get datacenter by slug: %w", err)
 	}
+
 	if len(models) == 0 {
 		return nil, fmt.Errorf("%w: datacenter slug %s", ctrlplane.ErrNotFound, slug)
 	}
@@ -60,14 +61,16 @@ func (s *Store) GetDatacenterBySlug(ctx context.Context, tenantID string, slug s
 	for i := range models {
 		if models[i].TenantID == tenantID {
 			pick = &models[i]
+
 			break
 		}
 	}
+
 	return fromDatacenterModel(pick), nil
 }
 
 // ListDatacenters returns datacenters visible to tenantID — both
-// tenant-owned and platform-shared (TenantID = '').
+// tenant-owned and platform-shared (TenantID = ”).
 func (s *Store) ListDatacenters(ctx context.Context, tenantID string, opts datacenter.ListOptions) (*datacenter.ListResult, error) {
 	var models []datacenterModel
 

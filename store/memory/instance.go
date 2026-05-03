@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 
 	ctrlplane "github.com/xraph/ctrlplane"
 	"github.com/xraph/ctrlplane/id"
@@ -81,6 +82,16 @@ func (s *Store) List(_ context.Context, tenantID string, opts instance.ListOptio
 
 		if opts.Datacenter != "" && idStr(inst.DatacenterID) != opts.Datacenter {
 			continue
+		}
+
+		// opts.Label is "key=value" — match against the instance's
+		// Labels map. Used by workload.ListInstances to scope to
+		// replicas of a single workload via "ctrlplane.workload=<id>".
+		if opts.Label != "" {
+			key, val, ok := strings.Cut(opts.Label, "=")
+			if ok && key != "" && inst.Labels[key] != val {
+				continue
+			}
 		}
 
 		clone := *inst

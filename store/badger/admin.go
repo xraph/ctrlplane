@@ -93,14 +93,17 @@ func (s *Store) GetTenantByExternalID(_ context.Context, externalID string) (*ad
 			if match != nil {
 				return nil
 			}
+
 			var tenant admin.Tenant
 			if err := json.Unmarshal(val, &tenant); err != nil {
 				return fmt.Errorf("badger: json unmarshal failed: %w", err)
 			}
+
 			if tenant.ExternalID == externalID {
 				clone := tenant
 				match = &clone
 			}
+
 			return nil
 		})
 	})

@@ -81,7 +81,7 @@ templ DeployRollbackPage(data RollbackFormData) {
 										<span class="font-medium">v{ strconv.Itoa(rel.Version) }</span>
 									}
 									@table.Cell() {
-										<span class="font-mono text-xs">{ rel.Image }</span>
+										<span class="font-mono text-xs">{ mainSnapshotImage(rel.Services) }</span>
 									}
 									@table.Cell() {
 										if rel.Active {

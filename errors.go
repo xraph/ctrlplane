@@ -43,4 +43,9 @@ var (
 
 	// ErrDatacenterUnavailable indicates the datacenter is not accepting new instances.
 	ErrDatacenterUnavailable = errors.New("ctrlplane: datacenter unavailable")
+
+	// ErrNotImplemented indicates a method is not yet implemented on
+	// this backend. Used by store backends that satisfy an interface
+	// for compilation but defer real persistence to a later phase.
+	ErrNotImplemented = errors.New("ctrlplane: not implemented")
 )

@@ -6,6 +6,7 @@ import (
 	"io"
 
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -95,34 +96,68 @@ func (p *Provider) Capabilities() []provider.Capability {
 	}
 }
 
-// Provision creates a Kubernetes Deployment, Service, and ConfigMap for an instance.
+// Provision creates a Kubernetes workload for an instance.
+//
+// For req.Kind=KindDeployment (default): emits a Deployment + Service +
+// per-service ConfigMaps. Pod has Main + Sidecars in containers[] and
+// Inits in initContainers[].
+//
+// For req.Kind=KindStatefulSet: emits a StatefulSet + headless Service
+// (ClusterIP=None) + volumeClaimTemplates per persistent volume + per-
+// service ConfigMaps. Each replica gets its own PVC by name.
 func (p *Provider) Provision(ctx context.Context, req provider.ProvisionRequest) (*provider.ProvisionResult, error) {
 	labels := instanceLabels(req.InstanceID, req.TenantID, p.cfg.Labels)
 	ns := p.cfg.Namespace
 
-	// Create ConfigMap if env vars are provided.
-	if cm := buildConfigMap(req, ns, labels); cm != nil {
+	// Create per-service ConfigMaps before the controller object so the
+	// pods can mount them on first start.
+	for _, cm := range buildConfigMaps(req, ns, labels) {
 		if _, err := p.client.CoreV1().ConfigMaps(ns).Create(ctx, cm, metav1.CreateOptions{}); err != nil {
-			return nil, fmt.Errorf("kubernetes: create configmap: %w", err)
+			return nil, fmt.Errorf("kubernetes: create configmap %s: %w", cm.Name, err)
 		}
 	}
 
-	// Create Deployment.
-	dep := buildDeployment(req, ns, labels)
+	switch req.Kind {
+	case provider.KindStatefulSet:
+		ss := buildStatefulSet(req, ns, labels)
+		if _, err := p.client.AppsV1().StatefulSets(ns).Create(ctx, ss, metav1.CreateOptions{}); err != nil {
+			return nil, fmt.Errorf("kubernetes: create statefulset: %w", err)
+		}
 
-	if _, err := p.client.AppsV1().Deployments(ns).Create(ctx, dep, metav1.CreateOptions{}); err != nil {
-		return nil, fmt.Errorf("kubernetes: create deployment: %w", err)
+		// StatefulSets require a headless Service for stable per-replica DNS.
+		if svc := buildService(req, ns, labels, true); svc != nil {
+			if _, err := p.client.CoreV1().Services(ns).Create(ctx, svc, metav1.CreateOptions{}); err != nil {
+				return nil, fmt.Errorf("kubernetes: create headless service: %w", err)
+			}
+		}
+	default: // KindDeployment (also covers empty-string for legacy paths)
+		dep := buildDeployment(req, ns, labels)
+		if _, err := p.client.AppsV1().Deployments(ns).Create(ctx, dep, metav1.CreateOptions{}); err != nil {
+			return nil, fmt.Errorf("kubernetes: create deployment: %w", err)
+		}
+
+		if svc := buildService(req, ns, labels, false); svc != nil {
+			if _, err := p.client.CoreV1().Services(ns).Create(ctx, svc, metav1.CreateOptions{}); err != nil {
+				return nil, fmt.Errorf("kubernetes: create service: %w", err)
+			}
+		}
 	}
 
-	// Create Service if ports are defined.
-	if svc := buildService(req, ns, labels); svc != nil {
-		if _, err := p.client.CoreV1().Services(ns).Create(ctx, svc, metav1.CreateOptions{}); err != nil {
-			return nil, fmt.Errorf("kubernetes: create service: %w", err)
-		}
+	// Build per-service refs for the result. Each service-name maps to
+	// the workload-level provider ref plus the service name — k8s
+	// doesn't have stable per-container IDs at provision time (Pod
+	// names are pattern-derived, container names are svc.Name within
+	// the Pod), so we record the addressable form callers use.
+	serviceRefs := make(map[string]string, len(req.Services))
+	pref := providerRef(ns, req.InstanceID)
+
+	for i := range req.Services {
+		serviceRefs[req.Services[i].Name] = pref + "/" + req.Services[i].Name
 	}
 
 	return &provider.ProvisionResult{
-		ProviderRef: providerRef(ns, req.InstanceID),
+		ProviderRef: pref,
+		ServiceRefs: serviceRefs,
 	}, nil
 }
 
@@ -132,21 +167,60 @@ func (p *Provider) Deprovision(ctx context.Context, instanceID id.ID) error {
 	name := deploymentName(instanceID)
 	propagation := metav1.DeletePropagationForeground
 
-	// Delete Deployment.
-	err := p.client.AppsV1().Deployments(ns).Delete(ctx, name, metav1.DeleteOptions{
+	// Try Deployment + StatefulSet — either may be present depending
+	// on Kind. Convergent semantics: "already gone" is the desired
+	// end-state, so a NotFound from both is success. We surface a
+	// real error only when the API reports something other than 404
+	// from at least one of the deletes.
+	depErr := p.client.AppsV1().Deployments(ns).Delete(ctx, name, metav1.DeleteOptions{
 		PropagationPolicy: &propagation,
 	})
-	if err != nil {
-		return fmt.Errorf("kubernetes: delete deployment: %w", err)
+	ssErr := p.client.AppsV1().StatefulSets(ns).Delete(ctx, name, metav1.DeleteOptions{
+		PropagationPolicy: &propagation,
+	})
+
+	if isRealK8sError(depErr) && isRealK8sError(ssErr) {
+		return fmt.Errorf("kubernetes: delete workload: deployment: %w; statefulset: %w", depErr, ssErr)
 	}
 
-	// Delete Service (ignore not found).
+	// Delete Service (NotFound = already gone, fine).
 	_ = p.client.CoreV1().Services(ns).Delete(ctx, serviceName(instanceID), metav1.DeleteOptions{})
 
-	// Delete ConfigMap (ignore not found).
-	_ = p.client.CoreV1().ConfigMaps(ns).Delete(ctx, configMapName(instanceID), metav1.DeleteOptions{})
+	// Delete every per-service ConfigMap matching our label selector.
+	cms, listErr := p.client.CoreV1().ConfigMaps(ns).List(ctx, metav1.ListOptions{
+		LabelSelector: instanceSelector(instanceID),
+	})
+	if listErr == nil {
+		for i := range cms.Items {
+			_ = p.client.CoreV1().ConfigMaps(ns).Delete(ctx, cms.Items[i].Name, metav1.DeleteOptions{})
+		}
+	}
 
 	return nil
+}
+
+// isRealK8sError returns true when err is non-nil and is NOT the
+// NotFound case. Used to make Deprovision convergent — a 404 from
+// the API means the resource is already gone, which is the
+// desired end-state, not a failure.
+func isRealK8sError(err error) bool {
+	if err == nil {
+		return false
+	}
+	// k8s status errors expose Code 404 via the Status() method on
+	// errors.APIStatus implementations. Probe defensively without
+	// importing k8s.io/apimachinery/pkg/api/errors here — the error
+	// string check covers the path where the error wasn't an
+	// APIStatus type.
+	type statusErr interface{ Status() metav1.Status }
+
+	if se, ok := err.(statusErr); ok {
+		if se.Status().Code == 404 {
+			return false
+		}
+	}
+
+	return true
 }
 
 // Start scales the deployment to at least 1 replica.
@@ -201,42 +275,61 @@ func (p *Provider) Status(ctx context.Context, instanceID id.ID) (*provider.Inst
 	}, nil
 }
 
-// Deploy pushes a new release by updating the deployment image and ConfigMap.
+// Deploy pushes a new release by updating each targeted service's
+// container image and ConfigMap. Services not listed in req.Services
+// are left at their current image — Kubernetes performs a rolling
+// update only on the changed containers.
 func (p *Provider) Deploy(ctx context.Context, req provider.DeployRequest) (*provider.DeployResult, error) {
 	ns := p.cfg.Namespace
 	name := deploymentName(req.InstanceID)
 
-	dep, err := p.client.AppsV1().Deployments(ns).Get(ctx, name, metav1.GetOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("kubernetes: get deployment for deploy: %w", err)
+	// Try Deployment first; fall through to StatefulSet if not present.
+	dep, depErr := p.client.AppsV1().Deployments(ns).Get(ctx, name, metav1.GetOptions{})
+	if depErr == nil {
+		applyServiceUpdates(dep.Spec.Template.Spec.Containers, dep.Spec.Template.Spec.InitContainers, req.Services)
+
+		if dep.Annotations == nil {
+			dep.Annotations = make(map[string]string)
+		}
+
+		dep.Annotations[annotationReleaseID] = req.ReleaseID.String()
+
+		if _, err := p.client.AppsV1().Deployments(ns).Update(ctx, dep, metav1.UpdateOptions{}); err != nil {
+			return nil, fmt.Errorf("kubernetes: update deployment: %w", err)
+		}
+	} else {
+		ss, ssErr := p.client.AppsV1().StatefulSets(ns).Get(ctx, name, metav1.GetOptions{})
+		if ssErr != nil {
+			return nil, fmt.Errorf("kubernetes: get workload for deploy: deployment: %w; statefulset: %w", depErr, ssErr)
+		}
+
+		applyServiceUpdates(ss.Spec.Template.Spec.Containers, ss.Spec.Template.Spec.InitContainers, req.Services)
+
+		if ss.Annotations == nil {
+			ss.Annotations = make(map[string]string)
+		}
+
+		ss.Annotations[annotationReleaseID] = req.ReleaseID.String()
+
+		if _, err := p.client.AppsV1().StatefulSets(ns).Update(ctx, ss, metav1.UpdateOptions{}); err != nil {
+			return nil, fmt.Errorf("kubernetes: update statefulset: %w", err)
+		}
 	}
 
-	// Update image on the first container.
-	if len(dep.Spec.Template.Spec.Containers) > 0 {
-		dep.Spec.Template.Spec.Containers[0].Image = req.Image
-	}
+	// Update each service's ConfigMap when env was provided. Missing
+	// ConfigMaps (services that previously had no env) get created.
+	for _, sd := range req.Services {
+		if len(sd.Env) == 0 {
+			continue
+		}
 
-	// Update release annotation.
-	if dep.Annotations == nil {
-		dep.Annotations = make(map[string]string)
-	}
-
-	dep.Annotations[annotationReleaseID] = req.ReleaseID.String()
-
-	if _, err := p.client.AppsV1().Deployments(ns).Update(ctx, dep, metav1.UpdateOptions{}); err != nil {
-		return nil, fmt.Errorf("kubernetes: update deployment: %w", err)
-	}
-
-	// Update ConfigMap if env vars are provided.
-	if len(req.Env) > 0 {
-		cmName := configMapName(req.InstanceID)
+		cmName := configMapNameFor(req.InstanceID, sd.Name)
 
 		cm, getErr := p.client.CoreV1().ConfigMaps(ns).Get(ctx, cmName, metav1.GetOptions{})
 		if getErr == nil {
-			cm.Data = req.Env
-
+			cm.Data = sd.Env
 			if _, updateErr := p.client.CoreV1().ConfigMaps(ns).Update(ctx, cm, metav1.UpdateOptions{}); updateErr != nil {
-				return nil, fmt.Errorf("kubernetes: update configmap: %w", updateErr)
+				return nil, fmt.Errorf("kubernetes: update configmap %s: %w", cmName, updateErr)
 			}
 		}
 	}
@@ -245,6 +338,28 @@ func (p *Provider) Deploy(ctx context.Context, req provider.DeployRequest) (*pro
 		ProviderRef: providerRef(ns, req.InstanceID),
 		Status:      "deployed",
 	}, nil
+}
+
+// applyServiceUpdates mutates Containers and InitContainers in place,
+// updating each container whose Name matches a ServiceDeploySpec entry.
+// Services not listed in updates are left untouched.
+func applyServiceUpdates(containers, initContainers []corev1.Container, updates []provider.ServiceDeploySpec) {
+	byName := make(map[string]provider.ServiceDeploySpec, len(updates))
+	for _, u := range updates {
+		byName[u.Name] = u
+	}
+
+	for i := range containers {
+		if u, ok := byName[containers[i].Name]; ok {
+			containers[i].Image = u.Image
+		}
+	}
+
+	for i := range initContainers {
+		if u, ok := byName[initContainers[i].Name]; ok {
+			initContainers[i].Image = u.Image
+		}
+	}
 }
 
 // Rollback reverts to a previous release (no-op: ctrlplane handles release state).
@@ -261,9 +376,26 @@ func (p *Provider) Scale(ctx context.Context, instanceID id.ID, spec provider.Re
 	return nil
 }
 
-// Resources returns current resource utilization (stub).
-func (p *Provider) Resources(_ context.Context, _ id.ID) (*provider.ResourceUsage, error) {
-	return &provider.ResourceUsage{}, nil
+// Resources returns a one-shot point-in-time sample of the
+// instance's pod resource usage via the metrics.k8s.io API.
+//
+// Sums per-container CPU + memory across every pod that matches
+// the instance's label selector (replica fan-out is handled by
+// ctrlplane's metrics package — this returns the raw aggregate
+// for one Instance, which on k8s typically means one pod-set
+// owned by a Deployment).
+//
+// Network bytes are zero — metrics-server doesn't expose them.
+// Operators who need per-pod network counters can wire a Prometheus
+// scraper at the metrics.Service layer; the dashboard renders
+// gracefully when those fields are zero.
+//
+// When metrics-server isn't installed, the underlying API returns
+// 404 and Resources reports a zero-valued usage rather than an
+// error — the metrics poller treats that as a missing sample, so
+// the dashboard shows "—" rather than perpetual errors.
+func (p *Provider) Resources(ctx context.Context, instanceID id.ID) (*provider.ResourceUsage, error) {
+	return fetchPodMetrics(ctx, p.client, p.cfg.Namespace, instanceID)
 }
 
 // Logs streams logs for the instance.

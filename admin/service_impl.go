@@ -16,15 +16,35 @@ import (
 	"github.com/xraph/ctrlplane/secrets"
 )
 
+// ProviderHealthGetter is the read surface admin needs to surface
+// live provider reachability through ListProviders. The
+// providerhealth.Cache type satisfies this interface; tests can
+// stub it out with anything that returns the same shape.
+//
+// Defined here (instead of importing providerhealth.Cache directly)
+// so admin doesn't depend on a sibling subsystem and so consumers
+// can wire any health source they like.
+type ProviderHealthGetter interface {
+	Get(name string) (ProviderHealthSnapshot, bool)
+}
+
+// ProviderHealthSnapshot mirrors providerhealth.Status's read fields.
+type ProviderHealthSnapshot struct {
+	Healthy   bool
+	Message   string
+	CheckedAt time.Time
+}
+
 // service implements the Service interface.
 type service struct {
-	store     Store
-	instStore instance.Store
-	netStore  network.Store
-	secStore  secrets.Store
-	providers *provider.Registry
-	events    event.Bus
-	auth      auth.Provider
+	store          Store
+	instStore      instance.Store
+	netStore       network.Store
+	secStore       secrets.Store
+	providers      *provider.Registry
+	events         event.Bus
+	auth           auth.Provider
+	providerHealth ProviderHealthGetter
 }
 
 // NewService creates a new admin service.
@@ -46,6 +66,15 @@ func NewService(
 		events:    events,
 		auth:      auth,
 	}
+}
+
+// SetProviderHealth wires a live provider-health source into the
+// admin service. Optional — when unset, ListProviders falls back
+// to reporting Healthy=true for every registered provider (the
+// pre-existing behavior). Wired by app.CtrlPlane.Start once the
+// providerhealth cache is constructed.
+func (s *service) SetProviderHealth(g ProviderHealthGetter) {
+	s.providerHealth = g
 }
 
 // CreateTenant creates a new tenant.
@@ -390,11 +419,26 @@ func (s *service) ListProviders(ctx context.Context) ([]ProviderStatus, error) {
 			}
 		}
 
+		// Default to "healthy" when no live source is wired (matches
+		// the pre-existing behavior). When the providerhealth cache
+		// is attached, prefer its live read so the dashboard
+		// reflects actual provider reachability.
+		healthy := true
+		if s.providerHealth != nil {
+			if snap, ok := s.providerHealth.Get(info.Name); ok {
+				healthy = snap.Healthy
+			} else {
+				// Cache hasn't seen this provider yet (cold start
+				// window). Be honest rather than optimistic.
+				healthy = false
+			}
+		}
+
 		statuses = append(statuses, ProviderStatus{
 			Name:         info.Name,
 			Region:       info.Region,
 			Location:     loc,
-			Healthy:      true,
+			Healthy:      healthy,
 			Capabilities: capStrings,
 		})
 	}

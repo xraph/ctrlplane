@@ -72,40 +72,42 @@ templ TemplatesPage(data TemplateListPageData) {
 										</div>
 									}
 									@table.Cell() {
-										<span class="font-mono text-xs">{ tmpl.Image }</span>
+										<span class="font-mono text-xs">{ templateMainImage(tmpl) }</span>
 									}
 									@table.Cell() {
 										@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
-											{ tmpl.Strategy }
+											{ tmpl.DefaultStrategy }
 										}
 									}
 									@table.Cell() {
-										<span class="text-xs text-muted-foreground">{ compactResourceSummary(tmpl.Resources) }</span>
+										<span class="text-xs text-muted-foreground">{ compactResourceSummary(templateMainResources(tmpl)) }</span>
 									}
 									@table.Cell() {
 										<div class="flex flex-wrap items-center gap-1">
-											if len(tmpl.Ports) > 0 {
+											if len(tmpl.Services) > 1 {
 												@badge.Badge(badge.Props{Variant: badge.VariantSecondary, Class: "text-[10px] px-1.5 py-0"}) {
-													{ strconv.Itoa(len(tmpl.Ports)) } ports
+													{ strconv.Itoa(len(tmpl.Services)) } services
 												}
 											}
-											if len(tmpl.Volumes) > 0 {
+											if pCount := totalPortsAcrossTemplate(tmpl); pCount > 0 {
 												@badge.Badge(badge.Props{Variant: badge.VariantSecondary, Class: "text-[10px] px-1.5 py-0"}) {
-													{ strconv.Itoa(len(tmpl.Volumes)) } vols
+													{ strconv.Itoa(pCount) } ports
 												}
 											}
-											if len(tmpl.Secrets) > 0 {
+											if vCount := totalVolumesAcrossTemplate(tmpl); vCount > 0 {
 												@badge.Badge(badge.Props{Variant: badge.VariantSecondary, Class: "text-[10px] px-1.5 py-0"}) {
-													{ strconv.Itoa(len(tmpl.Secrets)) } secrets
+													{ strconv.Itoa(vCount) } vols
 												}
 											}
-											if len(tmpl.ConfigFiles) > 0 {
+											if sCount := totalSecretsAcrossTemplate(tmpl); sCount > 0 {
 												@badge.Badge(badge.Props{Variant: badge.VariantSecondary, Class: "text-[10px] px-1.5 py-0"}) {
-													{ strconv.Itoa(len(tmpl.ConfigFiles)) } configs
+													{ strconv.Itoa(sCount) } secrets
 												}
 											}
-											if len(tmpl.Ports) == 0 && len(tmpl.Volumes) == 0 && len(tmpl.Secrets) == 0 && len(tmpl.ConfigFiles) == 0 {
-												<span class="text-xs text-muted-foreground">--</span>
+											if eCount := totalEnvAcrossTemplate(tmpl); eCount > 0 {
+												@badge.Badge(badge.Props{Variant: badge.VariantSecondary, Class: "text-[10px] px-1.5 py-0"}) {
+													{ strconv.Itoa(eCount) } envs
+												}
 											}
 										</div>
 									}

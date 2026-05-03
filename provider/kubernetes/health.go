@@ -9,12 +9,17 @@ import (
 )
 
 // HealthCheck tests connectivity to the Kubernetes API server.
+//
+// Uses the discovery REST client directly (instead of
+// Discovery().ServerVersion(), which doesn't accept a context)
+// so the caller's ctx deadline is honored — without this, an
+// unreachable cluster blocked the providerhealth cache sweep
+// indefinitely and stalled the studio process at startup.
 func (p *Provider) HealthCheck(ctx context.Context) (*provider.HealthStatus, error) {
-	_ = ctx
-
 	start := time.Now()
 
-	_, err := p.client.Discovery().ServerVersion()
+	rest := p.client.Discovery().RESTClient()
+	_, err := rest.Get().AbsPath("/version").DoRaw(ctx)
 
 	latency := time.Since(start)
 	now := time.Now().UTC()

@@ -115,6 +115,18 @@ func migrationIndexes() map[string][]mongo.IndexModel {
 			},
 			{Keys: bson.D{{Key: "tenant_id", Value: 1}, {Key: "created_at", Value: -1}}},
 		},
+		colDatacenters: {
+			// Unique on (tenant_id, slug) — defense-in-depth against
+			// concurrent Create races. The application layer in
+			// datacenter.service.Create does the friendly pre-check;
+			// this index catches the rare race where two callers pass
+			// the check simultaneously and both reach Insert.
+			{
+				Keys:    bson.D{{Key: "tenant_id", Value: 1}, {Key: "slug", Value: 1}},
+				Options: options.Index().SetUnique(true),
+			},
+			{Keys: bson.D{{Key: "tenant_id", Value: 1}, {Key: "created_at", Value: -1}}},
+		},
 		colDeployments: {
 			{Keys: bson.D{{Key: "tenant_id", Value: 1}, {Key: "instance_id", Value: 1}, {Key: "created_at", Value: -1}}},
 		},
@@ -163,6 +175,17 @@ func migrationIndexes() map[string][]mongo.IndexModel {
 		},
 		colAuditEntries: {
 			{Keys: bson.D{{Key: "tenant_id", Value: 1}, {Key: "created_at", Value: -1}}},
+		},
+		colBootstraps: {
+			// Unique on (datacenter_id, name) — bootstrap rows are
+			// keyed by name within their datacenter, never across.
+			// Mirrors the postgres + sqlite unique index.
+			{
+				Keys:    bson.D{{Key: "datacenter_id", Value: 1}, {Key: "name", Value: 1}},
+				Options: options.Index().SetUnique(true),
+			},
+			{Keys: bson.D{{Key: "datacenter_id", Value: 1}, {Key: "created_at", Value: 1}}},
+			{Keys: bson.D{{Key: "state", Value: 1}}},
 		},
 	}
 }

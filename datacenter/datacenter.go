@@ -4,6 +4,7 @@ import (
 	"time"
 
 	ctrlplane "github.com/xraph/ctrlplane"
+	"github.com/xraph/ctrlplane/bootstrap"
 	"github.com/xraph/ctrlplane/id"
 )
 
@@ -55,6 +56,14 @@ type Datacenter struct {
 	Labels        map[string]string `db:"labels"          json:"labels,omitempty"`
 	Metadata      map[string]string `db:"metadata"        json:"metadata,omitempty"`
 	LastCheckedAt *time.Time        `db:"last_checked_at" json:"last_checked_at,omitempty"`
+
+	// BootstrapServices is the operator-declared list of platform
+	// services that auto-deploy on this datacenter. The bootstrap
+	// reconciler unions this list with hook-contributed specs (see
+	// bootstrap/hook.go) and drives the resulting set toward
+	// running. Empty / nil means the datacenter relies entirely on
+	// hook contributions (or has no shared services at all).
+	BootstrapServices []bootstrap.BootstrapServiceSpec `db:"bootstrap_services" json:"bootstrap_services,omitempty"`
 }
 
 // NewDatacenter creates a datacenter entity with a fresh ID and timestamps.

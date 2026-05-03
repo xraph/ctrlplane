@@ -41,13 +41,14 @@ func (s *Store) GetCheck(ctx context.Context, tenantID string, checkID id.ID) (*
 			CreatedAt: model.CreatedAt,
 			UpdatedAt: model.UpdatedAt,
 		},
-		TenantID:   model.TenantID,
-		InstanceID: id.MustParse(model.InstanceID),
-		Name:       model.Name,
-		Type:       health.CheckType(model.Type),
-		Enabled:    model.Enabled,
-		Interval:   time.Duration(model.Interval),
-		Timeout:    time.Duration(model.Timeout),
+		TenantID:    model.TenantID,
+		InstanceID:  id.MustParse(model.InstanceID),
+		ServiceName: model.ServiceName,
+		Name:        model.Name,
+		Type:        health.CheckType(model.Type),
+		Enabled:     model.Enabled,
+		Interval:    time.Duration(model.Interval),
+		Timeout:     time.Duration(model.Timeout),
 	}
 
 	return check, nil

@@ -31,19 +31,20 @@ const (
 	// annotationReleaseID is the annotation key for the current release ID.
 	annotationReleaseID = "ctrlplane.io/release-id"
 
-	// configMapSuffix is appended to deployment names for ConfigMaps.
+	// configMapSuffix is appended to per-service ConfigMap names.
 	configMapSuffix = "-env"
 )
 
 // deploymentName derives a Kubernetes-safe resource name from an instance ID.
 func deploymentName(instanceID id.ID) string {
-	// TypeID format: prefix_suffix. Use the full string with underscores replaced by dashes.
 	return strings.ReplaceAll(instanceID.String(), "_", "-")
 }
 
-// configMapName returns the ConfigMap name for a given instance.
-func configMapName(instanceID id.ID) string {
-	return deploymentName(instanceID) + configMapSuffix
+// configMapNameFor returns the per-service ConfigMap name. Per-service
+// ConfigMaps keep one service's env from leaking into another's
+// container as bulk EnvFrom would do with a shared map.
+func configMapNameFor(instanceID id.ID, serviceName string) string {
+	return deploymentName(instanceID) + "-" + serviceName + configMapSuffix
 }
 
 // serviceName returns the Service name for a given instance.
@@ -74,47 +75,122 @@ func instanceSelector(instanceID id.ID) string {
 	return fmt.Sprintf("%s=%s", labelInstanceID, instanceID.String())
 }
 
-// buildDeployment creates a Kubernetes Deployment spec from a ProvisionRequest.
-func buildDeployment(req provider.ProvisionRequest, namespace string, labels map[string]string) *appsv1.Deployment {
-	replicas := int32(max(min(req.Resources.Replicas, int(^int32(0))), 1)) //nolint:gosec // clamped to int32 range via min
+// replicaCountFor returns the desired replica count for a workload's
+// Deployment/StatefulSet. The Main service's Resources.Replicas is
+// authoritative; non-Main services don't carry a count (they always
+// run alongside Main).
+func replicaCountFor(req provider.ProvisionRequest) int32 {
+	const maxInt32 = int(^uint32(0) >> 1)
 
-	containers := []corev1.Container{
-		{
-			Name:  "app",
-			Image: req.Image,
-			Resources: corev1.ResourceRequirements{
-				Requests: buildResourceList(req.Resources),
-				Limits:   buildResourceList(req.Resources),
-			},
-			Ports:        buildContainerPorts(req.Ports),
-			VolumeMounts: buildVolumeMounts(req.Volumes),
-		},
+	for i := range req.Services {
+		if req.Services[i].Role == provider.RoleMain || req.Services[i].Role == "" {
+			n := req.Services[i].Resources.Replicas
+			if n < 1 {
+				n = 1
+			}
+
+			if n > maxInt32 {
+				n = maxInt32
+			}
+
+			return int32(n) //nolint:gosec // clamped above
+		}
 	}
 
-	// If env vars are provided, reference them from the ConfigMap.
-	if len(req.Env) > 0 {
-		containers[0].EnvFrom = []corev1.EnvFromSource{
+	return 1
+}
+
+// buildPodSpec assembles a PodSpec from a ProvisionRequest's Services.
+// Init services land in InitContainers (run-once before main start);
+// Main and Sidecar services land in Containers and run for the pod's
+// lifetime.
+func buildPodSpec(req provider.ProvisionRequest) corev1.PodSpec {
+	var (
+		containers     []corev1.Container
+		initContainers []corev1.Container
+		podVolumes     []corev1.Volume
+		seenVolume     = make(map[string]struct{})
+	)
+
+	for i := range req.Services {
+		svc := req.Services[i]
+		c := buildContainer(req.InstanceID, svc)
+
+		if svc.Role == provider.RoleInit {
+			initContainers = append(initContainers, c)
+		} else {
+			containers = append(containers, c)
+		}
+
+		// Aggregate volumes across services. Two services that share a
+		// volume name map to a single Pod volume the runtime mounts
+		// into both containers — the standard pattern for sharing data
+		// between Main and a Sidecar.
+		for _, v := range svc.Volumes {
+			if _, dup := seenVolume[v.Name]; dup {
+				continue
+			}
+
+			seenVolume[v.Name] = struct{}{}
+
+			podVolumes = append(podVolumes, corev1.Volume{
+				Name: v.Name,
+				VolumeSource: corev1.VolumeSource{
+					EmptyDir: &corev1.EmptyDirVolumeSource{
+						SizeLimit: resource.NewQuantity(int64(v.SizeMB)*1024*1024, resource.BinarySI),
+					},
+				},
+			})
+		}
+	}
+
+	return corev1.PodSpec{
+		Containers:     containers,
+		InitContainers: initContainers,
+		Volumes:        podVolumes,
+	}
+}
+
+// buildContainer translates one ServiceSpec into a Kubernetes Container.
+func buildContainer(instanceID id.ID, svc provider.ServiceSpec) corev1.Container {
+	c := corev1.Container{
+		Name:    svc.Name,
+		Image:   svc.Image,
+		Command: svc.Command,
+		Args:    svc.Args,
+		Resources: corev1.ResourceRequirements{
+			Requests: buildResourceList(svc.Resources),
+			Limits:   buildResourceList(svc.Resources),
+		},
+		Ports:        buildContainerPorts(svc.Ports),
+		VolumeMounts: buildVolumeMounts(svc.Volumes),
+	}
+
+	if len(svc.Env) > 0 {
+		c.EnvFrom = []corev1.EnvFromSource{
 			{
 				ConfigMapRef: &corev1.ConfigMapEnvSource{
 					LocalObjectReference: corev1.LocalObjectReference{
-						Name: configMapName(req.InstanceID),
+						Name: configMapNameFor(instanceID, svc.Name),
 					},
 				},
 			},
 		}
 	}
 
-	annotations := maps.Clone(req.Annotations)
-	if annotations == nil {
-		annotations = make(map[string]string)
-	}
+	return c
+}
+
+// buildDeployment creates a Kubernetes Deployment for a stateless
+// workload (req.Kind == KindDeployment, the default).
+func buildDeployment(req provider.ProvisionRequest, namespace string, labels map[string]string) *appsv1.Deployment {
+	replicas := replicaCountFor(req)
 
 	return &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:        deploymentName(req.InstanceID),
-			Namespace:   namespace,
-			Labels:      labels,
-			Annotations: annotations,
+			Name:      deploymentName(req.InstanceID),
+			Namespace: namespace,
+			Labels:    labels,
 		},
 		Spec: appsv1.DeploymentSpec{
 			Replicas: &replicas,
@@ -127,31 +203,128 @@ func buildDeployment(req provider.ProvisionRequest, namespace string, labels map
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: labels,
 				},
-				Spec: corev1.PodSpec{
-					Containers: containers,
-					Volumes:    buildVolumes(req.Volumes),
-				},
+				Spec: buildPodSpec(req),
 			},
 		},
 	}
 }
 
-// buildService creates a Kubernetes Service from a ProvisionRequest.
-// Returns nil if no ports are defined.
-func buildService(req provider.ProvisionRequest, namespace string, labels map[string]string) *corev1.Service {
-	if len(req.Ports) == 0 {
+// buildStatefulSet creates a StatefulSet + headless Service for a
+// stateful workload (req.Kind == KindStatefulSet). Persistent volumes
+// declared on services become volumeClaimTemplates so each replica
+// gets its own PVC.
+func buildStatefulSet(req provider.ProvisionRequest, namespace string, labels map[string]string) *appsv1.StatefulSet {
+	replicas := replicaCountFor(req)
+	podSpec := buildPodSpec(req)
+
+	// Volume claims: take every unique named volume across services
+	// and emit a volumeClaimTemplate for it. The PodSpec volumes that
+	// match these names are dropped — StatefulSet auto-injects the
+	// PVC-backed volumes from the templates.
+	claimNames := make(map[string]int64)
+
+	for i := range req.Services {
+		for _, v := range req.Services[i].Volumes {
+			if v.SizeMB > 0 {
+				claimNames[v.Name] = int64(v.SizeMB) * 1024 * 1024
+			}
+		}
+	}
+
+	templates := make([]corev1.PersistentVolumeClaim, 0, len(claimNames))
+
+	for name, size := range claimNames {
+		templates = append(templates, corev1.PersistentVolumeClaim{
+			ObjectMeta: metav1.ObjectMeta{Name: name},
+			Spec: corev1.PersistentVolumeClaimSpec{
+				AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+				Resources: corev1.VolumeResourceRequirements{
+					Requests: corev1.ResourceList{
+						corev1.ResourceStorage: *resource.NewQuantity(size, resource.BinarySI),
+					},
+				},
+			},
+		})
+	}
+
+	// Strip pod-level Volumes for any name that has a claim template —
+	// k8s will reject the spec if a Pod volume name collides with a
+	// volumeClaimTemplate name.
+	filtered := podSpec.Volumes[:0]
+
+	for _, v := range podSpec.Volumes {
+		if _, isClaim := claimNames[v.Name]; isClaim {
+			continue
+		}
+
+		filtered = append(filtered, v)
+	}
+
+	podSpec.Volumes = filtered
+
+	return &appsv1.StatefulSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      deploymentName(req.InstanceID),
+			Namespace: namespace,
+			Labels:    labels,
+		},
+		Spec: appsv1.StatefulSetSpec{
+			Replicas:    &replicas,
+			ServiceName: serviceName(req.InstanceID),
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					labelInstanceID: req.InstanceID.String(),
+				},
+			},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: labels,
+				},
+				Spec: podSpec,
+			},
+			VolumeClaimTemplates: templates,
+		},
+	}
+}
+
+// buildService creates a Kubernetes Service exposing every service's
+// ports. Each port's TargetPort is the named port on the Container so
+// k8s routes correctly even when two services in the same Pod publish
+// the same numeric port (it shouldn't, but we don't enforce
+// non-collision at this layer).
+//
+// For StatefulSets the caller passes headless=true to set ClusterIP=None
+// — required for stable per-replica DNS.
+func buildService(req provider.ProvisionRequest, namespace string, labels map[string]string, headless bool) *corev1.Service {
+	var ports []corev1.ServicePort
+
+	for i := range req.Services {
+		svc := req.Services[i]
+
+		for j, p := range svc.Ports {
+			ports = append(ports, corev1.ServicePort{
+				Name:       fmt.Sprintf("%s-%d", svc.Name, j),
+				Port:       int32(p.Container),                   //nolint:gosec // 0-65535 fits int32
+				TargetPort: intstr.FromInt32(int32(p.Container)), //nolint:gosec
+				Protocol:   toK8sProtocol(p.Protocol),
+			})
+		}
+	}
+
+	if len(ports) == 0 {
 		return nil
 	}
 
-	ports := make([]corev1.ServicePort, 0, len(req.Ports))
-	for i, p := range req.Ports {
-		sp := corev1.ServicePort{
-			Name:       fmt.Sprintf("port-%d", i),
-			Port:       int32(p.Container),                   //nolint:gosec // ports are validated to fit int32 range (0-65535)
-			TargetPort: intstr.FromInt32(int32(p.Container)), //nolint:gosec // ports are validated to fit int32 range (0-65535)
-			Protocol:   toK8sProtocol(p.Protocol),
-		}
-		ports = append(ports, sp)
+	spec := corev1.ServiceSpec{
+		Selector: map[string]string{
+			labelInstanceID: req.InstanceID.String(),
+		},
+		Ports: ports,
+		Type:  corev1.ServiceTypeClusterIP,
+	}
+
+	if headless {
+		spec.ClusterIP = corev1.ClusterIPNone
 	}
 
 	return &corev1.Service{
@@ -160,31 +333,34 @@ func buildService(req provider.ProvisionRequest, namespace string, labels map[st
 			Namespace: namespace,
 			Labels:    labels,
 		},
-		Spec: corev1.ServiceSpec{
-			Selector: map[string]string{
-				labelInstanceID: req.InstanceID.String(),
-			},
-			Ports: ports,
-			Type:  corev1.ServiceTypeClusterIP,
-		},
+		Spec: spec,
 	}
 }
 
-// buildConfigMap creates a Kubernetes ConfigMap from environment variables.
-// Returns nil if no environment variables are provided.
-func buildConfigMap(req provider.ProvisionRequest, namespace string, labels map[string]string) *corev1.ConfigMap {
-	if len(req.Env) == 0 {
-		return nil
+// buildConfigMaps creates one ConfigMap per service that has env vars.
+// Per-service maps keep service A's env out of service B's container
+// (a single shared map with EnvFrom would expose everything to
+// everyone).
+func buildConfigMaps(req provider.ProvisionRequest, namespace string, labels map[string]string) []*corev1.ConfigMap {
+	var maps []*corev1.ConfigMap
+
+	for i := range req.Services {
+		svc := req.Services[i]
+		if len(svc.Env) == 0 {
+			continue
+		}
+
+		maps = append(maps, &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      configMapNameFor(req.InstanceID, svc.Name),
+				Namespace: namespace,
+				Labels:    labels,
+			},
+			Data: svc.Env,
+		})
 	}
 
-	return &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      configMapName(req.InstanceID),
-			Namespace: namespace,
-			Labels:    labels,
-		},
-		Data: req.Env,
-	}
+	return maps
 }
 
 // buildResourceList converts a ResourceSpec into Kubernetes resource quantities.
@@ -212,7 +388,7 @@ func buildContainerPorts(ports []provider.PortSpec) []corev1.ContainerPort {
 	for i, p := range ports {
 		cp := corev1.ContainerPort{
 			Name:          fmt.Sprintf("port-%d", i),
-			ContainerPort: int32(p.Container), //nolint:gosec // ports are validated to fit int32 range (0-65535)
+			ContainerPort: int32(p.Container), //nolint:gosec // 0-65535 fits int32
 			Protocol:      toK8sProtocol(p.Protocol),
 		}
 		result = append(result, cp)
@@ -234,28 +410,6 @@ func buildVolumeMounts(volumes []provider.VolumeSpec) []corev1.VolumeMount {
 			MountPath: v.MountPath,
 		}
 		result = append(result, vm)
-	}
-
-	return result
-}
-
-// buildVolumes converts volume specs to Kubernetes volume definitions.
-func buildVolumes(volumes []provider.VolumeSpec) []corev1.Volume {
-	if len(volumes) == 0 {
-		return nil
-	}
-
-	result := make([]corev1.Volume, 0, len(volumes))
-	for _, v := range volumes {
-		vol := corev1.Volume{
-			Name: v.Name,
-			VolumeSource: corev1.VolumeSource{
-				EmptyDir: &corev1.EmptyDirVolumeSource{
-					SizeLimit: resource.NewQuantity(int64(v.SizeMB)*1024*1024, resource.BinarySI),
-				},
-			},
-		}
-		result = append(result, vol)
 	}
 
 	return result

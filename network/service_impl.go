@@ -30,6 +30,18 @@ func NewService(store Store, router Router, events event.Bus, auth auth.Provider
 	}
 }
 
+// SetRouter swaps the underlying Router. Late-binding is supported
+// because the canonical Router (e.g. a Traefik dynamic-config writer)
+// often depends on cp.Instances which only exists after wireServices
+// finishes — callers register their router post-construction by
+// type-asserting `cp.Network.(interface{ SetRouter(Router) })`.
+//
+// A nil router disables routing; subsequent Add/Remove Domain/Route
+// calls become store-only.
+func (s *service) SetRouter(r Router) {
+	s.router = r
+}
+
 // AddDomain registers a custom domain for an instance.
 func (s *service) AddDomain(ctx context.Context, req AddDomainRequest) (*Domain, error) {
 	claims, err := auth.RequireClaims(ctx)
@@ -167,13 +179,14 @@ func (s *service) AddRoute(ctx context.Context, req AddRouteRequest) (*Route, er
 	}
 
 	route := &Route{
-		Entity:     ctrlplane.NewEntity(id.PrefixRoute),
-		TenantID:   claims.TenantID,
-		InstanceID: req.InstanceID,
-		Path:       req.Path,
-		Port:       req.Port,
-		Protocol:   protocol,
-		Weight:     weight,
+		Entity:      ctrlplane.NewEntity(id.PrefixRoute),
+		TenantID:    claims.TenantID,
+		InstanceID:  req.InstanceID,
+		ServiceName: req.ServiceName,
+		Path:        req.Path,
+		Port:        req.Port,
+		Protocol:    protocol,
+		Weight:      weight,
 	}
 
 	if err := s.store.InsertRoute(ctx, route); err != nil {
@@ -222,6 +235,10 @@ func (s *service) UpdateRoute(ctx context.Context, routeID id.ID, req UpdateRout
 
 	if req.StripPrefix != nil {
 		route.StripPrefix = *req.StripPrefix
+	}
+
+	if req.ServiceName != nil {
+		route.ServiceName = *req.ServiceName
 	}
 
 	route.UpdatedAt = time.Now().UTC()

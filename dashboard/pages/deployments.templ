@@ -11,7 +11,69 @@ import (
 	"github.com/xraph/ctrlplane/dashboard/components"
 	"github.com/xraph/ctrlplane/deploy"
 	"github.com/xraph/ctrlplane/instance"
+	"github.com/xraph/ctrlplane/workload"
 )
+
+// DeploymentsSelectWorkloadPage renders the workload-centric
+// landing for /deployments. Default for the route — instances are
+// individual replicas in the workload-centric model, so showing
+// them as the unit of selection was confusing.
+templ DeploymentsSelectWorkloadPage(workloads []*workload.Workload) {
+	<div class="space-y-6">
+		<div class="flex items-center gap-3">
+			<h1 class="text-3xl font-bold">Deployments</h1>
+		</div>
+
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Header() {
+				@card.Title() {
+					Select a Workload
+				}
+				@card.Description() {
+					Choose a workload to see its deployment history. Deployments belong to workloads; each rollout cascades across the workload's replicas.
+				}
+			}
+			@card.Content() {
+				@components.WorkloadTable(workloads)
+			}
+		}
+	</div>
+}
+
+// DeploymentsForWorkloadPage renders deployments aggregated across
+// a workload's replicas. Each row is one Deploy record; the
+// Instance column lets operators see which replica it ran against.
+templ DeploymentsForWorkloadPage(w *workload.Workload, result *deploy.DeployListResult) {
+	<div class="space-y-6">
+		<div class="flex items-center justify-between">
+			<div class="flex items-center gap-3">
+				<h1 class="text-3xl font-bold">Deployments</h1>
+				@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+					{ strconv.Itoa(result.Total) }
+				}
+			</div>
+			<div class="flex items-center gap-2">
+				<span class="text-sm text-muted-foreground">Workload:</span>
+				<a class="text-sm font-medium hover:underline cursor-pointer"
+					hx-get={ "./workloads/detail?workload_id=" + w.ID.String() }
+					hx-target="#content"
+					hx-push-url="true"
+					hx-swap="innerHTML">{ w.Name }</a>
+				<a class="text-sm text-muted-foreground hover:text-foreground cursor-pointer"
+					hx-get="./deployments"
+					hx-target="#content"
+					hx-push-url="true"
+					hx-swap="innerHTML">Change</a>
+			</div>
+		</div>
+
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Content() {
+				@components.DeploymentTable(result.Items, true)
+			}
+		}
+	</div>
+}
 
 // DeploymentsSelectInstancePage renders a page prompting the user to select an instance.
 templ DeploymentsSelectInstancePage(instances []*instance.Instance) {

@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/xraph/ctrlplane/admin"
+	"github.com/xraph/ctrlplane/bootstrap"
 	"github.com/xraph/ctrlplane/datacenter"
 	"github.com/xraph/ctrlplane/deploy"
 	"github.com/xraph/ctrlplane/health"
@@ -11,6 +12,8 @@ import (
 	"github.com/xraph/ctrlplane/network"
 	"github.com/xraph/ctrlplane/secrets"
 	"github.com/xraph/ctrlplane/telemetry"
+	"github.com/xraph/ctrlplane/template"
+	"github.com/xraph/ctrlplane/workload"
 )
 
 // Store is the aggregate persistence interface.
@@ -18,12 +21,15 @@ import (
 type Store interface {
 	instance.Store
 	deploy.Store
+	workload.Store
+	template.Store
 	health.Store
 	telemetry.Store
 	network.Store
 	secrets.Store
 	admin.Store
 	datacenter.Store
+	bootstrap.Store
 
 	// Migrate runs all schema migrations.
 	Migrate(ctx context.Context) error

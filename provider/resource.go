@@ -40,11 +40,16 @@ type VolumeSpec struct {
 }
 
 // Endpoint describes an accessible endpoint for an instance.
+//
+// ServiceName names the service inside the instance that owns this
+// endpoint — empty for legacy single-service instances. Routes can
+// target a specific service via its name.
 type Endpoint struct {
-	URL      string `json:"url"`
-	Port     int    `json:"port"`
-	Protocol string `json:"protocol"`
-	Public   bool   `json:"public"`
+	ServiceName string `json:"service_name,omitempty"`
+	URL         string `json:"url"`
+	Port        int    `json:"port"`
+	Protocol    string `json:"protocol"`
+	Public      bool   `json:"public"`
 }
 
 // HealthCheckSpec configures health checking during deployment.
@@ -57,10 +62,15 @@ type HealthCheckSpec struct {
 }
 
 // LogOptions configures log streaming.
+//
+// ServiceName picks one service inside the instance to stream from —
+// empty defaults to the Main service. Single-container providers
+// ignore this field.
 type LogOptions struct {
-	Follow bool      `json:"follow"`
-	Since  time.Time `json:"since,omitzero"`
-	Tail   int       `json:"tail,omitempty"`
+	ServiceName string    `json:"service_name,omitempty"`
+	Follow      bool      `json:"follow"`
+	Since       time.Time `json:"since,omitzero"`
+	Tail        int       `json:"tail,omitempty"`
 }
 
 // ExecRequest describes a command to run inside an instance.

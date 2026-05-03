@@ -5,9 +5,10 @@ package widgets
 
 //lint:file-ignore SA4006 This context is only used if a nested component is present.
 
+import "github.com/a-h/templ"
+import templruntime "github.com/a-h/templ/runtime"
+
 import (
-	"github.com/a-h/templ"
-	templruntime "github.com/a-h/templ/runtime"
 	"github.com/xraph/forgeui/components/card"
 	"github.com/xraph/forgeui/components/table"
 
@@ -279,9 +280,9 @@ func RecentDeploysWidget(deploys []*deploy.Deployment) templ.Component {
 											return templ_7745c5c3_Err
 										}
 										var templ_7745c5c3_Var15 string
-										templ_7745c5c3_Var15, templ_7745c5c3_Err = templ.JoinStringErrs(truncWidgetStr(dep.Image, 30))
+										templ_7745c5c3_Var15, templ_7745c5c3_Err = templ.JoinStringErrs(truncWidgetStr(widgetDeployImage(dep), 30))
 										if templ_7745c5c3_Err != nil {
-											return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/widgets/recent_deploys.templ`, Line: 43, Col: 72}
+											return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/widgets/recent_deploys.templ`, Line: 43, Col: 85}
 										}
 										_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var15))
 										if templ_7745c5c3_Err != nil {
@@ -412,6 +413,17 @@ func truncWidgetStr(s string, maxLen int) string {
 	}
 
 	return s[:maxLen-3] + "..."
+}
+
+// widgetDeployImage returns the first ServiceDeploySpec image for the
+// recent-deploys widget — picks one image to summarise a multi-service
+// rollout in a tight cell.
+func widgetDeployImage(d *deploy.Deployment) string {
+	if d == nil || len(d.Services) == 0 {
+		return ""
+	}
+
+	return d.Services[0].Image
 }
 
 var _ = templruntime.GeneratedTemplate

@@ -32,7 +32,7 @@ templ ReleaseTable(releases []*deploy.Release) {
 							<span class="font-medium">v{ strconv.Itoa(rel.Version) }</span>
 						}
 						@table.Cell() {
-							<span class="font-mono text-xs">{ truncStr(rel.Image, 40) }</span>
+							<span class="font-mono text-xs">{ truncStr(mainSnapshotImage(rel.Services), 40) }</span>
 						}
 						@table.Cell() {
 							if rel.Active {

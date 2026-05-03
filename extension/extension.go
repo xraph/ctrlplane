@@ -14,6 +14,7 @@ import (
 
 	"github.com/xraph/ctrlplane/api"
 	"github.com/xraph/ctrlplane/app"
+	audithook "github.com/xraph/ctrlplane/audit_hook"
 	"github.com/xraph/ctrlplane/auth"
 	cpdash "github.com/xraph/ctrlplane/dashboard"
 	"github.com/xraph/ctrlplane/secrets"
@@ -174,6 +175,20 @@ func (e *Extension) Start(ctx context.Context) error {
 			e.Logger().Info("ctrlplane: resolved vault from container")
 			e.cp.SetVault(v)
 		}
+	}
+
+	// Late-resolve a richer audit recorder from DI. Twinos publishes
+	// a chronicle-backed audithook.Recorder when the chronicle
+	// extension is wired (see internal/server's chronicle audit
+	// adapter). When found, the default in-store recorder swaps out
+	// for the richer one — events flow into chronicle's hash-chained
+	// audit trail instead of (or in addition to) the local table.
+	//
+	// Falls through silently when no Recorder is registered: the
+	// default store-backed recorder keeps doing the right thing.
+	if r, err := vessel.Inject[audithook.Recorder](e.App().Container()); err == nil {
+		e.Logger().Info("ctrlplane: resolved audit recorder from container")
+		e.cp.SetAuditRecorder(r)
 	}
 
 	return e.cp.Start(ctx)

@@ -1,0 +1,60 @@
+package pages
+
+import (
+	"strconv"
+
+	"github.com/xraph/forgeui/components/badge"
+	"github.com/xraph/forgeui/components/card"
+
+	"github.com/xraph/ctrlplane/dashboard/components"
+	"github.com/xraph/ctrlplane/workload"
+)
+
+// WorkloadsPage renders the workloads list page.
+templ WorkloadsPage(result *workload.ListResult) {
+	<div class="space-y-6">
+		<div class="flex items-center justify-between">
+			<div class="flex items-center gap-3">
+				<h1 class="text-3xl font-bold">Workloads</h1>
+				@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+					{ strconv.Itoa(result.Total) }
+				}
+			</div>
+		</div>
+
+		<!-- Filters -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Content() {
+				<div class="flex items-center gap-2">
+					<a class="text-sm px-3 py-1.5 rounded-sm border hover:bg-muted transition-colors"
+						hx-get="./workloads"
+						hx-target="#content"
+						hx-push-url="true">All</a>
+					<a class="text-sm px-3 py-1.5 rounded-sm border hover:bg-muted transition-colors"
+						hx-get="./workloads?state=active"
+						hx-target="#content"
+						hx-push-url="true">Active</a>
+					<a class="text-sm px-3 py-1.5 rounded-sm border hover:bg-muted transition-colors"
+						hx-get="./workloads?state=paused"
+						hx-target="#content"
+						hx-push-url="true">Paused</a>
+					<a class="text-sm px-3 py-1.5 rounded-sm border hover:bg-muted transition-colors"
+						hx-get="./workloads?state=failed"
+						hx-target="#content"
+						hx-push-url="true">Failed</a>
+					<a class="text-sm px-3 py-1.5 rounded-sm border hover:bg-muted transition-colors"
+						hx-get="./workloads?state=deploying"
+						hx-target="#content"
+						hx-push-url="true">Deploying</a>
+				</div>
+			}
+		}
+
+		<!-- Table -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Content() {
+				@components.WorkloadTable(result.Items)
+			}
+		}
+	</div>
+}

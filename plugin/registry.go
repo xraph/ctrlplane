@@ -49,6 +49,66 @@ type instanceUnsuspendedEntry struct {
 	hook InstanceUnsuspended
 }
 
+type workloadCreatedEntry struct {
+	name string
+	hook WorkloadCreated
+}
+
+type workloadUpdatedEntry struct {
+	name string
+	hook WorkloadUpdated
+}
+
+type workloadScaledEntry struct {
+	name string
+	hook WorkloadScaled
+}
+
+type workloadDeployedEntry struct {
+	name string
+	hook WorkloadDeployed
+}
+
+type workloadPausedEntry struct {
+	name string
+	hook WorkloadPaused
+}
+
+type workloadResumedEntry struct {
+	name string
+	hook WorkloadResumed
+}
+
+type workloadRestartedEntry struct {
+	name string
+	hook WorkloadRestarted
+}
+
+type workloadDeletedEntry struct {
+	name string
+	hook WorkloadDeleted
+}
+
+type workloadFailedEntry struct {
+	name string
+	hook WorkloadFailed
+}
+
+type templateCreatedEntry struct {
+	name string
+	hook TemplateCreated
+}
+
+type templateUpdatedEntry struct {
+	name string
+	hook TemplateUpdated
+}
+
+type templateDeletedEntry struct {
+	name string
+	hook TemplateDeleted
+}
+
 type deployStartedEntry struct {
 	name string
 	hook DeployStarted
@@ -155,6 +215,18 @@ type Registry struct {
 	instanceScaled      []instanceScaledEntry
 	instanceSuspended   []instanceSuspendedEntry
 	instanceUnsuspended []instanceUnsuspendedEntry
+	workloadCreated     []workloadCreatedEntry
+	workloadUpdated     []workloadUpdatedEntry
+	workloadScaled      []workloadScaledEntry
+	workloadDeployed    []workloadDeployedEntry
+	workloadPaused      []workloadPausedEntry
+	workloadResumed     []workloadResumedEntry
+	workloadRestarted   []workloadRestartedEntry
+	workloadDeleted     []workloadDeletedEntry
+	workloadFailed      []workloadFailedEntry
+	templateCreated     []templateCreatedEntry
+	templateUpdated     []templateUpdatedEntry
+	templateDeleted     []templateDeletedEntry
 	deployStarted       []deployStartedEntry
 	deploySucceeded     []deploySucceededEntry
 	deployFailed        []deployFailedEntry
@@ -216,6 +288,54 @@ func (r *Registry) Register(e Extension) {
 
 	if h, ok := e.(InstanceUnsuspended); ok {
 		r.instanceUnsuspended = append(r.instanceUnsuspended, instanceUnsuspendedEntry{name, h})
+	}
+
+	if h, ok := e.(WorkloadCreated); ok {
+		r.workloadCreated = append(r.workloadCreated, workloadCreatedEntry{name, h})
+	}
+
+	if h, ok := e.(WorkloadUpdated); ok {
+		r.workloadUpdated = append(r.workloadUpdated, workloadUpdatedEntry{name, h})
+	}
+
+	if h, ok := e.(WorkloadScaled); ok {
+		r.workloadScaled = append(r.workloadScaled, workloadScaledEntry{name, h})
+	}
+
+	if h, ok := e.(WorkloadDeployed); ok {
+		r.workloadDeployed = append(r.workloadDeployed, workloadDeployedEntry{name, h})
+	}
+
+	if h, ok := e.(WorkloadPaused); ok {
+		r.workloadPaused = append(r.workloadPaused, workloadPausedEntry{name, h})
+	}
+
+	if h, ok := e.(WorkloadResumed); ok {
+		r.workloadResumed = append(r.workloadResumed, workloadResumedEntry{name, h})
+	}
+
+	if h, ok := e.(WorkloadRestarted); ok {
+		r.workloadRestarted = append(r.workloadRestarted, workloadRestartedEntry{name, h})
+	}
+
+	if h, ok := e.(WorkloadDeleted); ok {
+		r.workloadDeleted = append(r.workloadDeleted, workloadDeletedEntry{name, h})
+	}
+
+	if h, ok := e.(WorkloadFailed); ok {
+		r.workloadFailed = append(r.workloadFailed, workloadFailedEntry{name, h})
+	}
+
+	if h, ok := e.(TemplateCreated); ok {
+		r.templateCreated = append(r.templateCreated, templateCreatedEntry{name, h})
+	}
+
+	if h, ok := e.(TemplateUpdated); ok {
+		r.templateUpdated = append(r.templateUpdated, templateUpdatedEntry{name, h})
+	}
+
+	if h, ok := e.(TemplateDeleted); ok {
+		r.templateDeleted = append(r.templateDeleted, templateDeletedEntry{name, h})
 	}
 
 	if h, ok := e.(DeployStarted); ok {
@@ -366,6 +486,122 @@ func (r *Registry) EmitInstanceUnsuspended(ctx context.Context, evt *event.Event
 	for _, e := range r.instanceUnsuspended {
 		if err := e.hook.OnInstanceUnsuspended(ctx, evt); err != nil {
 			r.logHookError("OnInstanceUnsuspended", e.name, err)
+		}
+	}
+}
+
+// ──────────────────────────────────────────────────
+// Workload lifecycle emitters
+// ──────────────────────────────────────────────────
+
+// EmitWorkloadCreated notifies all plugins that implement WorkloadCreated.
+func (r *Registry) EmitWorkloadCreated(ctx context.Context, evt *event.Event) {
+	for _, e := range r.workloadCreated {
+		if err := e.hook.OnWorkloadCreated(ctx, evt); err != nil {
+			r.logHookError("OnWorkloadCreated", e.name, err)
+		}
+	}
+}
+
+// EmitWorkloadUpdated notifies all plugins that implement WorkloadUpdated.
+func (r *Registry) EmitWorkloadUpdated(ctx context.Context, evt *event.Event) {
+	for _, e := range r.workloadUpdated {
+		if err := e.hook.OnWorkloadUpdated(ctx, evt); err != nil {
+			r.logHookError("OnWorkloadUpdated", e.name, err)
+		}
+	}
+}
+
+// EmitWorkloadScaled notifies all plugins that implement WorkloadScaled.
+func (r *Registry) EmitWorkloadScaled(ctx context.Context, evt *event.Event) {
+	for _, e := range r.workloadScaled {
+		if err := e.hook.OnWorkloadScaled(ctx, evt); err != nil {
+			r.logHookError("OnWorkloadScaled", e.name, err)
+		}
+	}
+}
+
+// EmitWorkloadDeployed notifies all plugins that implement WorkloadDeployed.
+func (r *Registry) EmitWorkloadDeployed(ctx context.Context, evt *event.Event) {
+	for _, e := range r.workloadDeployed {
+		if err := e.hook.OnWorkloadDeployed(ctx, evt); err != nil {
+			r.logHookError("OnWorkloadDeployed", e.name, err)
+		}
+	}
+}
+
+// EmitWorkloadPaused notifies all plugins that implement WorkloadPaused.
+func (r *Registry) EmitWorkloadPaused(ctx context.Context, evt *event.Event) {
+	for _, e := range r.workloadPaused {
+		if err := e.hook.OnWorkloadPaused(ctx, evt); err != nil {
+			r.logHookError("OnWorkloadPaused", e.name, err)
+		}
+	}
+}
+
+// EmitWorkloadResumed notifies all plugins that implement WorkloadResumed.
+func (r *Registry) EmitWorkloadResumed(ctx context.Context, evt *event.Event) {
+	for _, e := range r.workloadResumed {
+		if err := e.hook.OnWorkloadResumed(ctx, evt); err != nil {
+			r.logHookError("OnWorkloadResumed", e.name, err)
+		}
+	}
+}
+
+// EmitWorkloadRestarted notifies all plugins that implement WorkloadRestarted.
+func (r *Registry) EmitWorkloadRestarted(ctx context.Context, evt *event.Event) {
+	for _, e := range r.workloadRestarted {
+		if err := e.hook.OnWorkloadRestarted(ctx, evt); err != nil {
+			r.logHookError("OnWorkloadRestarted", e.name, err)
+		}
+	}
+}
+
+// EmitWorkloadDeleted notifies all plugins that implement WorkloadDeleted.
+func (r *Registry) EmitWorkloadDeleted(ctx context.Context, evt *event.Event) {
+	for _, e := range r.workloadDeleted {
+		if err := e.hook.OnWorkloadDeleted(ctx, evt); err != nil {
+			r.logHookError("OnWorkloadDeleted", e.name, err)
+		}
+	}
+}
+
+// EmitWorkloadFailed notifies all plugins that implement WorkloadFailed.
+func (r *Registry) EmitWorkloadFailed(ctx context.Context, evt *event.Event) {
+	for _, e := range r.workloadFailed {
+		if err := e.hook.OnWorkloadFailed(ctx, evt); err != nil {
+			r.logHookError("OnWorkloadFailed", e.name, err)
+		}
+	}
+}
+
+// ──────────────────────────────────────────────────
+// Template lifecycle emitters
+// ──────────────────────────────────────────────────
+
+// EmitTemplateCreated notifies all plugins that implement TemplateCreated.
+func (r *Registry) EmitTemplateCreated(ctx context.Context, evt *event.Event) {
+	for _, e := range r.templateCreated {
+		if err := e.hook.OnTemplateCreated(ctx, evt); err != nil {
+			r.logHookError("OnTemplateCreated", e.name, err)
+		}
+	}
+}
+
+// EmitTemplateUpdated notifies all plugins that implement TemplateUpdated.
+func (r *Registry) EmitTemplateUpdated(ctx context.Context, evt *event.Event) {
+	for _, e := range r.templateUpdated {
+		if err := e.hook.OnTemplateUpdated(ctx, evt); err != nil {
+			r.logHookError("OnTemplateUpdated", e.name, err)
+		}
+	}
+}
+
+// EmitTemplateDeleted notifies all plugins that implement TemplateDeleted.
+func (r *Registry) EmitTemplateDeleted(ctx context.Context, evt *event.Event) {
+	for _, e := range r.templateDeleted {
+		if err := e.hook.OnTemplateDeleted(ctx, evt); err != nil {
+			r.logHookError("OnTemplateDeleted", e.name, err)
 		}
 	}
 }
@@ -577,6 +813,30 @@ func (r *Registry) HandleEvent(ctx context.Context, evt *event.Event) error {
 		r.EmitInstanceSuspended(ctx, evt)
 	case event.InstanceUnsuspended:
 		r.EmitInstanceUnsuspended(ctx, evt)
+	case event.WorkloadCreated:
+		r.EmitWorkloadCreated(ctx, evt)
+	case event.WorkloadUpdated:
+		r.EmitWorkloadUpdated(ctx, evt)
+	case event.WorkloadScaled:
+		r.EmitWorkloadScaled(ctx, evt)
+	case event.WorkloadDeployed:
+		r.EmitWorkloadDeployed(ctx, evt)
+	case event.WorkloadPaused:
+		r.EmitWorkloadPaused(ctx, evt)
+	case event.WorkloadResumed:
+		r.EmitWorkloadResumed(ctx, evt)
+	case event.WorkloadRestarted:
+		r.EmitWorkloadRestarted(ctx, evt)
+	case event.WorkloadDeleted:
+		r.EmitWorkloadDeleted(ctx, evt)
+	case event.WorkloadFailed:
+		r.EmitWorkloadFailed(ctx, evt)
+	case event.TemplateCreated:
+		r.EmitTemplateCreated(ctx, evt)
+	case event.TemplateUpdated:
+		r.EmitTemplateUpdated(ctx, evt)
+	case event.TemplateDeleted:
+		r.EmitTemplateDeleted(ctx, evt)
 	case event.DeployStarted:
 		r.EmitDeployStarted(ctx, evt)
 	case event.DeploySucceeded:

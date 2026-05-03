@@ -60,20 +60,26 @@ func (s *Store) GetDatacenterBySlug(_ context.Context, tenantID string, slug str
 	defer s.mu.RUnlock()
 
 	var shared *datacenter.Datacenter
+
 	for _, dc := range s.datacenters {
 		if dc.Slug != slug {
 			continue
 		}
+
 		if dc.TenantID == tenantID {
 			clone := *dc
+
 			return &clone, nil
 		}
+
 		if dc.TenantID == "" && shared == nil {
 			shared = dc
 		}
 	}
+
 	if shared != nil {
 		clone := *shared
+
 		return &clone, nil
 	}
 

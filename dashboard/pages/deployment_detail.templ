@@ -71,7 +71,7 @@ templ DeploymentDetailPage(dep *deploy.Deployment, rel *deploy.Release) {
 								@button.Button(button.Props{
 									Size: button.SizeSm,
 									Attributes: templ.Attributes{
-										"hx-get":     "./deployments/create?instance_id=" + dep.InstanceID.String() + "&image=" + dep.Image,
+										"hx-get":     "./deployments/create?instance_id=" + dep.InstanceID.String() + "&image=" + mainDeployImage(dep.Services),
 										"hx-target":  "#content",
 										"hx-swap":    "innerHTML",
 										"hx-confirm": "Redeploy with the same image?",
@@ -98,7 +98,7 @@ templ DeploymentDetailPage(dep *deploy.Deployment, rel *deploy.Release) {
 					<div class="space-y-2 text-sm">
 						<div class="flex justify-between">
 							<span class="text-muted-foreground">Image</span>
-							<span class="font-mono text-xs">{ dep.Image }</span>
+							<span class="font-mono text-xs">{ mainDeployImage(dep.Services) }</span>
 						</div>
 						<div class="flex justify-between">
 							<span class="text-muted-foreground">Instance</span>
@@ -156,7 +156,7 @@ templ DeploymentDetailPage(dep *deploy.Deployment, rel *deploy.Release) {
 							</div>
 							<div class="flex justify-between">
 								<span class="text-muted-foreground">Image</span>
-								<span class="font-mono text-xs">{ rel.Image }</span>
+								<span class="font-mono text-xs">{ mainSnapshotImage(rel.Services) }</span>
 							</div>
 							<div class="flex justify-between">
 								<span class="text-muted-foreground">Active</span>
@@ -181,7 +181,7 @@ templ DeploymentDetailPage(dep *deploy.Deployment, rel *deploy.Release) {
 		</div>
 
 		<!-- Env Vars (keys only) -->
-		if len(dep.Env) > 0 {
+		if depEnvKeys := collectDeployEnvKeys(dep.Services); len(depEnvKeys) > 0 {
 			@card.Card(card.Props{Class: "rounded-sm"}) {
 				@card.Header() {
 					@card.Title() {
@@ -193,7 +193,7 @@ templ DeploymentDetailPage(dep *deploy.Deployment, rel *deploy.Release) {
 				}
 				@card.Content() {
 					<div class="flex flex-wrap gap-2">
-						for k := range dep.Env {
+						for _, k := range depEnvKeys {
 							@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
 								{ k }
 							}

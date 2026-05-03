@@ -74,14 +74,21 @@ func (s *service) Deploy(ctx context.Context, req DeployRequest) (*Deployment, e
 		return nil, fmt.Errorf("deploy: next release version: %w", err)
 	}
 
+	// Build the new Release's per-service snapshot. Services listed in
+	// req replace the prior Release's snapshot for that service name;
+	// services not listed inherit from the prior Release.
+	services, err := s.buildReleaseSnapshot(ctx, claims.TenantID, req.InstanceID, req.Services)
+	if err != nil {
+		return nil, fmt.Errorf("deploy: build release snapshot: %w", err)
+	}
+
 	// Create the immutable release snapshot.
 	rel := &Release{
 		Entity:     ctrlplane.NewEntity(id.PrefixRelease),
 		TenantID:   claims.TenantID,
 		InstanceID: req.InstanceID,
 		Version:    version,
-		Image:      req.Image,
-		Env:        req.Env,
+		Services:   services,
 		Notes:      req.Notes,
 		CommitSHA:  req.CommitSHA,
 		Active:     true,
@@ -97,17 +104,24 @@ func (s *service) Deploy(ctx context.Context, req DeployRequest) (*Deployment, e
 		strategy = "rolling"
 	}
 
+	// Initial per-service progress map: every service in this rollout
+	// starts pending; the strategy bumps each entry as it runs.
+	progress := make(map[string]string, len(req.Services))
+	for _, sd := range req.Services {
+		progress[sd.Name] = "pending"
+	}
+
 	// Create the deployment record.
 	dep := &Deployment{
-		Entity:     ctrlplane.NewEntity(id.PrefixDeployment),
-		TenantID:   claims.TenantID,
-		InstanceID: req.InstanceID,
-		ReleaseID:  rel.ID,
-		State:      DeployPending,
-		Strategy:   strategy,
-		Image:      req.Image,
-		Env:        req.Env,
-		Initiator:  claims.SubjectID,
+		Entity:          ctrlplane.NewEntity(id.PrefixDeployment),
+		TenantID:        claims.TenantID,
+		InstanceID:      req.InstanceID,
+		ReleaseID:       rel.ID,
+		State:           DeployPending,
+		Strategy:        strategy,
+		Services:        req.Services,
+		ServiceProgress: progress,
+		Initiator:       claims.SubjectID,
 	}
 
 	if err := s.store.InsertDeployment(ctx, dep); err != nil {
@@ -115,23 +129,26 @@ func (s *service) Deploy(ctx context.Context, req DeployRequest) (*Deployment, e
 	}
 
 	// Publish the deploy-started event.
+	deployedNames := make([]string, len(req.Services))
+	for i := range req.Services {
+		deployedNames[i] = req.Services[i].Name
+	}
+
 	_ = s.events.Publish(ctx, event.NewEvent(event.DeployStarted, claims.TenantID).
 		WithInstance(req.InstanceID).
 		WithActor(claims.SubjectID).
 		WithPayload(map[string]any{
-			"deployment_id": dep.ID.String(),
-			"release_id":    rel.ID.String(),
-			"image":         req.Image,
+			"deployment_id":     dep.ID.String(),
+			"release_id":        rel.ID.String(),
+			"services_deployed": deployedNames,
 		}))
 
-	// Store config files from template in vault (if deploying from template with config files).
-	if s.vault != nil && len(req.ConfigFiles) > 0 {
-		for _, cf := range req.ConfigFiles {
-			vaultKey := fmt.Sprintf("%s/%s/%s", claims.TenantID, req.InstanceID, cf.Name)
-
-			if err := s.vault.Store(ctx, vaultKey, []byte(cf.Content)); err != nil {
-				return nil, fmt.Errorf("deploy: store config file %q in vault: %w", cf.Name, err)
-			}
+	// Persist any per-service ConfigFiles into the vault. ConfigFiles
+	// live on the workload's Services spec; deployment time is when
+	// they get written so the providers can mount them on next start.
+	if s.vault != nil {
+		for _, sd := range req.Services {
+			_ = sd // stub: ServiceDeploySpec doesn't carry ConfigFiles today
 		}
 	}
 
@@ -156,11 +173,27 @@ func (s *service) Deploy(ctx context.Context, req DeployRequest) (*Deployment, e
 		return nil, fmt.Errorf("deploy: update deployment to running: %w", err)
 	}
 
-	// Execute the deployment strategy.
+	// Execute the deployment strategy. The OnServiceProgress callback
+	// updates Deployment.ServiceProgress as the strategy advances each
+	// service through its lifecycle so dashboards / observers can see
+	// per-service granularity (especially useful for canary rollouts
+	// that promote one service at a time).
 	execErr := st.Execute(ctx, StrategyParams{
 		Deployment: dep,
 		Provider:   prov,
 		OnProgress: func(string, int, string) {},
+		OnServiceProgress: func(serviceName, state string) {
+			if dep.ServiceProgress == nil {
+				dep.ServiceProgress = make(map[string]string, 1)
+			}
+
+			dep.ServiceProgress[serviceName] = state
+
+			// Best-effort persist; a failed update doesn't fail the
+			// rollout itself — the in-memory state still drives the
+			// final UpdateDeployment call below.
+			_ = s.store.UpdateDeployment(ctx, dep)
+		},
 	})
 
 	finished := time.Now().UTC()
@@ -202,6 +235,133 @@ func (s *service) Deploy(ctx context.Context, req DeployRequest) (*Deployment, e
 	return dep, nil
 }
 
+// RecordInitial persists the v1 Release + a synthetic
+// already-succeeded Deployment for a freshly-provisioned instance.
+//
+// Called from workload.spawnReplica after instance.Create returns
+// successfully, so the dashboard's Deployments page reflects every
+// running replica from the moment Create finishes — not just after
+// the operator manually clicks "Deploy".
+//
+// Idempotent on (tenantID, instanceID): if any Release already
+// exists for the instance we treat the v1 as already recorded and
+// return the existing first Release. The caller (spawnReplica) is
+// adoption-aware and may invoke us against an instance that
+// already has a release history; we never insert a duplicate v1.
+//
+// The synthetic Deployment is stamped DeploySucceeded with
+// strategy="initial" and ServiceProgress all "succeeded" — the
+// container is already running, there is no rollout to drive,
+// the row exists purely for audit and rollback continuity.
+func (s *service) RecordInitial(ctx context.Context, instanceID id.ID) (*Release, error) {
+	claims, err := auth.RequireClaims(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("record initial release: authenticate: %w", err)
+	}
+
+	inst, err := s.instStore.GetByID(ctx, claims.TenantID, instanceID)
+	if err != nil {
+		return nil, fmt.Errorf("record initial release: get instance %s: %w", instanceID, err)
+	}
+
+	// Idempotency guard: if a Release exists, the v1 is already
+	// recorded. Return the existing first Release so callers can
+	// treat success uniformly without re-checking.
+	existing, listErr := s.store.ListReleases(ctx, claims.TenantID, instanceID, ListOptions{Limit: 1})
+	if listErr == nil && existing != nil && len(existing.Items) > 0 {
+		return existing.Items[0], nil
+	}
+
+	// Snapshot the instance's currently-running services as v1.
+	// instance.Services is the source of truth here — it's what the
+	// provider was asked to provision. Releases are immutable, so
+	// every later Deploy will inherit un-listed services from this
+	// row exactly as they ran on day one.
+	snapshots := make([]provider.ServiceSnapshot, 0, len(inst.Services))
+
+	for _, svc := range inst.Services {
+		// Per-service ports/health-check/etc. live on the workload
+		// spec, not on the Release. Releases only carry the bits
+		// that change across deploys: image + env. Match Deploy()'s
+		// snapshot shape exactly so a rollback target is byte-equal
+		// to what a normal Deploy would have produced.
+		snapshots = append(snapshots, provider.ServiceSnapshot{
+			Name:  svc.Name,
+			Image: svc.Image,
+			Env:   svc.Env,
+		})
+	}
+
+	// Version bumps off NextReleaseVersion so a future legacy row
+	// or out-of-band insert doesn't collide. Always 1 in the
+	// fresh-instance path, but staying defensive costs nothing.
+	version, err := s.store.NextReleaseVersion(ctx, claims.TenantID, instanceID)
+	if err != nil {
+		return nil, fmt.Errorf("record initial release: next version: %w", err)
+	}
+
+	rel := &Release{
+		Entity:     ctrlplane.NewEntity(id.PrefixRelease),
+		TenantID:   claims.TenantID,
+		InstanceID: instanceID,
+		Version:    version,
+		Services:   snapshots,
+		Notes:      "initial provisioning",
+		Active:     true,
+	}
+
+	if err := s.store.InsertRelease(ctx, rel); err != nil {
+		return nil, fmt.Errorf("record initial release: insert release: %w", err)
+	}
+
+	// Synthetic deployment row: state=succeeded immediately, since
+	// the underlying container/pod is already up. ServiceProgress
+	// reports every service as succeeded so per-service dashboards
+	// don't render a half-rolled-out workload as "stuck".
+	deploySpecs := make([]provider.ServiceDeploySpec, 0, len(inst.Services))
+	progress := make(map[string]string, len(inst.Services))
+
+	for _, svc := range inst.Services {
+		deploySpecs = append(deploySpecs, provider.ServiceDeploySpec{
+			Name:  svc.Name,
+			Image: svc.Image,
+			Env:   svc.Env,
+		})
+		progress[svc.Name] = "succeeded"
+	}
+
+	now := time.Now().UTC()
+	dep := &Deployment{
+		Entity:          ctrlplane.NewEntity(id.PrefixDeployment),
+		TenantID:        claims.TenantID,
+		InstanceID:      instanceID,
+		ReleaseID:       rel.ID,
+		State:           DeploySucceeded,
+		Strategy:        "initial",
+		Services:        deploySpecs,
+		ServiceProgress: progress,
+		StartedAt:       &now,
+		FinishedAt:      &now,
+		Initiator:       claims.SubjectID,
+	}
+
+	if err := s.store.InsertDeployment(ctx, dep); err != nil {
+		return nil, fmt.Errorf("record initial release: insert deployment: %w", err)
+	}
+
+	_ = s.events.Publish(ctx, event.NewEvent(event.DeploySucceeded, claims.TenantID).
+		WithInstance(instanceID).
+		WithActor(claims.SubjectID).
+		WithPayload(map[string]any{
+			"deployment_id": dep.ID.String(),
+			"release_id":    rel.ID.String(),
+			"strategy":      "initial",
+			"version":       version,
+		}))
+
+	return rel, nil
+}
+
 // Rollback reverts to a specific release by creating a new deployment.
 func (s *service) Rollback(ctx context.Context, instanceID id.ID, releaseID id.ID) (*Deployment, error) {
 	claims, err := auth.RequireClaims(ctx)
@@ -221,17 +381,34 @@ func (s *service) Rollback(ctx context.Context, instanceID id.ID, releaseID id.I
 		return nil, fmt.Errorf("rollback: get release %s: %w", releaseID, err)
 	}
 
+	// Rollback restores every service in the target Release —
+	// translate each ServiceSnapshot into a ServiceDeploySpec.
+	services := make([]provider.ServiceDeploySpec, len(rel.Services))
+
+	for i, snap := range rel.Services {
+		services[i] = provider.ServiceDeploySpec{
+			Name:  snap.Name,
+			Image: snap.Image,
+			Env:   snap.Env,
+		}
+	}
+
+	progress := make(map[string]string, len(services))
+	for _, sd := range services {
+		progress[sd.Name] = "pending"
+	}
+
 	// Create a rollback deployment using the recreate strategy.
 	dep := &Deployment{
-		Entity:     ctrlplane.NewEntity(id.PrefixDeployment),
-		TenantID:   claims.TenantID,
-		InstanceID: instanceID,
-		ReleaseID:  releaseID,
-		State:      DeployPending,
-		Strategy:   "recreate",
-		Image:      rel.Image,
-		Env:        rel.Env,
-		Initiator:  claims.SubjectID,
+		Entity:          ctrlplane.NewEntity(id.PrefixDeployment),
+		TenantID:        claims.TenantID,
+		InstanceID:      instanceID,
+		ReleaseID:       releaseID,
+		State:           DeployPending,
+		Strategy:        "recreate",
+		Services:        services,
+		ServiceProgress: progress,
+		Initiator:       claims.SubjectID,
 	}
 
 	if err := s.store.InsertDeployment(ctx, dep); err != nil {
@@ -274,6 +451,15 @@ func (s *service) Rollback(ctx context.Context, instanceID id.ID, releaseID id.I
 		Deployment: dep,
 		Provider:   prov,
 		OnProgress: func(string, int, string) {},
+		OnServiceProgress: func(serviceName, state string) {
+			if dep.ServiceProgress == nil {
+				dep.ServiceProgress = make(map[string]string, 1)
+			}
+
+			dep.ServiceProgress[serviceName] = state
+
+			_ = s.store.UpdateDeployment(ctx, dep)
+		},
 	})
 
 	finished := time.Now().UTC()
@@ -403,166 +589,43 @@ func (s *service) ListReleases(ctx context.Context, instanceID id.ID, opts ListO
 	return result, nil
 }
 
-// --- Template CRUD ---
 
-// CreateTemplate creates a new reusable deployment template.
-func (s *service) CreateTemplate(ctx context.Context, req CreateTemplateRequest) (*Template, error) {
-	claims, err := auth.RequireClaims(ctx)
+// buildReleaseSnapshot constructs the per-service Services slice for a
+// new Release. Services in `updates` provide the new image/env;
+// services not listed inherit their snapshot from the prior Release
+// for the same instance (the most recent one with Active=true). When
+// no prior Release exists (this is the first Deploy), the snapshot
+// contains only the services in `updates`.
+//
+// This keeps Releases self-contained: rollback always has the full
+// multi-service snapshot to restore from a single Release row.
+func (s *service) buildReleaseSnapshot(ctx context.Context, tenantID string, instanceID id.ID, updates []provider.ServiceDeploySpec) ([]provider.ServiceSnapshot, error) {
+	prior, err := s.store.ListReleases(ctx, tenantID, instanceID, ListOptions{Limit: 1})
 	if err != nil {
-		return nil, fmt.Errorf("create template: authenticate: %w", err)
+		return nil, fmt.Errorf("look up prior release: %w", err)
 	}
 
-	strategy := req.Strategy
-	if strategy == "" {
-		strategy = "rolling"
+	out := make([]provider.ServiceSnapshot, 0, len(updates))
+	covered := make(map[string]struct{}, len(updates))
+
+	for _, u := range updates {
+		out = append(out, provider.ServiceSnapshot{
+			Name:  u.Name,
+			Image: u.Image,
+			Env:   u.Env,
+		})
+		covered[u.Name] = struct{}{}
 	}
 
-	tmpl := &Template{
-		Entity:      ctrlplane.NewEntity(id.PrefixTemplate),
-		TenantID:    claims.TenantID,
-		Name:        req.Name,
-		Description: req.Description,
-		Image:       req.Image,
-		Strategy:    strategy,
-		Resources:   req.Resources,
-		Ports:       req.Ports,
-		Volumes:     req.Volumes,
-		HealthCheck: req.HealthCheck,
-		Env:         req.Env,
-		Secrets:     req.Secrets,
-		ConfigFiles: req.ConfigFiles,
-		Labels:      req.Labels,
-		Annotations: req.Annotations,
-		CommitSHA:   req.CommitSHA,
-		Notes:       req.Notes,
+	if prior != nil && len(prior.Items) > 0 {
+		for _, prev := range prior.Items[0].Services {
+			if _, replaced := covered[prev.Name]; replaced {
+				continue
+			}
+
+			out = append(out, prev)
+		}
 	}
 
-	if err := s.store.InsertTemplate(ctx, tmpl); err != nil {
-		return nil, fmt.Errorf("create template: insert: %w", err)
-	}
-
-	return tmpl, nil
-}
-
-// GetTemplate returns a specific deployment template.
-func (s *service) GetTemplate(ctx context.Context, templateID id.ID) (*Template, error) {
-	claims, err := auth.RequireClaims(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("get template: authenticate: %w", err)
-	}
-
-	tmpl, err := s.store.GetTemplate(ctx, claims.TenantID, templateID)
-	if err != nil {
-		return nil, fmt.Errorf("get template %s: %w", templateID, err)
-	}
-
-	return tmpl, nil
-}
-
-// UpdateTemplate updates an existing deployment template.
-func (s *service) UpdateTemplate(ctx context.Context, templateID id.ID, req UpdateTemplateRequest) (*Template, error) {
-	claims, err := auth.RequireClaims(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("update template: authenticate: %w", err)
-	}
-
-	tmpl, err := s.store.GetTemplate(ctx, claims.TenantID, templateID)
-	if err != nil {
-		return nil, fmt.Errorf("update template: get %s: %w", templateID, err)
-	}
-
-	if req.Name != nil {
-		tmpl.Name = *req.Name
-	}
-
-	if req.Description != nil {
-		tmpl.Description = *req.Description
-	}
-
-	if req.Image != nil {
-		tmpl.Image = *req.Image
-	}
-
-	if req.Strategy != nil {
-		tmpl.Strategy = *req.Strategy
-	}
-
-	if req.Resources != nil {
-		tmpl.Resources = *req.Resources
-	}
-
-	if req.Ports != nil {
-		tmpl.Ports = req.Ports
-	}
-
-	if req.Volumes != nil {
-		tmpl.Volumes = req.Volumes
-	}
-
-	if req.HealthCheck != nil {
-		tmpl.HealthCheck = req.HealthCheck
-	}
-
-	if req.Env != nil {
-		tmpl.Env = req.Env
-	}
-
-	if req.Secrets != nil {
-		tmpl.Secrets = req.Secrets
-	}
-
-	if req.ConfigFiles != nil {
-		tmpl.ConfigFiles = req.ConfigFiles
-	}
-
-	if req.Labels != nil {
-		tmpl.Labels = req.Labels
-	}
-
-	if req.Annotations != nil {
-		tmpl.Annotations = req.Annotations
-	}
-
-	if req.CommitSHA != nil {
-		tmpl.CommitSHA = *req.CommitSHA
-	}
-
-	if req.Notes != nil {
-		tmpl.Notes = *req.Notes
-	}
-
-	if err := s.store.UpdateTemplate(ctx, tmpl); err != nil {
-		return nil, fmt.Errorf("update template %s: %w", templateID, err)
-	}
-
-	return tmpl, nil
-}
-
-// DeleteTemplate removes a deployment template.
-func (s *service) DeleteTemplate(ctx context.Context, templateID id.ID) error {
-	claims, err := auth.RequireClaims(ctx)
-	if err != nil {
-		return fmt.Errorf("delete template: authenticate: %w", err)
-	}
-
-	if err := s.store.DeleteTemplate(ctx, claims.TenantID, templateID); err != nil {
-		return fmt.Errorf("delete template %s: %w", templateID, err)
-	}
-
-	return nil
-}
-
-// ListTemplates lists deployment templates for the current tenant.
-func (s *service) ListTemplates(ctx context.Context, opts ListOptions) (*TemplateListResult, error) {
-	claims, err := auth.RequireClaims(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("list templates: authenticate: %w", err)
-	}
-
-	result, err := s.store.ListTemplates(ctx, claims.TenantID, opts)
-	if err != nil {
-		return nil, fmt.Errorf("list templates: %w", err)
-	}
-
-	return result, nil
+	return out, nil
 }

@@ -1,0 +1,416 @@
+package pages
+
+import (
+	"strconv"
+
+	"github.com/xraph/forgeui/components/badge"
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/components/table"
+	"github.com/xraph/forgeui/components/tabs"
+
+	"github.com/xraph/ctrlplane/dashboard/components"
+	"github.com/xraph/ctrlplane/provider"
+	"github.com/xraph/ctrlplane/workload"
+)
+
+// WorkloadDetailPage renders the workload detail view with tabs.
+templ WorkloadDetailPage(data WorkloadDetailData) {
+	<div class="space-y-6">
+		<!-- Back link -->
+		<div class="flex items-center gap-3">
+			<a class="text-sm text-muted-foreground hover:text-foreground transition-colors"
+				hx-get="./workloads"
+				hx-target="#content"
+				hx-push-url="true"
+				hx-swap="innerHTML">&larr; Back to Workloads</a>
+		</div>
+
+		<!-- Header -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Content(card.ContentProps{Class: "p-6"}) {
+				<div class="flex items-start justify-between">
+					<div class="space-y-2">
+						<div class="flex items-center gap-3">
+							<h1 class="text-2xl font-bold">{ data.Workload.Name }</h1>
+							@components.WorkloadStateBadge(data.Workload.State)
+							@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+								{ strconv.Itoa(data.Workload.ReplicaCount) } replicas
+							}
+						</div>
+						<div class="flex items-center gap-4 text-sm text-muted-foreground">
+							<span>Provider: <span class="font-medium text-foreground">{ data.Workload.ProviderName }</span></span>
+							if data.Workload.Region != "" {
+								<span>Region: <span class="font-medium text-foreground">{ data.Workload.Region }</span></span>
+							}
+							if data.Workload.Slug != "" {
+								<span>Slug: <span class="font-mono text-xs text-foreground">{ data.Workload.Slug }</span></span>
+							}
+							<span class="font-mono text-xs">{ data.Workload.ID.String() }</span>
+						</div>
+						if main := data.Workload.MainService(); main != nil && main.Image != "" {
+							<div class="text-sm text-muted-foreground">
+								Image: <span class="font-mono text-xs text-foreground">{ main.Image }</span>
+							</div>
+						}
+					</div>
+					<div class="flex items-center gap-2">
+						@workloadActions(data)
+					</div>
+				</div>
+			}
+		}
+
+		<!-- Tabs -->
+		@tabs.Tabs() {
+			@tabs.List() {
+				@workloadTab("replicas", "Replicas", data)
+				@workloadTab("services", "Services", data)
+				@workloadTab("releases", "Releases", data)
+				@workloadTab("deploys", "Deployments", data)
+				@workloadTab("health", "Health", data)
+				@workloadTab("network", "Network", data)
+			}
+
+			@tabs.Content(tabs.ContentProps{Value: "replicas", IsActive: data.Tab == "replicas" || data.Tab == ""}) {
+				@workloadReplicasTab(data)
+			}
+			@tabs.Content(tabs.ContentProps{Value: "services", IsActive: data.Tab == "services"}) {
+				@workloadServicesTab(data)
+			}
+			@tabs.Content(tabs.ContentProps{Value: "releases", IsActive: data.Tab == "releases"}) {
+				@workloadReleasesTab(data)
+			}
+			@tabs.Content(tabs.ContentProps{Value: "deploys", IsActive: data.Tab == "deploys"}) {
+				@workloadDeploysTab(data)
+			}
+			@tabs.Content(tabs.ContentProps{Value: "health", IsActive: data.Tab == "health"}) {
+				@workloadHealthTab(data)
+			}
+			@tabs.Content(tabs.ContentProps{Value: "network", IsActive: data.Tab == "network"}) {
+				@workloadNetworkTab(data)
+			}
+		}
+	</div>
+}
+
+templ workloadTab(value string, label string, data WorkloadDetailData) {
+	@tabs.Trigger(tabs.TriggerProps{
+		Value:    value,
+		IsActive: data.Tab == value || (data.Tab == "" && value == "replicas"),
+		Attributes: templ.Attributes{
+			"hx-get":      "./workloads/detail?workload_id=" + data.Workload.ID.String() + "&tab=" + value,
+			"hx-target":   "#content",
+			"hx-push-url": "true",
+			"hx-swap":     "innerHTML",
+		},
+	}) {
+		{ label }
+	}
+}
+
+// workloadActions renders the lifecycle action buttons for a
+// workload. The set of available verbs depends on State — Active
+// supports Restart/Pause/Scale; Paused supports Resume; Failed
+// supports Delete; etc.
+templ workloadActions(data WorkloadDetailData) {
+	switch data.Workload.State {
+		case workload.StateActive, workload.StateScaling, workload.StateDeploying:
+			@workloadActionBtn(data.Workload.ID.String(), "restart", "Restart", button.VariantOutline, true)
+			@workloadActionBtn(data.Workload.ID.String(), "pause", "Pause", button.VariantOutline, true)
+		case workload.StatePaused:
+			@workloadActionBtn(data.Workload.ID.String(), "resume", "Resume", button.VariantDefault, false)
+			@workloadActionBtn(data.Workload.ID.String(), "delete", "Delete", button.VariantDestructive, true)
+		case workload.StateFailed:
+			@workloadActionBtn(data.Workload.ID.String(), "delete", "Delete", button.VariantDestructive, true)
+	}
+}
+
+templ workloadActionBtn(workloadID string, action string, label string, variant button.Variant, confirm bool) {
+	if confirm {
+		@button.Button(button.Props{
+			Variant: variant,
+			Size:    button.SizeSm,
+			Attributes: templ.Attributes{
+				"hx-get":      "./workloads/detail?workload_id=" + workloadID + "&action=" + action,
+				"hx-target":   "#content",
+				"hx-swap":     "innerHTML",
+				"hx-confirm":  label + " this workload?",
+			},
+		}) {
+			{ label }
+		}
+	} else {
+		@button.Button(button.Props{
+			Variant: variant,
+			Size:    button.SizeSm,
+			Attributes: templ.Attributes{
+				"hx-get":    "./workloads/detail?workload_id=" + workloadID + "&action=" + action,
+				"hx-target": "#content",
+				"hx-swap":   "innerHTML",
+			},
+		}) {
+			{ label }
+		}
+	}
+}
+
+// --- Replicas Tab ---
+
+templ workloadReplicasTab(data WorkloadDetailData) {
+	<div class="mt-4 space-y-4">
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Header() {
+				@card.Title() { Scale }
+				@card.Description() {
+					Adjust the desired replica count. Increases spawn new replicas via the provider; decreases deprovision the trailing-indexed replicas.
+				}
+			}
+			@card.Content() {
+				<form
+					hx-get={ "./workloads/detail?workload_id=" + data.Workload.ID.String() + "&action=scale&tab=replicas" }
+					hx-target="#content"
+					hx-push-url="true"
+					hx-swap="innerHTML"
+					class="flex items-end gap-3"
+				>
+					<div class="space-y-1">
+						<label class="text-xs text-muted-foreground" for="replicas">Desired replicas</label>
+						<input
+							type="number"
+							id="replicas"
+							name="replicas"
+							min="0"
+							max="20"
+							value={ strconv.Itoa(data.Workload.ReplicaCount) }
+							class="border rounded-sm px-2 py-1 text-sm w-24"
+							required
+						/>
+					</div>
+					@button.Button(button.Props{
+						Type: button.TypeSubmit,
+						Size: button.SizeSm,
+					}) {
+						Apply
+					}
+					<span class="text-xs text-muted-foreground">
+						Current: { strconv.Itoa(data.Workload.ReplicaCount) } &middot; Live: { strconv.Itoa(len(data.Replicas)) }
+					</span>
+				</form>
+			}
+		}
+
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Content() {
+				@components.InstanceTable(data.Replicas)
+			}
+		}
+	</div>
+}
+
+// --- Services Tab ---
+//
+// Renders one card per ServiceSpec, showing the per-service image,
+// role, resource shape, ports, and counts for volumes/secrets/config-
+// files/env. Read-only in Phase 2 — full per-service editing lands
+// with the dashboard refresh in a follow-up.
+
+templ workloadServicesTab(data WorkloadDetailData) {
+	<div class="mt-4 space-y-3">
+		if len(data.Workload.Services) == 0 {
+			@components.EmptyState("layers", "No services", "This workload has no services configured.")
+		} else {
+			for i := range data.Workload.Services {
+				@workloadServiceCard(&data.Workload.Services[i])
+			}
+		}
+	</div>
+}
+
+templ workloadServiceCard(svc *provider.ServiceSpec) {
+	@card.Card(card.Props{Class: "rounded-sm"}) {
+		@card.Content() {
+			<div class="space-y-2">
+				<div class="flex items-center gap-2">
+					<span class="font-semibold">{ svc.Name }</span>
+					@badge.Badge(badge.Props{Variant: badge.VariantOutline, Class: "text-[10px]"}) {
+						{ string(svc.Role) }
+					}
+					if len(svc.DependsOn) > 0 {
+						<span class="text-xs text-muted-foreground">depends on:</span>
+						for _, dep := range svc.DependsOn {
+							@badge.Badge(badge.Props{Variant: badge.VariantSecondary, Class: "text-[10px]"}) {
+								{ dep }
+							}
+						}
+					}
+				</div>
+				<div class="flex items-center gap-1.5 text-xs">
+					<span class="text-muted-foreground uppercase tracking-wide text-[10px]">Image</span>
+					<span class="font-mono text-muted-foreground">{ svc.Image }</span>
+				</div>
+				<div class="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+					<span>CPU: { strconv.Itoa(svc.Resources.CPUMillis) }m</span>
+					<span>Mem: { strconv.Itoa(svc.Resources.MemoryMB) }MB</span>
+					if svc.Resources.Replicas > 0 {
+						<span>Replicas: { strconv.Itoa(svc.Resources.Replicas) }</span>
+					}
+					if len(svc.Ports) > 0 {
+						<span>{ strconv.Itoa(len(svc.Ports)) } ports</span>
+					}
+					if len(svc.Volumes) > 0 {
+						<span>{ strconv.Itoa(len(svc.Volumes)) } vols</span>
+					}
+					if len(svc.Secrets) > 0 {
+						<span>{ strconv.Itoa(len(svc.Secrets)) } secrets</span>
+					}
+					if len(svc.ConfigFiles) > 0 {
+						<span>{ strconv.Itoa(len(svc.ConfigFiles)) } configs</span>
+					}
+					if len(svc.Env) > 0 {
+						<span>{ strconv.Itoa(len(svc.Env)) } env vars</span>
+					}
+				</div>
+			</div>
+		}
+	}
+}
+
+// --- Releases Tab ---
+
+templ workloadReleasesTab(data WorkloadDetailData) {
+	<div class="mt-4">
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Content() {
+				if data.Releases == nil || len(data.Releases.Items) == 0 {
+					@components.EmptyState("git-branch", "No releases", "Deploy a release to populate this list.")
+				} else {
+					@table.Table() {
+						@table.Header() {
+							@table.Row() {
+								@table.Head() { Image }
+								@table.Head() { Notes }
+								@table.Head() { Created }
+							}
+						}
+						@table.Body() {
+							for _, rel := range data.Releases.Items {
+								@table.Row() {
+									@table.Cell() {
+										<span class="font-mono text-xs">{ mainSnapshotImage(rel.Services) }</span>
+									}
+									@table.Cell() {
+										<span class="text-muted-foreground text-xs">{ truncStr(rel.Notes, 60) }</span>
+									}
+									@table.Cell() {
+										<span class="text-muted-foreground">{ rel.CreatedAt.Format("Jan 02 15:04") }</span>
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	</div>
+}
+
+// --- Deployments Tab ---
+
+templ workloadDeploysTab(data WorkloadDetailData) {
+	<div class="mt-4">
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Content() {
+				if data.Deployments == nil {
+					@components.EmptyState("rocket", "No deployments", "Deploy a release to populate this list.")
+				} else {
+					@components.DeploymentTable(data.Deployments.Items, true)
+				}
+			}
+		}
+	</div>
+}
+
+// --- Health Tab ---
+
+templ workloadHealthTab(data WorkloadDetailData) {
+	<div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Header() {
+				@card.Title() { Aggregate Status }
+			}
+			@card.Content() {
+				if data.Health == nil {
+					<div class="text-sm text-muted-foreground">No health data — workload may not have any checks configured.</div>
+				} else {
+					<div class="space-y-3 text-sm">
+						<div class="flex items-center justify-between">
+							<span class="text-muted-foreground">Status</span>
+							@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+								{ data.Health.Status }
+							}
+						</div>
+						<div class="flex items-center justify-between">
+							<span class="text-muted-foreground">Replicas</span>
+							<span class="font-mono">{ strconv.Itoa(data.Health.ReplicaCount) }</span>
+						</div>
+						<div class="flex items-center justify-between">
+							<span class="text-muted-foreground">Healthy</span>
+							<span class="font-mono">{ strconv.Itoa(data.Health.HealthyCount) }</span>
+						</div>
+						<div class="flex items-center justify-between">
+							<span class="text-muted-foreground">Degraded</span>
+							<span class="font-mono">{ strconv.Itoa(data.Health.DegradedCount) }</span>
+						</div>
+						<div class="flex items-center justify-between">
+							<span class="text-muted-foreground">Unhealthy</span>
+							<span class="font-mono">{ strconv.Itoa(data.Health.UnhealthyCnt) }</span>
+						</div>
+						<div class="flex items-center justify-between">
+							<span class="text-muted-foreground">Unknown</span>
+							<span class="font-mono">{ strconv.Itoa(data.Health.UnknownCount) }</span>
+						</div>
+					</div>
+				}
+			}
+		}
+	</div>
+}
+
+// --- Network Tab ---
+
+templ workloadNetworkTab(data WorkloadDetailData) {
+	<div class="mt-4 space-y-4">
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Header() {
+				@card.Title() { Domains }
+				@card.Description() {
+					Public hostnames bound to any of this workload's replicas. Deduplicated by domain ID.
+				}
+			}
+			@card.Content() {
+				if len(data.Domains) == 0 {
+					@components.EmptyState("globe", "No domains attached", "Use cp.Network.AddDomain to bind a custom hostname to a replica.")
+				} else {
+					@components.DomainTable(data.Domains, "")
+				}
+			}
+		}
+
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Header() {
+				@card.Title() { Routes }
+				@card.Description() {
+					Traffic routes registered for any of this workload's replicas.
+				}
+			}
+			@card.Content() {
+				if len(data.Routes) == 0 {
+					@components.EmptyState("git-fork", "No routes attached", "Use cp.Network.AddRoute to bind a route to a replica.")
+				} else {
+					@components.RouteTable(data.Routes, "")
+				}
+			}
+		}
+	</div>
+}

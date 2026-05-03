@@ -13,6 +13,7 @@ type Prefix string
 // Prefix constants for all ctrlplane entity types.
 const (
 	PrefixInstance        Prefix = "inst"
+	PrefixWorkload        Prefix = "wkl"
 	PrefixDeployment      Prefix = "dep"
 	PrefixRelease         Prefix = "rel"
 	PrefixHealthCheck     Prefix = "chk"
@@ -28,6 +29,7 @@ const (
 	PrefixEvent           Prefix = "evt"
 	PrefixTemplate        Prefix = "tmpl"
 	PrefixDatacenter      Prefix = "dc"
+	PrefixBootstrap       Prefix = "bws"
 )
 
 // ID is the primary identifier type for all ctrlplane entities.

@@ -5,10 +5,8 @@ package components
 
 //lint:file-ignore SA4006 This context is only used if a nested component is present.
 
-import (
-	"github.com/a-h/templ"
-	templruntime "github.com/a-h/templ/runtime"
-)
+import "github.com/a-h/templ"
+import templruntime "github.com/a-h/templ/runtime"
 
 // PRGRedirect renders a script that replaces the browser URL via history.replaceState.
 // This implements the Post/Redirect/Get pattern for HTMX forms: after a successful

@@ -7,6 +7,7 @@ import (
 	"github.com/xraph/ctrlplane/deploy"
 	"github.com/xraph/ctrlplane/health"
 	"github.com/xraph/ctrlplane/provider"
+	"github.com/xraph/ctrlplane/workload"
 )
 
 // InstanceStateBadge renders a badge for an instance state.
@@ -139,6 +140,50 @@ templ WorkerStatusBadge(running bool) {
 		@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
 			Idle
 		}
+	}
+}
+
+// WorkloadStateBadge renders a badge for a workload state. Mirrors
+// the visual language of InstanceStateBadge so the two read
+// consistently when shown side-by-side on workload-detail pages.
+templ WorkloadStateBadge(state workload.State) {
+	switch state {
+		case workload.StateActive:
+			@badge.Badge(badge.Props{Variant: badge.VariantDefault}) {
+				Active
+			}
+		case workload.StatePaused:
+			@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+				Paused
+			}
+		case workload.StateScaling:
+			@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+				Scaling
+			}
+		case workload.StateDeploying:
+			@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+				Deploying
+			}
+		case workload.StateProvisioning:
+			@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+				Provisioning
+			}
+		case workload.StateFailed:
+			@badge.Badge(badge.Props{Variant: badge.VariantDestructive}) {
+				Failed
+			}
+		case workload.StateDestroying:
+			@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+				Destroying
+			}
+		case workload.StateDestroyed:
+			@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+				Destroyed
+			}
+		default:
+			@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+				{ string(state) }
+			}
 	}
 }
 

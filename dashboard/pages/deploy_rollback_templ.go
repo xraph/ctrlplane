@@ -5,11 +5,12 @@ package pages
 
 //lint:file-ignore SA4006 This context is only used if a nested component is present.
 
+import "github.com/a-h/templ"
+import templruntime "github.com/a-h/templ/runtime"
+
 import (
 	"strconv"
 
-	"github.com/a-h/templ"
-	templruntime "github.com/a-h/templ/runtime"
 	"github.com/xraph/forgeui/components/badge"
 	"github.com/xraph/forgeui/components/card"
 	"github.com/xraph/forgeui/components/table"
@@ -535,9 +536,9 @@ func DeployRollbackPage(data RollbackFormData) templ.Component {
 											return templ_7745c5c3_Err
 										}
 										var templ_7745c5c3_Var27 string
-										templ_7745c5c3_Var27, templ_7745c5c3_Err = templ.JoinStringErrs(rel.Image)
+										templ_7745c5c3_Var27, templ_7745c5c3_Err = templ.JoinStringErrs(mainSnapshotImage(rel.Services))
 										if templ_7745c5c3_Err != nil {
-											return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/deploy_rollback.templ`, Line: 84, Col: 53}
+											return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/deploy_rollback.templ`, Line: 84, Col: 75}
 										}
 										_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var27))
 										if templ_7745c5c3_Err != nil {

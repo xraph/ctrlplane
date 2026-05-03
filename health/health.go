@@ -45,18 +45,26 @@ const (
 )
 
 // HealthCheck is a configured check for an instance.
+//
+// ServiceName optionally targets a specific service inside a
+// multi-service instance — empty means "the Main service" so legacy
+// single-service workloads work unchanged. Checkers translate
+// Target relative to the named service: a TCP/HTTP target like
+// `:8080/healthz` resolves against the named service's network
+// alias instead of the instance's primary endpoint.
 type HealthCheck struct {
 	ctrlplane.Entity
 
-	TenantID   string        `db:"tenant_id"   json:"tenant_id"`
-	InstanceID id.ID         `db:"instance_id" json:"instance_id"`
-	Name       string        `db:"name"        json:"name"`
-	Type       CheckType     `db:"type"        json:"type"`
-	Target     string        `db:"target"      json:"target"`
-	Interval   time.Duration `db:"interval"    json:"interval"`
-	Timeout    time.Duration `db:"timeout"     json:"timeout"`
-	Retries    int           `db:"retries"     json:"retries"`
-	Enabled    bool          `db:"enabled"     json:"enabled"`
+	TenantID    string        `db:"tenant_id"    json:"tenant_id"`
+	InstanceID  id.ID         `db:"instance_id"  json:"instance_id"`
+	ServiceName string        `db:"service_name" json:"service_name,omitempty"`
+	Name        string        `db:"name"         json:"name"`
+	Type        CheckType     `db:"type"         json:"type"`
+	Target      string        `db:"target"       json:"target"`
+	Interval    time.Duration `db:"interval"     json:"interval"`
+	Timeout     time.Duration `db:"timeout"      json:"timeout"`
+	Retries     int           `db:"retries"      json:"retries"`
+	Enabled     bool          `db:"enabled"      json:"enabled"`
 }
 
 // HealthResult is the outcome of a single check execution.

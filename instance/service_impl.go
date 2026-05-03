@@ -2,7 +2,9 @@ package instance
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -65,6 +67,15 @@ func (s *service) Create(ctx context.Context, req CreateRequest) (*Instance, err
 		return nil, fmt.Errorf("create instance: resolve provider: %w", err)
 	}
 
+	if len(req.Services) == 0 {
+		return nil, errors.New("create instance: at least one service required")
+	}
+
+	kind := req.Kind
+	if kind == "" {
+		kind = provider.KindDeployment
+	}
+
 	info := p.Info()
 	inst := &Instance{
 		Entity:       ctrlplane.NewEntity(id.PrefixInstance),
@@ -75,10 +86,8 @@ func (s *service) Create(ctx context.Context, req CreateRequest) (*Instance, err
 		ProviderName: info.Name,
 		Region:       req.Region,
 		State:        provider.StateProvisioning,
-		Image:        req.Image,
-		Resources:    req.Resources,
-		Env:          req.Env,
-		Ports:        req.Ports,
+		Kind:         kind,
+		Services:     req.Services,
 		Labels:       req.Labels,
 	}
 
@@ -90,10 +99,8 @@ func (s *service) Create(ctx context.Context, req CreateRequest) (*Instance, err
 		InstanceID: inst.ID,
 		TenantID:   claims.TenantID,
 		Name:       req.Name,
-		Image:      req.Image,
-		Resources:  req.Resources,
-		Env:        req.Env,
-		Ports:      req.Ports,
+		Kind:       kind,
+		Services:   req.Services,
 		Labels:     req.Labels,
 	})
 	if err != nil {
@@ -106,7 +113,22 @@ func (s *service) Create(ctx context.Context, req CreateRequest) (*Instance, err
 	}
 
 	inst.ProviderRef = result.ProviderRef
+	inst.ServiceRefs = result.ServiceRefs
 	inst.Endpoints = result.Endpoints
+	// Advance state to Running after a successful Provision. Providers
+	// like docker create + start the container synchronously inside
+	// Provision, so by the time we get here the workload is live —
+	// leaving the row at "provisioning" hides healthy instances from
+	// state-filtering dashboards (e.g. /dashboard/instances?state=running).
+	//
+	// Async-rollout providers (e.g. kubernetes Deployment that takes
+	// seconds to roll out) should override this via a subsequent
+	// Status poll that bumps the state down to Starting and back up
+	// to Running once Ready. The synchronous-provider default is the
+	// safer initial behaviour; over-eager Running here is preferable
+	// to indefinite Provisioning, since downstream consumers can
+	// always cross-check via Status.
+	inst.State = provider.StateRunning
 	inst.UpdatedAt = time.Now().UTC()
 
 	if err := s.store.Update(ctx, inst); err != nil {
@@ -131,6 +153,23 @@ func (s *service) Get(ctx context.Context, instanceID id.ID) (*Instance, error) 
 	inst, err := s.store.GetByID(ctx, claims.TenantID, instanceID)
 	if err != nil {
 		return nil, fmt.Errorf("get instance: %w", err)
+	}
+
+	return inst, nil
+}
+
+// GetBySlug looks up an instance by slug in the caller's tenant.
+// Surfaces ctrlplane.ErrNotFound (wrapped) when nothing matches so
+// callers can use errors.Is to branch.
+func (s *service) GetBySlug(ctx context.Context, slug string) (*Instance, error) {
+	claims, err := auth.RequireClaims(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("get instance by slug: %w", err)
+	}
+
+	inst, err := s.store.GetBySlug(ctx, claims.TenantID, slug)
+	if err != nil {
+		return nil, fmt.Errorf("get instance by slug: %w", err)
 	}
 
 	return inst, nil
@@ -168,8 +207,8 @@ func (s *service) Update(ctx context.Context, instanceID id.ID, req UpdateReques
 		inst.Slug = slugify(*req.Name)
 	}
 
-	if req.Env != nil {
-		inst.Env = req.Env
+	if req.Services != nil {
+		inst.Services = req.Services
 	}
 
 	if req.Labels != nil {
@@ -185,7 +224,26 @@ func (s *service) Update(ctx context.Context, instanceID id.ID, req UpdateReques
 	return inst, nil
 }
 
-// Delete deprovisions and removes an instance.
+// Delete tears down the instance's provider-side resources
+// (containers, pods, allocations) and removes the instance row.
+//
+// Delete is convergent: the goal is "instance gone, all containers
+// stopped". To that end:
+//
+//   - State transitions are NOT validated. Delete is operator-driven
+//     and must always succeed regardless of the current state. An
+//     instance stuck mid-Provision (StateStarting) or already
+//     marked StateDestroyed still gets cleaned up.
+//   - When the row is already in StateDestroyed, we skip Deprovision
+//     (resources are gone) and just remove the row, in case a prior
+//     Delete crashed between Deprovision and the row delete.
+//   - Provider Deprovision is best-effort — providers treat
+//     "resource already gone" as success. A real runtime error
+//     leaves the row in StateFailed for operator retry.
+//   - When the configured provider is no longer registered (re-
+//     configuration, etc.), the row is dropped anyway: keeping it
+//     pointing at a vanished provider is worse than the operator
+//     having to reap any orphaned runtime resources by hand.
 func (s *service) Delete(ctx context.Context, instanceID id.ID) error {
 	claims, err := auth.RequireClaims(ctx)
 	if err != nil {
@@ -197,35 +255,47 @@ func (s *service) Delete(ctx context.Context, instanceID id.ID) error {
 		return fmt.Errorf("delete instance: %w", err)
 	}
 
-	if err := ValidateTransition(inst.State, provider.StateDestroying); err != nil {
-		return fmt.Errorf("delete instance: %w", err)
-	}
+	wasDestroyed := inst.State == provider.StateDestroyed
 
-	inst.State = provider.StateDestroying
-	inst.UpdatedAt = time.Now().UTC()
-
-	if err := s.store.Update(ctx, inst); err != nil {
-		return fmt.Errorf("delete instance: update state: %w", err)
-	}
-
-	p, err := s.providers.Get(inst.ProviderName)
-	if err != nil {
-		return fmt.Errorf("delete instance: resolve provider: %w", err)
-	}
-
-	if err := p.Deprovision(ctx, inst.ID); err != nil {
-		inst.State = provider.StateFailed
+	if !wasDestroyed {
+		inst.State = provider.StateDestroying
 		inst.UpdatedAt = time.Now().UTC()
 		_ = s.store.Update(ctx, inst)
+	}
 
-		return fmt.Errorf("delete instance: deprovision: %w", err)
+	if !wasDestroyed {
+		p, providerErr := s.providers.Get(inst.ProviderName)
+		if providerErr != nil {
+			// Provider deconfigured — drop the row anyway. There's
+			// no point keeping it pointing at a vanished provider;
+			// operators reconcile any orphan runtime resources
+			// out-of-band.
+			_ = s.store.Delete(ctx, claims.TenantID, instanceID)
+
+			_ = s.events.Publish(ctx, event.NewEvent(event.InstanceDeleted, claims.TenantID).
+				WithInstance(inst.ID).
+				WithActor(claims.SubjectID).
+				WithPayload(map[string]any{
+					"warning": "provider not registered: " + providerErr.Error(),
+				}))
+
+			//nolint:nilerr // convergent delete: provider gone, drop the row
+			return nil
+		}
+
+		if err := p.Deprovision(ctx, inst.ID); err != nil {
+			inst.State = provider.StateFailed
+			inst.UpdatedAt = time.Now().UTC()
+			_ = s.store.Update(ctx, inst)
+
+			return fmt.Errorf("delete instance: deprovision: %w", err)
+		}
 	}
 
 	if err := s.store.Delete(ctx, claims.TenantID, instanceID); err != nil {
 		return fmt.Errorf("delete instance: remove: %w", err)
 	}
 
-	// Fire-and-forget event.
 	_ = s.events.Publish(ctx, event.NewEvent(event.InstanceDeleted, claims.TenantID).
 		WithInstance(inst.ID).
 		WithActor(claims.SubjectID))
@@ -387,8 +457,15 @@ func (s *service) Scale(ctx context.Context, instanceID id.ID, req ScaleRequest)
 		return fmt.Errorf("scale instance: %w", err)
 	}
 
-	// Build the new resource spec by merging requested changes with current values.
-	spec := inst.Resources
+	// Scale targets the Main service's resources — the per-service
+	// resource model means CPU/memory tweaks always apply to the
+	// Main; per-service Scale is a future API.
+	main := inst.MainService()
+	if main == nil {
+		return fmt.Errorf("scale instance %s: no Main service", instanceID)
+	}
+
+	spec := main.Resources
 
 	if req.CPUMillis != nil {
 		spec.CPUMillis = *req.CPUMillis
@@ -411,7 +488,7 @@ func (s *service) Scale(ctx context.Context, instanceID id.ID, req ScaleRequest)
 		return fmt.Errorf("scale instance: provider scale: %w", err)
 	}
 
-	inst.Resources = spec
+	main.Resources = spec
 	inst.UpdatedAt = time.Now().UTC()
 
 	if err := s.store.Update(ctx, inst); err != nil {
@@ -514,4 +591,71 @@ func (s *service) Unsuspend(ctx context.Context, instanceID id.ID) error {
 // slugify converts a name to a URL-friendly slug.
 func slugify(name string) string {
 	return strings.ReplaceAll(strings.ToLower(name), " ", "-")
+}
+
+// Logs returns a log stream for the instance via the resolved
+// provider. Caller closes the returned ReadCloser to stop. Honours
+// Follow / Since / Tail in the LogsOptions.
+func (s *service) Logs(ctx context.Context, instanceID id.ID, opts LogsOptions) (io.ReadCloser, error) {
+	claims, err := auth.RequireClaims(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("logs: %w", err)
+	}
+
+	inst, err := s.store.GetByID(ctx, claims.TenantID, instanceID)
+	if err != nil {
+		return nil, fmt.Errorf("logs: get instance: %w", err)
+	}
+
+	p, err := s.providers.Get(inst.ProviderName)
+	if err != nil {
+		return nil, fmt.Errorf("logs: resolve provider: %w", err)
+	}
+
+	rc, err := p.Logs(ctx, inst.ID, provider.LogOptions{
+		Follow: opts.Follow,
+		Since:  opts.Since,
+		Tail:   opts.Tail,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("logs: provider: %w", err)
+	}
+
+	return rc, nil
+}
+
+// Resources returns a one-shot resource-usage sample via the
+// instance's provider. Errors that look like "container gone"
+// collapse to a zero-valued usage so the metrics poller doesn't
+// treat container-restart windows as failures.
+func (s *service) Resources(ctx context.Context, instanceID id.ID) (*provider.ResourceUsage, error) {
+	claims, err := auth.RequireClaims(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("resources: %w", err)
+	}
+
+	inst, err := s.store.GetByID(ctx, claims.TenantID, instanceID)
+	if err != nil {
+		if errors.Is(err, ctrlplane.ErrNotFound) {
+			return &provider.ResourceUsage{}, nil
+		}
+
+		return nil, fmt.Errorf("resources: get instance: %w", err)
+	}
+
+	p, err := s.providers.Get(inst.ProviderName)
+	if err != nil {
+		return nil, fmt.Errorf("resources: resolve provider: %w", err)
+	}
+
+	usage, err := p.Resources(ctx, inst.ID)
+	if err != nil {
+		return nil, fmt.Errorf("resources: provider: %w", err)
+	}
+
+	if usage == nil {
+		return &provider.ResourceUsage{}, nil
+	}
+
+	return usage, nil
 }

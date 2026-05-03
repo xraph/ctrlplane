@@ -2,6 +2,7 @@ package datacenter
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -66,6 +67,37 @@ func (s *service) Create(ctx context.Context, req CreateRequest) (*Datacenter, e
 
 	if req.Capacity != nil {
 		dc.Capacity = *req.Capacity
+	}
+
+	// BootstrapServices is purely declarative on Create — the row is
+	// persisted as-is, and the bootstrap reconciler picks it up on
+	// its next tick. Create stays synchronous; no Provision happens
+	// here.
+	if req.BootstrapServices != nil {
+		dc.BootstrapServices = req.BootstrapServices
+	}
+
+	// Idempotency guard: surface ErrAlreadyExists when a datacenter
+	// with the same (tenant_id, slug) already exists for this tenant
+	// so callers (e.g. boot-time seeders that retry on every restart)
+	// can skip via errors.Is. The memory store enforces this at the
+	// store layer, but pg/mongo/sqlite/badger don't — making the check
+	// here keeps every backend consistent without each driver having
+	// to map its own duplicate-key error to ErrAlreadyExists.
+	//
+	// GetDatacenterBySlug uses hybrid visibility (tenant-owned OR
+	// platform-shared), so we additionally compare TenantID — a tenant
+	// creating "docker" must not be blocked by a platform-shared
+	// "docker", and a platform admin seeding "docker" must not be
+	// blocked by a tenant-X "docker".
+	existing, lookupErr := s.store.GetDatacenterBySlug(ctx, claims.TenantID, dc.Slug)
+	if lookupErr != nil && !errors.Is(lookupErr, ctrlplane.ErrNotFound) {
+		return nil, fmt.Errorf("create datacenter: dedupe check: %w", lookupErr)
+	}
+
+	if existing != nil && existing.TenantID == claims.TenantID {
+		return nil, fmt.Errorf("%w: datacenter slug %q in tenant %q",
+			ctrlplane.ErrAlreadyExists, dc.Slug, claims.TenantID)
 	}
 
 	if err := s.store.InsertDatacenter(ctx, dc); err != nil {
@@ -164,6 +196,14 @@ func (s *service) Update(ctx context.Context, datacenterID id.ID, req UpdateRequ
 
 	if req.Metadata != nil {
 		dc.Metadata = req.Metadata
+	}
+
+	// BootstrapServices uses pointer-to-slice on the request so a
+	// nil value means "leave alone" while a non-nil zero-length
+	// slice means "clear". The reconciler diffs against whatever
+	// gets persisted here on its next tick.
+	if req.BootstrapServices != nil {
+		dc.BootstrapServices = *req.BootstrapServices
 	}
 
 	dc.UpdatedAt = time.Now().UTC()

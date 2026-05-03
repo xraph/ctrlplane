@@ -3,6 +3,7 @@ package mongo
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 
@@ -25,8 +26,17 @@ func (s *Store) Insert(ctx context.Context, inst *instance.Instance) error {
 func (s *Store) GetByID(ctx context.Context, tenantID string, instanceID id.ID) (*instance.Instance, error) {
 	var model instanceModel
 
+	// Empty tenantID is the cross-tenant convention: the caller
+	// (typically a system admin via the dashboard) wants the
+	// instance regardless of which tenant owns it. Service-level
+	// gating ensures only privileged callers can pass empty tenant.
+	filter := bson.M{"_id": instanceID.String()}
+	if tenantID != "" {
+		filter["tenant_id"] = tenantID
+	}
+
 	err := s.mdb.NewFind(&model).
-		Filter(bson.M{"_id": instanceID.String(), "tenant_id": tenantID}).
+		Filter(filter).
 		Scan(ctx)
 	if err != nil {
 		if isNoDocuments(err) {
@@ -59,13 +69,36 @@ func (s *Store) GetBySlug(ctx context.Context, tenantID string, slug string) (*i
 func (s *Store) List(ctx context.Context, tenantID string, opts instance.ListOptions) (*instance.ListResult, error) {
 	var models []instanceModel
 
-	f := bson.M{"tenant_id": tenantID}
+	// Empty tenantID = cross-tenant view (admin dashboard pattern).
+	// Service-level gating decides whether the caller is allowed
+	// to pass empty; here we just honour the contract.
+	f := bson.M{}
+	if tenantID != "" {
+		f["tenant_id"] = tenantID
+	}
+
 	if opts.State != "" {
 		f["state"] = opts.State
 	}
 
 	if opts.Provider != "" {
 		f["provider_name"] = opts.Provider
+	}
+
+	// opts.Label is "key=value". The label key may contain dots
+	// (e.g. "ctrlplane.workload"), which mongo's path syntax would
+	// otherwise interpret as nested-field access. Use $expr +
+	// $getField so the dotted key is treated as a literal map key
+	// inside the labels sub-document.
+	if opts.Label != "" {
+		if key, val, ok := strings.Cut(opts.Label, "="); ok && key != "" {
+			f["$expr"] = bson.M{
+				"$eq": bson.A{
+					bson.M{"$getField": bson.M{"field": key, "input": "$labels"}},
+					val,
+				},
+			}
+		}
 	}
 
 	limit := opts.Limit

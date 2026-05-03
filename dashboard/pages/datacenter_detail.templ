@@ -8,17 +8,24 @@ import (
 	"github.com/xraph/forgeui/components/table"
 	"github.com/xraph/forgeui/components/tabs"
 
+	"github.com/xraph/ctrlplane/bootstrap"
 	"github.com/xraph/ctrlplane/dashboard/components"
 	"github.com/xraph/ctrlplane/datacenter"
 	"github.com/xraph/ctrlplane/instance"
 )
 
 // DatacenterDetailData holds data for the datacenter detail page.
+//
+// BootstrapServices is the list of platform-managed shared services
+// attached to this datacenter (declarative + hook-contributed,
+// reconciled by worker.Reconciler). Loaded only when Tab == "services"
+// to keep the default Info / Instances / Capacity tabs cheap.
 type DatacenterDetailData struct {
-	Datacenter    *datacenter.Datacenter
-	Instances     []*instance.Instance
-	InstanceCount int
-	Tab           string
+	Datacenter        *datacenter.Datacenter
+	Instances         []*instance.Instance
+	BootstrapServices []*bootstrap.BootstrapWorkload
+	InstanceCount     int
+	Tab               string
 }
 
 // DatacenterDetailPage renders the datacenter detail page.
@@ -131,6 +138,18 @@ templ DatacenterDetailPage(data DatacenterDetailData) {
 				}) {
 					Capacity
 				}
+				@tabs.Trigger(tabs.TriggerProps{
+					Value:    "services",
+					IsActive: data.Tab == "services",
+					Attributes: templ.Attributes{
+						"hx-get":      "./datacenters/detail?datacenter_id=" + data.Datacenter.ID.String() + "&tab=services",
+						"hx-target":   "#content",
+						"hx-push-url": "true",
+						"hx-swap":     "innerHTML",
+					},
+				}) {
+					Services
+				}
 			}
 
 			@tabs.Content(tabs.ContentProps{Value: "info", IsActive: data.Tab == "info"}) {
@@ -148,6 +167,12 @@ templ DatacenterDetailPage(data DatacenterDetailData) {
 			@tabs.Content(tabs.ContentProps{Value: "capacity", IsActive: data.Tab == "capacity"}) {
 				<div class="mt-4">
 					@datacenterCapacityCard(data.Datacenter, data.InstanceCount)
+				</div>
+			}
+
+			@tabs.Content(tabs.ContentProps{Value: "services", IsActive: data.Tab == "services"}) {
+				<div class="mt-4">
+					@bootstrapServicesCard(data.BootstrapServices, data.Datacenter.ID.String())
 				</div>
 			}
 		}
@@ -294,6 +319,93 @@ templ datacenterInstancesCard(instances []*instance.Instance, datacenterID strin
 								}
 								@table.Cell() {
 									<span class="text-muted-foreground">{ inst.Region }</span>
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+// bootstrapServicesCard renders the platform-managed shared services
+// attached to a datacenter. Read-only summary: each row carries the
+// service name, current state (pending/provisioning/running/failed/
+// retiring/retired), kind, attempt counter, and last-error message.
+//
+// The Redeploy button on a Failed row enqueues a fresh reconcile
+// pass via &action=redeploy_bootstrap&bootstrap_id=… so an operator
+// can retry a stuck install without waiting for the next worker
+// tick. Successful and idle rows don't show the button — the
+// reconciler keeps them in sync automatically.
+templ bootstrapServicesCard(services []*bootstrap.BootstrapWorkload, datacenterID string) {
+	@card.Card(card.Props{Class: "rounded-sm"}) {
+		@card.Header() {
+			@card.Title() {
+				Bootstrap Services
+			}
+			@card.Description() {
+				Platform-managed shared services running on this datacenter. Reconciled automatically every minute.
+			}
+		}
+		@card.Content() {
+			if len(services) == 0 {
+				@components.EmptyState("server", "No bootstrap services", "This datacenter has no shared platform services. Add a BootstrapServices entry to the datacenter spec or register a hook to install one.")
+			} else {
+				@table.Table() {
+					@table.Header() {
+						@table.Row() {
+							@table.Head() { Name }
+							@table.Head() { State }
+							@table.Head() { Kind }
+							@table.Head() { Attempts }
+							@table.Head() { Last Error }
+							@table.Head() { Actions }
+						}
+					}
+					@table.Body() {
+						for _, bw := range services {
+							@table.Row() {
+								@table.Cell() {
+									<div class="flex flex-col">
+										<span class="font-medium">{ bw.Name }</span>
+										if bw.ProviderRef != "" {
+											<span class="text-xs text-muted-foreground font-mono truncate">{ bw.ProviderRef }</span>
+										}
+									</div>
+								}
+								@table.Cell() {
+									@components.BootstrapStateBadge(bw.State)
+								}
+								@table.Cell() {
+									<span class="text-muted-foreground">{ string(bw.Kind) }</span>
+								}
+								@table.Cell() {
+									<span class="text-muted-foreground">{ strconv.Itoa(bw.Attempts) }</span>
+								}
+								@table.Cell() {
+									if bw.LastError != "" {
+										<span class="text-xs text-red-600 dark:text-red-400 truncate max-w-xs" title={ bw.LastError }>{ bw.LastError }</span>
+									} else {
+										<span class="text-muted-foreground">&mdash;</span>
+									}
+								}
+								@table.Cell() {
+									if bw.State == bootstrap.StateFailed {
+										@button.Button(button.Props{
+											Variant: button.VariantOutline,
+											Size:    button.SizeSm,
+											Attributes: templ.Attributes{
+												"hx-get":      "./datacenters/detail?datacenter_id=" + datacenterID + "&tab=services&action=redeploy_bootstrap&bootstrap_id=" + bw.ID.String(),
+												"hx-target":   "#content",
+												"hx-push-url": "true",
+												"hx-swap":     "innerHTML",
+											},
+										}) {
+											Redeploy
+										}
+									}
 								}
 							}
 						}

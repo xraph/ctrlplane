@@ -12,8 +12,7 @@ import (
 func (a *API) deployInstance(ctx forge.Context, req *DeployAPIRequest) (*deploy.Deployment, error) {
 	domainReq := deploy.DeployRequest{
 		InstanceID: req.InstanceID,
-		Image:      req.Image,
-		Env:        req.Env,
+		Services:   req.Services,
 		Strategy:   req.Strategy,
 		Notes:      req.Notes,
 		CommitSHA:  req.CommitSHA,

@@ -3,6 +3,7 @@ package extension
 import (
 	"github.com/xraph/ctrlplane/app"
 	"github.com/xraph/ctrlplane/auth"
+	"github.com/xraph/ctrlplane/bootstrap"
 	"github.com/xraph/ctrlplane/plugin"
 	"github.com/xraph/ctrlplane/provider"
 	"github.com/xraph/ctrlplane/secrets"
@@ -23,6 +24,19 @@ func WithAuthProvider(p auth.Provider) ExtOption {
 func WithProvider(name string, p provider.Provider) ExtOption {
 	return func(e *Extension) {
 		e.opts = append(e.opts, app.WithProvider(name, p))
+	}
+}
+
+// WithBootstrapHook registers a bootstrap.Hook that contributes
+// shared platform services (NATS, Redis, MongoDB clusters, etc.)
+// the reconciler installs on every datacenter where the hook self-
+// elects to run. Hooks self-filter via DatacenterInfo (provider name,
+// region, labels). Re-registering a hook with the same Name replaces
+// the previous entry — supports hot-reload of an extension's hook
+// definition.
+func WithBootstrapHook(h bootstrap.Hook) ExtOption {
+	return func(e *Extension) {
+		e.opts = append(e.opts, app.WithBootstrapHook(h))
 	}
 }
 

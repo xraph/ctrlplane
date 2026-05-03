@@ -6,6 +6,7 @@ import (
 	"github.com/xraph/grove"
 
 	"github.com/xraph/ctrlplane/admin"
+	"github.com/xraph/ctrlplane/bootstrap"
 	"github.com/xraph/ctrlplane/datacenter"
 	"github.com/xraph/ctrlplane/deploy"
 	"github.com/xraph/ctrlplane/health"
@@ -14,9 +15,11 @@ import (
 	"github.com/xraph/ctrlplane/network"
 	"github.com/xraph/ctrlplane/secrets"
 	"github.com/xraph/ctrlplane/telemetry"
+	"github.com/xraph/ctrlplane/template"
 
 	ctrlplane "github.com/xraph/ctrlplane"
 	"github.com/xraph/ctrlplane/provider"
+	"github.com/xraph/ctrlplane/workload"
 )
 
 // ── Tenant ──────────────────────────────────────────────────────────────────
@@ -65,17 +68,30 @@ func fromTenantModel(m *tenantModel) *admin.Tenant {
 type instanceModel struct {
 	grove.BaseModel `grove:"table:cp_instances"`
 
-	ID           string    `bson:"_id"                    grove:"id,pk"`
-	TenantID     string    `bson:"tenant_id"              grove:"tenant_id"`
-	Slug         string    `bson:"slug"                   grove:"slug"`
-	Name         string    `bson:"name"                   grove:"name"`
-	State        string    `bson:"state"                  grove:"state"`
-	ProviderName string    `bson:"provider_name"          grove:"provider_name"`
-	ProviderRef  string    `bson:"provider_ref,omitempty" grove:"provider_ref"`
-	Region       string    `bson:"region,omitempty"       grove:"region"`
-	Image        string    `bson:"image,omitempty"        grove:"image"`
-	CreatedAt    time.Time `bson:"created_at"             grove:"created_at"`
-	UpdatedAt    time.Time `bson:"updated_at"             grove:"updated_at"`
+	ID           string                 `bson:"_id"                    grove:"id,pk"`
+	TenantID     string                 `bson:"tenant_id"              grove:"tenant_id"`
+	Slug         string                 `bson:"slug"                   grove:"slug"`
+	Name         string                 `bson:"name"                   grove:"name"`
+	State        string                 `bson:"state"                  grove:"state"`
+	ProviderName string                 `bson:"provider_name"          grove:"provider_name"`
+	ProviderRef  string                 `bson:"provider_ref,omitempty" grove:"provider_ref"`
+	Region       string                 `bson:"region,omitempty"       grove:"region"`
+	Kind         string                 `bson:"kind,omitempty"         grove:"kind"`
+	Services     []provider.ServiceSpec `bson:"services,omitempty"     grove:"services"`
+	ServiceRefs  map[string]string      `bson:"service_refs,omitempty" grove:"service_refs"`
+	Endpoints    []endpointModel        `bson:"endpoints,omitempty"    grove:"endpoints"`
+	Labels       map[string]string      `bson:"labels,omitempty"       grove:"labels"`
+	CreatedAt    time.Time              `bson:"created_at"             grove:"created_at"`
+	UpdatedAt    time.Time              `bson:"updated_at"             grove:"updated_at"`
+}
+
+// endpointModel is the bson form of provider.Endpoint.
+type endpointModel struct {
+	ServiceName string `bson:"service_name,omitempty"`
+	URL         string `bson:"url"`
+	Port        int    `bson:"port"`
+	Protocol    string `bson:"protocol,omitempty"`
+	Public      bool   `bson:"public,omitempty"`
 }
 
 func toInstanceModel(inst *instance.Instance) *instanceModel {
@@ -88,14 +104,18 @@ func toInstanceModel(inst *instance.Instance) *instanceModel {
 		ProviderName: inst.ProviderName,
 		ProviderRef:  inst.ProviderRef,
 		Region:       inst.Region,
-		Image:        inst.Image,
+		Kind:         string(inst.Kind),
+		Services:     inst.Services,
+		ServiceRefs:  inst.ServiceRefs,
+		Endpoints:    toEndpointModels(inst.Endpoints),
+		Labels:       inst.Labels,
 		CreatedAt:    inst.CreatedAt,
 		UpdatedAt:    inst.UpdatedAt,
 	}
 }
 
 func fromInstanceModel(m *instanceModel) *instance.Instance {
-	return &instance.Instance{
+	out := &instance.Instance{
 		Entity: ctrlplane.Entity{
 			ID:        id.MustParse(m.ID),
 			CreatedAt: m.CreatedAt,
@@ -108,8 +128,52 @@ func fromInstanceModel(m *instanceModel) *instance.Instance {
 		ProviderName: m.ProviderName,
 		ProviderRef:  m.ProviderRef,
 		Region:       m.Region,
-		Image:        m.Image,
+		Kind:         provider.WorkloadKind(m.Kind),
+		Services:     m.Services,
+		ServiceRefs:  m.ServiceRefs,
+		Endpoints:    fromEndpointModels(m.Endpoints),
+		Labels:       m.Labels,
 	}
+
+	return out
+}
+
+func toEndpointModels(eps []provider.Endpoint) []endpointModel {
+	if len(eps) == 0 {
+		return nil
+	}
+
+	out := make([]endpointModel, len(eps))
+	for i, e := range eps {
+		out[i] = endpointModel{
+			ServiceName: e.ServiceName,
+			URL:         e.URL,
+			Port:        e.Port,
+			Protocol:    e.Protocol,
+			Public:      e.Public,
+		}
+	}
+
+	return out
+}
+
+func fromEndpointModels(eps []endpointModel) []provider.Endpoint {
+	if len(eps) == 0 {
+		return nil
+	}
+
+	out := make([]provider.Endpoint, len(eps))
+	for i, e := range eps {
+		out[i] = provider.Endpoint{
+			ServiceName: e.ServiceName,
+			URL:         e.URL,
+			Port:        e.Port,
+			Protocol:    e.Protocol,
+			Public:      e.Public,
+		}
+	}
+
+	return out
 }
 
 // ── Deployment ──────────────────────────────────────────────────────────────
@@ -117,60 +181,65 @@ func fromInstanceModel(m *instanceModel) *instance.Instance {
 type deploymentModel struct {
 	grove.BaseModel `grove:"table:cp_deployments"`
 
-	ID          string     `bson:"_id"                    grove:"id,pk"`
-	TenantID    string     `bson:"tenant_id"              grove:"tenant_id"`
-	InstanceID  string     `bson:"instance_id"            grove:"instance_id"`
-	ReleaseID   string     `bson:"release_id"             grove:"release_id"`
-	State       string     `bson:"state"                  grove:"state"`
-	Strategy    string     `bson:"strategy"               grove:"strategy"`
-	Image       string     `bson:"image,omitempty"        grove:"image"`
-	ProviderRef string     `bson:"provider_ref,omitempty" grove:"provider_ref"`
-	Error       string     `bson:"error,omitempty"        grove:"error"`
-	Initiator   string     `bson:"initiator,omitempty"    grove:"initiator"`
-	StartedAt   *time.Time `bson:"started_at,omitempty"   grove:"started_at"`
-	FinishedAt  *time.Time `bson:"finished_at,omitempty"  grove:"finished_at"`
-	CreatedAt   time.Time  `bson:"created_at"             grove:"created_at"`
-	UpdatedAt   time.Time  `bson:"updated_at"             grove:"updated_at"`
+	ID              string                       `bson:"_id"                        grove:"id,pk"`
+	TenantID        string                       `bson:"tenant_id"                  grove:"tenant_id"`
+	InstanceID      string                       `bson:"instance_id"                grove:"instance_id"`
+	ReleaseID       string                       `bson:"release_id"                 grove:"release_id"`
+	State           string                       `bson:"state"                      grove:"state"`
+	Strategy        string                       `bson:"strategy"                   grove:"strategy"`
+	Services        []provider.ServiceDeploySpec `bson:"services,omitempty"         grove:"services"`
+	ServiceProgress map[string]string            `bson:"service_progress,omitempty" grove:"service_progress"`
+	ProviderRef     string                       `bson:"provider_ref,omitempty"     grove:"provider_ref"`
+	Error           string                       `bson:"error,omitempty"            grove:"error"`
+	Initiator       string                       `bson:"initiator,omitempty"        grove:"initiator"`
+	StartedAt       *time.Time                   `bson:"started_at,omitempty"       grove:"started_at"`
+	FinishedAt      *time.Time                   `bson:"finished_at,omitempty"      grove:"finished_at"`
+	CreatedAt       time.Time                    `bson:"created_at"                 grove:"created_at"`
+	UpdatedAt       time.Time                    `bson:"updated_at"                 grove:"updated_at"`
 }
 
 func toDeploymentModel(d *deploy.Deployment) *deploymentModel {
 	return &deploymentModel{
-		ID:          idStr(d.ID),
-		TenantID:    d.TenantID,
-		InstanceID:  idStr(d.InstanceID),
-		ReleaseID:   idStr(d.ReleaseID),
-		State:       string(d.State),
-		Strategy:    d.Strategy,
-		Image:       d.Image,
-		ProviderRef: d.ProviderRef,
-		Error:       d.Error,
-		Initiator:   d.Initiator,
-		StartedAt:   d.StartedAt,
-		FinishedAt:  d.FinishedAt,
-		CreatedAt:   d.CreatedAt,
-		UpdatedAt:   d.UpdatedAt,
+		ID:              idStr(d.ID),
+		TenantID:        d.TenantID,
+		InstanceID:      idStr(d.InstanceID),
+		ReleaseID:       idStr(d.ReleaseID),
+		State:           string(d.State),
+		Strategy:        d.Strategy,
+		Services:        d.Services,
+		ServiceProgress: d.ServiceProgress,
+		ProviderRef:     d.ProviderRef,
+		Error:           d.Error,
+		Initiator:       d.Initiator,
+		StartedAt:       d.StartedAt,
+		FinishedAt:      d.FinishedAt,
+		CreatedAt:       d.CreatedAt,
+		UpdatedAt:       d.UpdatedAt,
 	}
 }
 
 func fromDeploymentModel(m *deploymentModel) *deploy.Deployment {
-	return &deploy.Deployment{
+	out := &deploy.Deployment{
 		Entity: ctrlplane.Entity{
 			ID:        id.MustParse(m.ID),
 			CreatedAt: m.CreatedAt,
 			UpdatedAt: m.UpdatedAt,
 		},
-		TenantID:    m.TenantID,
-		InstanceID:  id.MustParse(m.InstanceID),
-		ReleaseID:   id.MustParse(m.ReleaseID),
-		State:       deploy.DeployState(m.State),
-		Strategy:    m.Strategy,
-		Image:       m.Image,
-		ProviderRef: m.ProviderRef,
-		Error:       m.Error,
-		Initiator:   m.Initiator,
-		StartedAt:   m.StartedAt,
-		FinishedAt:  m.FinishedAt,
+		TenantID:        m.TenantID,
+		InstanceID:      id.MustParse(m.InstanceID),
+		ReleaseID:       id.MustParse(m.ReleaseID),
+		State:           deploy.DeployState(m.State),
+		Strategy:        m.Strategy,
+		Services:        m.Services,
+		ServiceProgress: m.ServiceProgress,
+		ProviderRef:     m.ProviderRef,
+		Error:           m.Error,
+		Initiator:       m.Initiator,
+		StartedAt:       m.StartedAt,
+		FinishedAt:      m.FinishedAt,
 	}
+
+	return out
 }
 
 // ── Release ─────────────────────────────────────────────────────────────────
@@ -178,15 +247,15 @@ func fromDeploymentModel(m *deploymentModel) *deploy.Deployment {
 type releaseModel struct {
 	grove.BaseModel `grove:"table:cp_releases"`
 
-	ID         string    `bson:"_id"                  grove:"id,pk"`
-	TenantID   string    `bson:"tenant_id"            grove:"tenant_id"`
-	InstanceID string    `bson:"instance_id"          grove:"instance_id"`
-	Version    int       `bson:"version"              grove:"version"`
-	Image      string    `bson:"image"                grove:"image"`
-	Notes      string    `bson:"notes,omitempty"      grove:"notes"`
-	CommitSHA  string    `bson:"commit_sha,omitempty" grove:"commit_sha"`
-	Active     bool      `bson:"active"               grove:"active"`
-	CreatedAt  time.Time `bson:"created_at"           grove:"created_at"`
+	ID         string                     `bson:"_id"                  grove:"id,pk"`
+	TenantID   string                     `bson:"tenant_id"            grove:"tenant_id"`
+	InstanceID string                     `bson:"instance_id"          grove:"instance_id"`
+	Version    int                        `bson:"version"              grove:"version"`
+	Services   []provider.ServiceSnapshot `bson:"services,omitempty"   grove:"services"`
+	Notes      string                     `bson:"notes,omitempty"      grove:"notes"`
+	CommitSHA  string                     `bson:"commit_sha,omitempty" grove:"commit_sha"`
+	Active     bool                       `bson:"active"               grove:"active"`
+	CreatedAt  time.Time                  `bson:"created_at"           grove:"created_at"`
 }
 
 func toReleaseModel(r *deploy.Release) *releaseModel {
@@ -195,7 +264,7 @@ func toReleaseModel(r *deploy.Release) *releaseModel {
 		TenantID:   r.TenantID,
 		InstanceID: idStr(r.InstanceID),
 		Version:    r.Version,
-		Image:      r.Image,
+		Services:   r.Services,
 		Notes:      r.Notes,
 		CommitSHA:  r.CommitSHA,
 		Active:     r.Active,
@@ -204,7 +273,7 @@ func toReleaseModel(r *deploy.Release) *releaseModel {
 }
 
 func fromReleaseModel(m *releaseModel) *deploy.Release {
-	return &deploy.Release{
+	out := &deploy.Release{
 		Entity: ctrlplane.Entity{
 			ID:        id.MustParse(m.ID),
 			CreatedAt: m.CreatedAt,
@@ -212,11 +281,13 @@ func fromReleaseModel(m *releaseModel) *deploy.Release {
 		TenantID:   m.TenantID,
 		InstanceID: id.MustParse(m.InstanceID),
 		Version:    m.Version,
-		Image:      m.Image,
+		Services:   m.Services,
 		Notes:      m.Notes,
 		CommitSHA:  m.CommitSHA,
 		Active:     m.Active,
 	}
+
+	return out
 }
 
 // ── Health Check ────────────────────────────────────────────────────────────
@@ -224,30 +295,32 @@ func fromReleaseModel(m *releaseModel) *deploy.Release {
 type healthCheckModel struct {
 	grove.BaseModel `grove:"table:cp_health_checks"`
 
-	ID         string    `bson:"_id"         grove:"id,pk"`
-	TenantID   string    `bson:"tenant_id"   grove:"tenant_id"`
-	InstanceID string    `bson:"instance_id" grove:"instance_id"`
-	Name       string    `bson:"name"        grove:"name"`
-	Type       string    `bson:"type"        grove:"type"`
-	Enabled    bool      `bson:"enabled"     grove:"enabled"`
-	Interval   int64     `bson:"interval"    grove:"interval"`
-	Timeout    int64     `bson:"timeout"     grove:"timeout"`
-	CreatedAt  time.Time `bson:"created_at"  grove:"created_at"`
-	UpdatedAt  time.Time `bson:"updated_at"  grove:"updated_at"`
+	ID          string    `bson:"_id"                    grove:"id,pk"`
+	TenantID    string    `bson:"tenant_id"              grove:"tenant_id"`
+	InstanceID  string    `bson:"instance_id"            grove:"instance_id"`
+	ServiceName string    `bson:"service_name,omitempty" grove:"service_name"`
+	Name        string    `bson:"name"                   grove:"name"`
+	Type        string    `bson:"type"                   grove:"type"`
+	Enabled     bool      `bson:"enabled"                grove:"enabled"`
+	Interval    int64     `bson:"interval"               grove:"interval"`
+	Timeout     int64     `bson:"timeout"                grove:"timeout"`
+	CreatedAt   time.Time `bson:"created_at"             grove:"created_at"`
+	UpdatedAt   time.Time `bson:"updated_at"             grove:"updated_at"`
 }
 
 func toHealthCheckModel(c *health.HealthCheck) *healthCheckModel {
 	return &healthCheckModel{
-		ID:         idStr(c.ID),
-		TenantID:   c.TenantID,
-		InstanceID: idStr(c.InstanceID),
-		Name:       c.Name,
-		Type:       string(c.Type),
-		Enabled:    c.Enabled,
-		Interval:   int64(c.Interval),
-		Timeout:    int64(c.Timeout),
-		CreatedAt:  c.CreatedAt,
-		UpdatedAt:  c.UpdatedAt,
+		ID:          idStr(c.ID),
+		TenantID:    c.TenantID,
+		InstanceID:  idStr(c.InstanceID),
+		ServiceName: c.ServiceName,
+		Name:        c.Name,
+		Type:        string(c.Type),
+		Enabled:     c.Enabled,
+		Interval:    int64(c.Interval),
+		Timeout:     int64(c.Timeout),
+		CreatedAt:   c.CreatedAt,
+		UpdatedAt:   c.UpdatedAt,
 	}
 }
 
@@ -258,13 +331,14 @@ func fromHealthCheckModel(m *healthCheckModel) *health.HealthCheck {
 			CreatedAt: m.CreatedAt,
 			UpdatedAt: m.UpdatedAt,
 		},
-		TenantID:   m.TenantID,
-		InstanceID: id.MustParse(m.InstanceID),
-		Name:       m.Name,
-		Type:       health.CheckType(m.Type),
-		Enabled:    m.Enabled,
-		Interval:   time.Duration(m.Interval),
-		Timeout:    time.Duration(m.Timeout),
+		TenantID:    m.TenantID,
+		InstanceID:  id.MustParse(m.InstanceID),
+		ServiceName: m.ServiceName,
+		Name:        m.Name,
+		Type:        health.CheckType(m.Type),
+		Enabled:     m.Enabled,
+		Interval:    time.Duration(m.Interval),
+		Timeout:     time.Duration(m.Timeout),
 	}
 }
 
@@ -693,50 +767,50 @@ func fromAuditEntryModel(m *auditEntryModel) admin.AuditEntry {
 type templateModel struct {
 	grove.BaseModel `grove:"table:cp_templates"`
 
-	ID          string            `bson:"_id"                   grove:"id,pk"`
-	TenantID    string            `bson:"tenant_id"             grove:"tenant_id"`
-	Name        string            `bson:"name"                  grove:"name"`
-	Description string            `bson:"description,omitempty" grove:"description"`
-	Image       string            `bson:"image"                 grove:"image"`
-	Strategy    string            `bson:"strategy"              grove:"strategy"`
-	Env         map[string]string `bson:"env,omitempty"`
-	CommitSHA   string            `bson:"commit_sha,omitempty"  grove:"commit_sha"`
-	Notes       string            `bson:"notes,omitempty"       grove:"notes"`
-	CreatedAt   time.Time         `bson:"created_at"            grove:"created_at"`
-	UpdatedAt   time.Time         `bson:"updated_at"            grove:"updated_at"`
+	ID              string                 `bson:"_id"                        grove:"id,pk"`
+	TenantID        string                 `bson:"tenant_id"                  grove:"tenant_id"`
+	Name            string                 `bson:"name"                       grove:"name"`
+	Description     string                 `bson:"description,omitempty"      grove:"description"`
+	DefaultKind     string                 `bson:"default_kind,omitempty"     grove:"default_kind"`
+	DefaultStrategy string                 `bson:"default_strategy,omitempty" grove:"default_strategy"`
+	Services        []provider.ServiceSpec `bson:"services,omitempty"`
+	Labels          map[string]string      `bson:"labels,omitempty"`
+	Notes           string                 `bson:"notes,omitempty"            grove:"notes"`
+	CreatedAt       time.Time              `bson:"created_at"                 grove:"created_at"`
+	UpdatedAt       time.Time              `bson:"updated_at"                 grove:"updated_at"`
 }
 
-func toTemplateModel(t *deploy.Template) *templateModel {
+func toTemplateModel(t *template.Template) *templateModel {
 	return &templateModel{
-		ID:          t.ID.String(),
-		TenantID:    t.TenantID,
-		Name:        t.Name,
-		Description: t.Description,
-		Image:       t.Image,
-		Strategy:    t.Strategy,
-		Env:         t.Env,
-		CommitSHA:   t.CommitSHA,
-		Notes:       t.Notes,
-		CreatedAt:   t.CreatedAt,
-		UpdatedAt:   t.UpdatedAt,
+		ID:              t.ID.String(),
+		TenantID:        t.TenantID,
+		Name:            t.Name,
+		Description:     t.Description,
+		DefaultKind:     string(t.DefaultKind),
+		DefaultStrategy: t.DefaultStrategy,
+		Services:        t.Services,
+		Labels:          t.Labels,
+		Notes:           t.Notes,
+		CreatedAt:       t.CreatedAt,
+		UpdatedAt:       t.UpdatedAt,
 	}
 }
 
-func fromTemplateModel(m *templateModel) *deploy.Template {
-	return &deploy.Template{
+func fromTemplateModel(m *templateModel) *template.Template {
+	return &template.Template{
 		Entity: ctrlplane.Entity{
 			ID:        id.MustParse(m.ID),
 			CreatedAt: m.CreatedAt,
 			UpdatedAt: m.UpdatedAt,
 		},
-		TenantID:    m.TenantID,
-		Name:        m.Name,
-		Description: m.Description,
-		Image:       m.Image,
-		Strategy:    m.Strategy,
-		Env:         m.Env,
-		CommitSHA:   m.CommitSHA,
-		Notes:       m.Notes,
+		TenantID:        m.TenantID,
+		Name:            m.Name,
+		Description:     m.Description,
+		DefaultKind:     provider.WorkloadKind(m.DefaultKind),
+		DefaultStrategy: m.DefaultStrategy,
+		Services:        m.Services,
+		Labels:          m.Labels,
+		Notes:           m.Notes,
 	}
 }
 
@@ -745,50 +819,52 @@ func fromTemplateModel(m *templateModel) *deploy.Template {
 type datacenterModel struct {
 	grove.BaseModel `grove:"table:cp_datacenters"`
 
-	ID            string            `bson:"_id"                       grove:"id,pk"`
-	TenantID      string            `bson:"tenant_id"                 grove:"tenant_id"`
-	Name          string            `bson:"name"                      grove:"name"`
-	Slug          string            `bson:"slug"                      grove:"slug"`
-	ProviderName  string            `bson:"provider_name"             grove:"provider_name"`
-	Region        string            `bson:"region"                    grove:"region"`
-	Zone          string            `bson:"zone,omitempty"            grove:"zone"`
-	Status        string            `bson:"status"                    grove:"status"`
-	Latitude      float64           `bson:"latitude,omitempty"        grove:"latitude"`
-	Longitude     float64           `bson:"longitude,omitempty"       grove:"longitude"`
-	Country       string            `bson:"country,omitempty"         grove:"country"`
-	City          string            `bson:"city,omitempty"            grove:"city"`
-	MaxInstances  int               `bson:"max_instances,omitempty"   grove:"max_instances"`
-	MaxCPUMillis  int               `bson:"max_cpu_millis,omitempty"  grove:"max_cpu_millis"`
-	MaxMemoryMB   int               `bson:"max_memory_mb,omitempty"   grove:"max_memory_mb"`
-	Labels        map[string]string `bson:"labels,omitempty"`
-	Metadata      map[string]string `bson:"metadata,omitempty"`
-	LastCheckedAt *time.Time        `bson:"last_checked_at,omitempty" grove:"last_checked_at"`
-	CreatedAt     time.Time         `bson:"created_at"                grove:"created_at"`
-	UpdatedAt     time.Time         `bson:"updated_at"                grove:"updated_at"`
+	ID                string                             `bson:"_id"                          grove:"id,pk"`
+	TenantID          string                             `bson:"tenant_id"                    grove:"tenant_id"`
+	Name              string                             `bson:"name"                         grove:"name"`
+	Slug              string                             `bson:"slug"                         grove:"slug"`
+	ProviderName      string                             `bson:"provider_name"                grove:"provider_name"`
+	Region            string                             `bson:"region"                       grove:"region"`
+	Zone              string                             `bson:"zone,omitempty"               grove:"zone"`
+	Status            string                             `bson:"status"                       grove:"status"`
+	Latitude          float64                            `bson:"latitude,omitempty"           grove:"latitude"`
+	Longitude         float64                            `bson:"longitude,omitempty"          grove:"longitude"`
+	Country           string                             `bson:"country,omitempty"            grove:"country"`
+	City              string                             `bson:"city,omitempty"               grove:"city"`
+	MaxInstances      int                                `bson:"max_instances,omitempty"      grove:"max_instances"`
+	MaxCPUMillis      int                                `bson:"max_cpu_millis,omitempty"     grove:"max_cpu_millis"`
+	MaxMemoryMB       int                                `bson:"max_memory_mb,omitempty"      grove:"max_memory_mb"`
+	Labels            map[string]string                  `bson:"labels,omitempty"`
+	Metadata          map[string]string                  `bson:"metadata,omitempty"`
+	BootstrapServices []bootstrap.BootstrapServiceSpec   `bson:"bootstrap_services,omitempty"`
+	LastCheckedAt     *time.Time                         `bson:"last_checked_at,omitempty"    grove:"last_checked_at"`
+	CreatedAt         time.Time                          `bson:"created_at"                   grove:"created_at"`
+	UpdatedAt         time.Time                          `bson:"updated_at"                   grove:"updated_at"`
 }
 
 func toDatacenterModel(dc *datacenter.Datacenter) *datacenterModel {
 	return &datacenterModel{
-		ID:            idStr(dc.ID),
-		TenantID:      dc.TenantID,
-		Name:          dc.Name,
-		Slug:          dc.Slug,
-		ProviderName:  dc.ProviderName,
-		Region:        dc.Region,
-		Zone:          dc.Zone,
-		Status:        string(dc.Status),
-		Latitude:      dc.Location.Latitude,
-		Longitude:     dc.Location.Longitude,
-		Country:       dc.Location.Country,
-		City:          dc.Location.City,
-		MaxInstances:  dc.Capacity.MaxInstances,
-		MaxCPUMillis:  dc.Capacity.MaxCPUMillis,
-		MaxMemoryMB:   dc.Capacity.MaxMemoryMB,
-		Labels:        dc.Labels,
-		Metadata:      dc.Metadata,
-		LastCheckedAt: dc.LastCheckedAt,
-		CreatedAt:     dc.CreatedAt,
-		UpdatedAt:     dc.UpdatedAt,
+		ID:                idStr(dc.ID),
+		TenantID:          dc.TenantID,
+		Name:              dc.Name,
+		Slug:              dc.Slug,
+		ProviderName:      dc.ProviderName,
+		Region:            dc.Region,
+		Zone:              dc.Zone,
+		Status:            string(dc.Status),
+		Latitude:          dc.Location.Latitude,
+		Longitude:         dc.Location.Longitude,
+		Country:           dc.Location.Country,
+		City:              dc.Location.City,
+		MaxInstances:      dc.Capacity.MaxInstances,
+		MaxCPUMillis:      dc.Capacity.MaxCPUMillis,
+		MaxMemoryMB:       dc.Capacity.MaxMemoryMB,
+		Labels:            dc.Labels,
+		Metadata:          dc.Metadata,
+		BootstrapServices: dc.BootstrapServices,
+		LastCheckedAt:     dc.LastCheckedAt,
+		CreatedAt:         dc.CreatedAt,
+		UpdatedAt:         dc.UpdatedAt,
 	}
 }
 
@@ -817,8 +893,151 @@ func fromDatacenterModel(m *datacenterModel) *datacenter.Datacenter {
 			MaxCPUMillis: m.MaxCPUMillis,
 			MaxMemoryMB:  m.MaxMemoryMB,
 		},
-		Labels:        m.Labels,
-		Metadata:      m.Metadata,
-		LastCheckedAt: m.LastCheckedAt,
+		Labels:            m.Labels,
+		Metadata:          m.Metadata,
+		BootstrapServices: m.BootstrapServices,
+		LastCheckedAt:     m.LastCheckedAt,
 	}
+}
+
+// ── Bootstrap Workloads ────────────────────────────────────────────────────
+
+type bootstrapModel struct {
+	grove.BaseModel `grove:"table:cp_bootstrap_workloads"`
+
+	ID           string                 `bson:"_id"                    grove:"id,pk"`
+	DatacenterID string                 `bson:"datacenter_id"          grove:"datacenter_id"`
+	Name         string                 `bson:"name"                   grove:"name"`
+	Kind         string                 `bson:"kind"                   grove:"kind"`
+	Services     []provider.ServiceSpec `bson:"services,omitempty"`
+	State        string                 `bson:"state"                  grove:"state"`
+	ProviderRef  string                 `bson:"provider_ref,omitempty" grove:"provider_ref"`
+	ServiceRefs  map[string]string      `bson:"service_refs,omitempty"`
+	LastError    string                 `bson:"last_error,omitempty"   grove:"last_error"`
+	Attempts     int                    `bson:"attempts,omitempty"     grove:"attempts"`
+	Labels       map[string]string      `bson:"labels,omitempty"`
+	CreatedAt    time.Time              `bson:"created_at"             grove:"created_at"`
+	UpdatedAt    time.Time              `bson:"updated_at"             grove:"updated_at"`
+}
+
+func toBootstrapModel(bw *bootstrap.BootstrapWorkload) *bootstrapModel {
+	return &bootstrapModel{
+		ID:           idStr(bw.ID),
+		DatacenterID: idStr(bw.DatacenterID),
+		Name:         bw.Name,
+		Kind:         string(bw.Kind),
+		Services:     bw.Services,
+		State:        string(bw.State),
+		ProviderRef:  bw.ProviderRef,
+		ServiceRefs:  bw.ServiceRefs,
+		LastError:    bw.LastError,
+		Attempts:     bw.Attempts,
+		Labels:       bw.Labels,
+		CreatedAt:    bw.CreatedAt,
+		UpdatedAt:    bw.UpdatedAt,
+	}
+}
+
+func fromBootstrapModel(m *bootstrapModel) *bootstrap.BootstrapWorkload {
+	return &bootstrap.BootstrapWorkload{
+		Entity: ctrlplane.Entity{
+			ID:        id.MustParse(m.ID),
+			CreatedAt: m.CreatedAt,
+			UpdatedAt: m.UpdatedAt,
+		},
+		DatacenterID: id.MustParse(m.DatacenterID),
+		Name:         m.Name,
+		Kind:         provider.WorkloadKind(m.Kind),
+		Services:     m.Services,
+		State:        bootstrap.State(m.State),
+		ProviderRef:  m.ProviderRef,
+		ServiceRefs:  m.ServiceRefs,
+		LastError:    m.LastError,
+		Attempts:     m.Attempts,
+		Labels:       m.Labels,
+	}
+}
+
+// ── Workload ────────────────────────────────────────────────────────────────
+
+type workloadModel struct {
+	grove.BaseModel `grove:"table:cp_workloads"`
+
+	ID               string                 `bson:"_id"                          grove:"id,pk"`
+	TenantID         string                 `bson:"tenant_id"                    grove:"tenant_id"`
+	Name             string                 `bson:"name"                         grove:"name"`
+	Slug             string                 `bson:"slug"                         grove:"slug"`
+	DatacenterID     string                 `bson:"datacenter_id,omitempty"      grove:"datacenter_id"`
+	ProviderName     string                 `bson:"provider_name"                grove:"provider_name"`
+	Region           string                 `bson:"region,omitempty"             grove:"region"`
+	Kind             string                 `bson:"kind,omitempty"               grove:"kind"`
+	Services         []provider.ServiceSpec `bson:"services,omitempty"`
+	Labels           map[string]string      `bson:"labels,omitempty"`
+	TemplateID       string                 `bson:"template_id,omitempty"        grove:"template_id"`
+	CurrentReleaseID string                 `bson:"current_release_id,omitempty" grove:"current_release_id"`
+	ReplicaCount     int                    `bson:"replica_count"                grove:"replica_count"`
+	PreviousReplicas int                    `bson:"previous_replicas,omitempty"  grove:"previous_replicas"`
+	State            string                 `bson:"state"                        grove:"state"`
+	PausedAt         *time.Time             `bson:"paused_at,omitempty"          grove:"paused_at"`
+	CreatedAt        time.Time              `bson:"created_at"                   grove:"created_at"`
+	UpdatedAt        time.Time              `bson:"updated_at"                   grove:"updated_at"`
+}
+
+func toWorkloadModel(w *workload.Workload) *workloadModel {
+	return &workloadModel{
+		ID:               idStr(w.ID),
+		TenantID:         w.TenantID,
+		Name:             w.Name,
+		Slug:             w.Slug,
+		DatacenterID:     idStr(w.DatacenterID),
+		ProviderName:     w.ProviderName,
+		Region:           w.Region,
+		Kind:             string(w.Kind),
+		Services:         w.Services,
+		Labels:           w.Labels,
+		TemplateID:       idStr(w.TemplateID),
+		CurrentReleaseID: idStr(w.CurrentReleaseID),
+		ReplicaCount:     w.ReplicaCount,
+		PreviousReplicas: w.PreviousReplicas,
+		State:            string(w.State),
+		PausedAt:         w.PausedAt,
+		CreatedAt:        w.CreatedAt,
+		UpdatedAt:        w.UpdatedAt,
+	}
+}
+
+func fromWorkloadModel(m *workloadModel) *workload.Workload {
+	w := &workload.Workload{
+		Entity: ctrlplane.Entity{
+			ID:        id.MustParse(m.ID),
+			CreatedAt: m.CreatedAt,
+			UpdatedAt: m.UpdatedAt,
+		},
+		TenantID:         m.TenantID,
+		Name:             m.Name,
+		Slug:             m.Slug,
+		ProviderName:     m.ProviderName,
+		Region:           m.Region,
+		Kind:             provider.WorkloadKind(m.Kind),
+		Services:         m.Services,
+		Labels:           m.Labels,
+		ReplicaCount:     m.ReplicaCount,
+		PreviousReplicas: m.PreviousReplicas,
+		State:            workload.State(m.State),
+		PausedAt:         m.PausedAt,
+	}
+
+	if m.DatacenterID != "" {
+		w.DatacenterID = id.MustParse(m.DatacenterID)
+	}
+
+	if m.CurrentReleaseID != "" {
+		w.CurrentReleaseID = id.MustParse(m.CurrentReleaseID)
+	}
+
+	if m.TemplateID != "" {
+		w.TemplateID = id.MustParse(m.TemplateID)
+	}
+
+	return w
 }

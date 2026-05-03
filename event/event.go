@@ -21,6 +21,26 @@ const (
 	InstanceUnsuspended Type = "instance.unsuspended"
 )
 
+// Workload events.
+const (
+	WorkloadCreated   Type = "workload.created"
+	WorkloadUpdated   Type = "workload.updated"
+	WorkloadScaled    Type = "workload.scaled"
+	WorkloadDeployed  Type = "workload.deployed"
+	WorkloadPaused    Type = "workload.paused"
+	WorkloadResumed   Type = "workload.resumed"
+	WorkloadRestarted Type = "workload.restarted"
+	WorkloadDeleted   Type = "workload.deleted"
+	WorkloadFailed    Type = "workload.failed"
+)
+
+// Template events.
+const (
+	TemplateCreated Type = "template.created"
+	TemplateUpdated Type = "template.updated"
+	TemplateDeleted Type = "template.deleted"
+)
+
 // Deploy events.
 const (
 	DeployStarted    Type = "deploy.started"
@@ -93,6 +113,31 @@ func NewEvent(t Type, tenantID string) *Event {
 // WithInstance sets the instance ID on the event.
 func (e *Event) WithInstance(instanceID id.ID) *Event {
 	e.InstanceID = instanceID
+
+	return e
+}
+
+// WithWorkload stamps the workload ID into the event payload. Workload
+// IDs don't have a first-class field on Event (the bus is instance-
+// centric), so we use the convention payload["workload_id"] = id.
+func (e *Event) WithWorkload(workloadID id.ID) *Event {
+	if e.Payload == nil {
+		e.Payload = make(map[string]any)
+	}
+
+	e.Payload["workload_id"] = workloadID.String()
+
+	return e
+}
+
+// WithTemplate stamps the template ID into the event payload. Same
+// convention as WithWorkload.
+func (e *Event) WithTemplate(templateID id.ID) *Event {
+	if e.Payload == nil {
+		e.Payload = make(map[string]any)
+	}
+
+	e.Payload["template_id"] = templateID.String()
 
 	return e
 }

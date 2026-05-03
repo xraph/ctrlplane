@@ -523,5 +523,169 @@ CREATE TABLE IF NOT EXISTS cp_audit_entries (
 				return err
 			},
 		},
+		&migrate.Migration{
+			Name:    "create_cp_templates",
+			Version: "20240101000016",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `
+CREATE TABLE IF NOT EXISTS cp_templates (
+    id               TEXT PRIMARY KEY,
+    tenant_id        TEXT NOT NULL,
+    name             TEXT NOT NULL,
+    description      TEXT NOT NULL DEFAULT '',
+    image            TEXT NOT NULL,
+    default_strategy TEXT NOT NULL DEFAULT '',
+    env              BLOB,
+    resources        BLOB,
+    ports            BLOB,
+    volumes          BLOB,
+    health_check     BLOB,
+    secrets          BLOB,
+    config_files     BLOB,
+    labels           BLOB,
+    annotations      BLOB,
+    notes            TEXT NOT NULL DEFAULT '',
+    created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
+);
+`)
+				if err != nil {
+					return err
+				}
+
+				_, err = exec.Exec(ctx, `CREATE INDEX IF NOT EXISTS idx_cp_templates_tenant ON cp_templates (tenant_id);`)
+
+				return err
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `DROP TABLE IF EXISTS cp_templates`)
+
+				return err
+			},
+		},
+		// ─────────────────────────────────────────────────────────────
+		// Phase 4 cleanup: drop the legacy single-image columns.
+		// SQLite 3.35 (Mar 2021) introduced ALTER TABLE DROP COLUMN —
+		// any modern SQLite has this. The Down migration adds the
+		// columns back as nullable so a rollback can re-attach the
+		// pre-multi-service code paths (data is gone, but the schema
+		// shape is restored).
+		// ─────────────────────────────────────────────────────────────
+		&migrate.Migration{
+			Name:    "drop_legacy_single_image_columns",
+			Version: "20240101000017",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				stmts := []string{
+					`ALTER TABLE cp_instances   DROP COLUMN image`,
+					`ALTER TABLE cp_deployments DROP COLUMN image`,
+					`ALTER TABLE cp_releases    DROP COLUMN image`,
+					`ALTER TABLE cp_templates   DROP COLUMN image`,
+					`ALTER TABLE cp_templates   DROP COLUMN env`,
+					`ALTER TABLE cp_templates   DROP COLUMN resources`,
+					`ALTER TABLE cp_templates   DROP COLUMN ports`,
+					`ALTER TABLE cp_templates   DROP COLUMN volumes`,
+					`ALTER TABLE cp_templates   DROP COLUMN health_check`,
+					`ALTER TABLE cp_templates   DROP COLUMN secrets`,
+					`ALTER TABLE cp_templates   DROP COLUMN config_files`,
+					`ALTER TABLE cp_templates   DROP COLUMN annotations`,
+				}
+
+				for _, stmt := range stmts {
+					if _, err := exec.Exec(ctx, stmt); err != nil {
+						return err
+					}
+				}
+
+				return nil
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				stmts := []string{
+					`ALTER TABLE cp_instances   ADD COLUMN image TEXT NOT NULL DEFAULT ''`,
+					`ALTER TABLE cp_deployments ADD COLUMN image TEXT NOT NULL DEFAULT ''`,
+					`ALTER TABLE cp_releases    ADD COLUMN image TEXT NOT NULL DEFAULT ''`,
+					`ALTER TABLE cp_templates   ADD COLUMN image TEXT NOT NULL DEFAULT ''`,
+					`ALTER TABLE cp_templates   ADD COLUMN env BLOB`,
+					`ALTER TABLE cp_templates   ADD COLUMN resources BLOB`,
+					`ALTER TABLE cp_templates   ADD COLUMN ports BLOB`,
+					`ALTER TABLE cp_templates   ADD COLUMN volumes BLOB`,
+					`ALTER TABLE cp_templates   ADD COLUMN health_check BLOB`,
+					`ALTER TABLE cp_templates   ADD COLUMN secrets BLOB`,
+					`ALTER TABLE cp_templates   ADD COLUMN config_files BLOB`,
+					`ALTER TABLE cp_templates   ADD COLUMN annotations BLOB`,
+				}
+
+				for _, stmt := range stmts {
+					if _, err := exec.Exec(ctx, stmt); err != nil {
+						return err
+					}
+				}
+
+				return nil
+			},
+		},
+		// ─────────────────────────────────────────────────────────────
+		// Datacenter bootstrap services (Phase 2). See the matching
+		// postgres migrations 20240101000020-21 for the rationale.
+		// SQLite's JSONB equivalent is just BLOB / TEXT — bun stores
+		// `[]byte` columns as BLOB.
+		// ─────────────────────────────────────────────────────────────
+		&migrate.Migration{
+			Name:    "add_bootstrap_services_to_cp_datacenters",
+			Version: "20240101000018",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `ALTER TABLE cp_datacenters ADD COLUMN bootstrap_services BLOB`)
+
+				return err
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `ALTER TABLE cp_datacenters DROP COLUMN bootstrap_services`)
+
+				return err
+			},
+		},
+		&migrate.Migration{
+			Name:    "create_cp_bootstrap_workloads",
+			Version: "20240101000019",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `
+CREATE TABLE IF NOT EXISTS cp_bootstrap_workloads (
+    id            TEXT PRIMARY KEY,
+    datacenter_id TEXT NOT NULL,
+    name          TEXT NOT NULL,
+    kind          TEXT NOT NULL,
+    services      BLOB,
+    state         TEXT NOT NULL,
+    provider_ref  TEXT NOT NULL DEFAULT '',
+    service_refs  BLOB,
+    last_error    TEXT NOT NULL DEFAULT '',
+    attempts      INTEGER NOT NULL DEFAULT 0,
+    labels        BLOB,
+    created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);`)
+				if err != nil {
+					return err
+				}
+
+				_, err = exec.Exec(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS idx_cp_bootstrap_workloads_dc_name ON cp_bootstrap_workloads (datacenter_id, name);`)
+				if err != nil {
+					return err
+				}
+
+				_, err = exec.Exec(ctx, `CREATE INDEX IF NOT EXISTS idx_cp_bootstrap_workloads_dc ON cp_bootstrap_workloads (datacenter_id);`)
+				if err != nil {
+					return err
+				}
+
+				_, err = exec.Exec(ctx, `CREATE INDEX IF NOT EXISTS idx_cp_bootstrap_workloads_state ON cp_bootstrap_workloads (state);`)
+
+				return err
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `DROP TABLE IF EXISTS cp_bootstrap_workloads`)
+
+				return err
+			},
+		},
 	)
 }

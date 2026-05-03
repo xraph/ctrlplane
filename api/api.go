@@ -52,6 +52,75 @@ func (a *API) RegisterRoutes(router forge.Router) {
 	a.registerNetworkRoutes(protectRoutes)
 	a.registerSecretsRoutes(protectRoutes)
 	a.registerAdminRoutes(protectRoutes)
+	a.registerStreamRoutes(protectRoutes)
+	a.registerUsageRoutes(protectRoutes)
+}
+
+// registerUsageRoutes wires the live resource-usage endpoints. The
+// /usage path namespace is intentionally distinct from the existing
+// telemetry /metrics routes — they're a separate concept (the
+// in-memory ring buffer fed by docker stats every 10s) used by the
+// workspace dashboard cards.
+func (a *API) registerUsageRoutes(router forge.Router) {
+	g := router.Group("/v1", forge.WithGroupTags("usage"))
+
+	_ = g.GET("/instances/:instanceId/usage", a.getInstanceUsage,
+		forge.WithSummary("Get latest instance usage"),
+		forge.WithDescription("Returns the most recent usage sample stored for the instance."),
+		forge.WithOperationID("getInstanceUsage"),
+	)
+	_ = g.GET("/instances/:instanceId/usage/range", a.getInstanceUsageRange,
+		forge.WithSummary("Range-query instance usage"),
+		forge.WithDescription("Returns a downsampled time-series of usage samples (?range=1h&resolution=auto)."),
+		forge.WithOperationID("getInstanceUsageRange"),
+	)
+	_ = g.EventStream("/instances/:instanceId/usage/stream", a.streamInstanceUsage,
+		forge.WithSummary("Stream instance usage"),
+		forge.WithDescription("SSE stream of usage samples as the poller produces them."),
+		forge.WithOperationID("streamInstanceUsage"),
+	)
+
+	_ = g.GET("/workloads/:workloadId/usage/range", a.getWorkloadUsageRange,
+		forge.WithSummary("Range-query workload usage"),
+		forge.WithDescription("Returns the workload-aggregated time-series summed across replicas."),
+		forge.WithOperationID("getWorkloadUsageRange"),
+	)
+	_ = g.EventStream("/workloads/:workloadId/usage/stream", a.streamWorkloadUsage,
+		forge.WithSummary("Stream workload usage"),
+		forge.WithDescription("SSE stream of per-replica usage samples tagged with replica metadata."),
+		forge.WithOperationID("streamWorkloadUsage"),
+	)
+}
+
+// registerStreamRoutes wires the Server-Sent Events endpoints for
+// per-instance and per-workload health + logs streaming. Mounted on
+// the same auth-protected group as the rest of the API; SSE auth
+// supports both the existing Authorization header AND a ?token=
+// query param promotion (see auth/sse_middleware.go) so browser
+// EventSource clients work without custom headers.
+func (a *API) registerStreamRoutes(router forge.Router) {
+	g := router.Group("/v1", forge.WithGroupTags("streaming"))
+
+	_ = g.EventStream("/instances/:instanceId/health/stream", a.streamInstanceHealth,
+		forge.WithSummary("Stream instance health"),
+		forge.WithDescription("Server-Sent Events stream of HealthResults for the instance."),
+		forge.WithOperationID("streamInstanceHealth"),
+	)
+	_ = g.EventStream("/instances/:instanceId/logs/stream", a.streamInstanceLogs,
+		forge.WithSummary("Stream instance logs"),
+		forge.WithDescription("Server-Sent Events stream of structured stdout/stderr log lines."),
+		forge.WithOperationID("streamInstanceLogs"),
+	)
+	_ = g.EventStream("/workloads/:workloadId/health/stream", a.streamWorkloadHealth,
+		forge.WithSummary("Stream workload health"),
+		forge.WithDescription("Fans in HealthResults from every replica."),
+		forge.WithOperationID("streamWorkloadHealth"),
+	)
+	_ = g.EventStream("/workloads/:workloadId/logs/stream", a.streamWorkloadLogs,
+		forge.WithSummary("Stream workload logs"),
+		forge.WithDescription("Fans in stdout/stderr from every replica, tagged with replica metadata."),
+		forge.WithOperationID("streamWorkloadLogs"),
+	)
 }
 
 // registerInstanceRoutes registers all instance management routes.

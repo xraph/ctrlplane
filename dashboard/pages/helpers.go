@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xraph/ctrlplane/deploy"
 	"github.com/xraph/ctrlplane/provider"
+	"github.com/xraph/ctrlplane/template"
 )
 
 // formatWorkerInterval formats a duration as a human-readable interval string.
@@ -187,7 +187,7 @@ func volumesToJSON(volumes []provider.VolumeSpec) string {
 }
 
 // secretsToJSON converts a slice of SecretRef to a JSON string for the hidden form field.
-func secretsToJSON(secs []deploy.SecretRef) string {
+func secretsToJSON(secs []template.SecretRef) string {
 	if len(secs) == 0 {
 		return "[]"
 	}
@@ -201,7 +201,7 @@ func secretsToJSON(secs []deploy.SecretRef) string {
 }
 
 // configFilesToJSON converts a slice of ConfigFile to a JSON string for the hidden form field.
-func configFilesToJSON(files []deploy.ConfigFile) string {
+func configFilesToJSON(files []template.ConfigFile) string {
 	if len(files) == 0 {
 		return "[]"
 	}
@@ -227,3 +227,155 @@ func healthCheckToJSON(hc *provider.HealthCheckSpec) string {
 
 	return string(b)
 }
+
+// truncStr trims s to maxLen and appends "…" when truncated.
+// Mirrors components.truncStr but local to the pages package so
+// templ files in this package can call it without importing
+// components for one-off uses.
+func truncStr(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+
+	return s[:maxLen-3] + "..."
+}
+
+// mainServiceImage returns the Image of a multi-service slice's Main
+// service, or empty when none is found. Used by dashboard tables that
+// want a single representative image to display per row.
+func mainServiceImage(services []provider.ServiceSpec) string {
+	for i := range services {
+		if services[i].Role == provider.RoleMain || services[i].Role == "" {
+			return services[i].Image
+		}
+	}
+
+	return ""
+}
+
+// mainDeployImage returns the first ServiceDeploySpec's Image, used by
+// the deployment detail/listing pages to show "what was deployed".
+func mainDeployImage(services []provider.ServiceDeploySpec) string {
+	if len(services) == 0 {
+		return ""
+	}
+
+	return services[0].Image
+}
+
+// mainSnapshotImage returns the first ServiceSnapshot's Image for
+// release displays.
+func mainSnapshotImage(services []provider.ServiceSnapshot) string {
+	if len(services) == 0 {
+		return ""
+	}
+
+	return services[0].Image
+}
+
+// collectDeployEnvKeys flattens env-var keys across every service in a
+// deploy. Two services with the same key produce one badge — the
+// dashboard displays keys only, never values.
+func collectDeployEnvKeys(services []provider.ServiceDeploySpec) []string {
+	seen := make(map[string]struct{})
+
+	for i := range services {
+		for k := range services[i].Env {
+			seen[k] = struct{}{}
+		}
+	}
+
+	out := make([]string, 0, len(seen))
+	for k := range seen {
+		out = append(out, k)
+	}
+
+	return out
+}
+
+// templateMainImage returns the Main service's image from a template.
+func templateMainImage(t *templateRef) string {
+	if t == nil {
+		return ""
+	}
+
+	if main := t.MainService(); main != nil {
+		return main.Image
+	}
+
+	return ""
+}
+
+// templateMainResources returns the Main service's resources spec.
+func templateMainResources(t *templateRef) provider.ResourceSpec {
+	if t == nil {
+		return provider.ResourceSpec{}
+	}
+
+	if main := t.MainService(); main != nil {
+		return main.Resources
+	}
+
+	return provider.ResourceSpec{}
+}
+
+func totalPortsAcrossTemplate(t *templateRef) int {
+	if t == nil {
+		return 0
+	}
+
+	n := 0
+	for i := range t.Services {
+		n += len(t.Services[i].Ports)
+	}
+
+	return n
+}
+
+func totalVolumesAcrossTemplate(t *templateRef) int {
+	if t == nil {
+		return 0
+	}
+
+	n := 0
+	for i := range t.Services {
+		n += len(t.Services[i].Volumes)
+	}
+
+	return n
+}
+
+func totalSecretsAcrossTemplate(t *templateRef) int {
+	if t == nil {
+		return 0
+	}
+
+	n := 0
+	for i := range t.Services {
+		n += len(t.Services[i].Secrets)
+	}
+
+	return n
+}
+
+// totalEnvAcrossTemplate sums the env-var key counts across every
+// service in the template. Surfaces an "N envs" badge in the
+// templates list alongside ports / vols / secrets so operators can
+// see at a glance whether a template carries env without clicking
+// into the detail view.
+func totalEnvAcrossTemplate(t *templateRef) int {
+	if t == nil {
+		return 0
+	}
+
+	n := 0
+	for i := range t.Services {
+		n += len(t.Services[i].Env)
+	}
+
+	return n
+}
+
+// templateRef is a type alias used by helpers above to avoid spelling
+// the long template.Template path. Defined locally so helpers compile.
+type templateRef = template.Template

@@ -3,6 +3,7 @@ package app
 import (
 	ctrlplane "github.com/xraph/ctrlplane"
 	"github.com/xraph/ctrlplane/auth"
+	"github.com/xraph/ctrlplane/bootstrap"
 	"github.com/xraph/ctrlplane/event"
 	"github.com/xraph/ctrlplane/plugin"
 	"github.com/xraph/ctrlplane/provider"
@@ -80,6 +81,28 @@ func WithVault(v secrets.Vault) Option {
 func WithExtension(ext plugin.Extension) Option {
 	return func(cp *CtrlPlane) error {
 		cp.pendingExts = append(cp.pendingExts, ext)
+
+		return nil
+	}
+}
+
+// WithBootstrapHook registers a bootstrap.Hook with the control plane.
+//
+// Hooks are the programmatic-contribution path for shared platform
+// services that auto-deploy on every datacenter (declarative
+// contributions live on Datacenter.BootstrapServices). The reconciler
+// worker calls every registered hook on every datacenter on every
+// tick — hooks self-filter by inspecting the supplied DatacenterInfo.
+//
+// Re-registering a hook with the same Name replaces the previous
+// entry, supporting hot-reload of an extension's hook definition.
+func WithBootstrapHook(h bootstrap.Hook) Option {
+	return func(cp *CtrlPlane) error {
+		if cp.bootstrapHooks == nil {
+			cp.bootstrapHooks = bootstrap.NewRegistry()
+		}
+
+		cp.bootstrapHooks.Register(h)
 
 		return nil
 	}

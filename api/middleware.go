@@ -35,10 +35,20 @@ func (a *API) authMiddleware(next http.Handler) http.Handler {
 // AuthForgeMiddleware returns a Forge middleware that performs bearer token
 // authentication. Use this when registering routes into an external Forge
 // router (extension mode).
+//
+// Promotes a `?token=X` query param to `Authorization: Bearer X` when the
+// header is absent so SSE clients (browser EventSource can't set custom
+// headers, only cookies) still authenticate. The header path always wins
+// when both are present.
 func (a *API) AuthForgeMiddleware() forge.Middleware {
 	return func(next forge.Handler) forge.Handler {
 		return func(ctx forge.Context) error {
 			token := ctx.Header("Authorization")
+			if token == "" {
+				if t := ctx.Request().URL.Query().Get("token"); t != "" {
+					token = "Bearer " + t
+				}
+			}
 
 			claims, err := a.cp.Auth().Authenticate(ctx.Context(), token)
 			if err != nil {

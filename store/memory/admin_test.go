@@ -18,11 +18,13 @@ func newTenant(name, externalID string) *admin.Tenant {
 		ExternalID: externalID,
 		Status:     admin.TenantStatus("active"),
 	}
+
 	return t
 }
 
 func TestGetTenantByExternalID_emptyExternalID_returnsNotFound(t *testing.T) {
 	s := New()
+
 	_, err := s.GetTenantByExternalID(context.Background(), "")
 	if !errors.Is(err, ctrlplane.ErrNotFound) {
 		t.Fatalf("want ErrNotFound, got %v", err)
@@ -31,6 +33,7 @@ func TestGetTenantByExternalID_emptyExternalID_returnsNotFound(t *testing.T) {
 
 func TestGetTenantByExternalID_unknownExternalID_returnsNotFound(t *testing.T) {
 	s := New()
+
 	_, err := s.GetTenantByExternalID(context.Background(), "missing-org")
 	if !errors.Is(err, ctrlplane.ErrNotFound) {
 		t.Fatalf("want ErrNotFound, got %v", err)
@@ -39,6 +42,7 @@ func TestGetTenantByExternalID_unknownExternalID_returnsNotFound(t *testing.T) {
 
 func TestGetTenantByExternalID_match_returnsTenant(t *testing.T) {
 	s := New()
+
 	tenant := newTenant("acme", "org-acme-1")
 	if err := s.InsertTenant(context.Background(), tenant); err != nil {
 		t.Fatalf("InsertTenant: %v", err)
@@ -48,9 +52,11 @@ func TestGetTenantByExternalID_match_returnsTenant(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetTenantByExternalID: %v", err)
 	}
+
 	if got.ID.String() != tenant.ID.String() {
 		t.Fatalf("returned wrong tenant: want %s, got %s", tenant.ID, got.ID)
 	}
+
 	if got.ExternalID != "org-acme-1" {
 		t.Fatalf("ExternalID round-trip: got %q", got.ExternalID)
 	}
@@ -67,12 +73,14 @@ func TestGetTenantByExternalID_returnsCloneNotAlias(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
+
 	got.Name = "MUTATED"
 
 	again, err := s.GetTenantByExternalID(context.Background(), "org-acme")
 	if err != nil {
 		t.Fatalf("get again: %v", err)
 	}
+
 	if again.Name != "acme" {
 		t.Fatalf("memory store leaked aliasing: stored Name was mutated to %q", again.Name)
 	}
@@ -90,6 +98,7 @@ func TestGetTenantByExternalID_amongMany(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
+
 	if got.ID.String() != wanted.ID.String() {
 		t.Fatalf("wrong tenant returned among many: want %s, got %s", wanted.ID, got.ID)
 	}

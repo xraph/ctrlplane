@@ -60,7 +60,18 @@ func (s *Store) UpdateDeployment(ctx context.Context, d *deploy.Deployment) erro
 func (s *Store) ListDeployments(ctx context.Context, tenantID string, instanceID id.ID, opts deploy.ListOptions) (*deploy.DeployListResult, error) {
 	var models []deploymentModel
 
-	f := bson.M{"tenant_id": tenantID, "instance_id": instanceID.String()}
+	// Empty tenantID = cross-tenant view (admin dashboard pattern).
+	// Empty instanceID listed via the zero value of id.ID — scan all
+	// deployments for the (possibly cross-tenant) scope rather than
+	// filter to one instance.
+	f := bson.M{}
+	if tenantID != "" {
+		f["tenant_id"] = tenantID
+	}
+
+	if !instanceID.IsNil() {
+		f["instance_id"] = instanceID.String()
+	}
 
 	limit := opts.Limit
 	if limit <= 0 {

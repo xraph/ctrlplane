@@ -3,6 +3,7 @@ package health
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	ctrlplane "github.com/xraph/ctrlplane"
@@ -11,12 +12,25 @@ import (
 	"github.com/xraph/ctrlplane/id"
 )
 
+// watchBufferSize is the per-subscriber channel buffer. Slow
+// consumers drop events past this threshold (the latest health
+// state is still readable via GetHealth — Watch is for live
+// streaming, not durable delivery).
+const watchBufferSize = 16
+
 // service implements the Service interface.
 type service struct {
 	store    Store
 	events   event.Bus
 	auth     auth.Provider
 	checkers map[CheckType]Checker
+
+	// subs are the live Watch subscribers, keyed by instance ID.
+	// Guarded by subsMu. fanOutResult walks subs[result.InstanceID]
+	// after a successful store insert (in RunCheck and any future
+	// background-runner code path).
+	subsMu sync.RWMutex
+	subs   map[string][]chan *HealthResult
 }
 
 // NewService creates a new health service.
@@ -26,6 +40,7 @@ func NewService(store Store, events event.Bus, auth auth.Provider) Service {
 		events:   events,
 		auth:     auth,
 		checkers: make(map[CheckType]Checker),
+		subs:     make(map[string][]chan *HealthResult),
 	}
 }
 
@@ -37,16 +52,17 @@ func (s *service) Configure(ctx context.Context, req ConfigureRequest) (*HealthC
 	}
 
 	check := &HealthCheck{
-		Entity:     ctrlplane.NewEntity(id.PrefixHealthCheck),
-		TenantID:   claims.TenantID,
-		InstanceID: req.InstanceID,
-		Name:       req.Name,
-		Type:       req.Type,
-		Target:     req.Target,
-		Interval:   req.Interval,
-		Timeout:    req.Timeout,
-		Retries:    req.Retries,
-		Enabled:    true,
+		Entity:      ctrlplane.NewEntity(id.PrefixHealthCheck),
+		TenantID:    claims.TenantID,
+		InstanceID:  req.InstanceID,
+		ServiceName: req.ServiceName,
+		Name:        req.Name,
+		Type:        req.Type,
+		Target:      req.Target,
+		Interval:    req.Interval,
+		Timeout:     req.Timeout,
+		Retries:     req.Retries,
+		Enabled:     true,
 	}
 
 	if err := s.store.InsertCheck(ctx, check); err != nil {
@@ -212,10 +228,66 @@ func (s *service) RunCheck(ctx context.Context, checkID id.ID) (*HealthResult, e
 		return nil, fmt.Errorf("run check: insert result: %w", err)
 	}
 
+	s.fanOutResult(result)
+
 	return result, nil
 }
 
 // RegisterChecker adds a custom checker type.
 func (s *service) RegisterChecker(checker Checker) {
 	s.checkers[checker.Type()] = checker
+}
+
+// Watch returns a channel that receives every HealthResult for the
+// given instance until ctx is cancelled. See the interface docs on
+// Service.Watch for delivery semantics (buffered, drop-on-slow-
+// consumer, closed-on-cancel).
+func (s *service) Watch(ctx context.Context, instanceID id.ID) (<-chan *HealthResult, error) {
+	ch := make(chan *HealthResult, watchBufferSize)
+	key := instanceID.String()
+
+	s.subsMu.Lock()
+	s.subs[key] = append(s.subs[key], ch)
+	s.subsMu.Unlock()
+
+	// Detach goroutine drops the subscription when ctx is cancelled
+	// so callers don't have to remember a separate Unwatch call.
+	go func() {
+		<-ctx.Done()
+		s.subsMu.Lock()
+		defer s.subsMu.Unlock()
+		current := s.subs[key]
+		for i, c := range current {
+			if c == ch {
+				s.subs[key] = append(current[:i], current[i+1:]...)
+				break
+			}
+		}
+		if len(s.subs[key]) == 0 {
+			delete(s.subs, key)
+		}
+		close(ch)
+	}()
+
+	return ch, nil
+}
+
+// fanOutResult delivers a HealthResult to every live Watch
+// subscriber for that instance. Non-blocking — full channels drop
+// the event so a stuck consumer can't backpressure the worker.
+func (s *service) fanOutResult(result *HealthResult) {
+	if result == nil {
+		return
+	}
+	s.subsMu.RLock()
+	defer s.subsMu.RUnlock()
+	for _, ch := range s.subs[result.InstanceID.String()] {
+		select {
+		case ch <- result:
+		default:
+			// Subscriber's buffer is full — drop. The current health
+			// state is still queryable via GetHealth; Watch is a
+			// best-effort live tap.
+		}
+	}
 }

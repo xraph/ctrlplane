@@ -41,7 +41,7 @@ templ DeploymentTable(deployments []*deploy.Deployment, showInstance bool) {
 							}
 						}
 						@table.Cell() {
-							<span class="font-mono text-xs">{ truncStr(dep.Image, 40) }</span>
+							<span class="font-mono text-xs">{ truncStr(mainDeployImage(dep.Services), 40) }</span>
 						}
 						@table.Cell() {
 							<span class="text-muted-foreground">{ dep.Strategy }</span>

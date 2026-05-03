@@ -5,11 +5,12 @@ package components
 
 //lint:file-ignore SA4006 This context is only used if a nested component is present.
 
+import "github.com/a-h/templ"
+import templruntime "github.com/a-h/templ/runtime"
+
 import (
 	"strconv"
 
-	"github.com/a-h/templ"
-	templruntime "github.com/a-h/templ/runtime"
 	"github.com/xraph/forgeui/components/badge"
 	"github.com/xraph/forgeui/components/table"
 
@@ -329,9 +330,9 @@ func ReleaseTable(releases []*deploy.Release) templ.Component {
 									return templ_7745c5c3_Err
 								}
 								var templ_7745c5c3_Var16 string
-								templ_7745c5c3_Var16, templ_7745c5c3_Err = templ.JoinStringErrs(truncStr(rel.Image, 40))
+								templ_7745c5c3_Var16, templ_7745c5c3_Err = templ.JoinStringErrs(truncStr(mainSnapshotImage(rel.Services), 40))
 								if templ_7745c5c3_Err != nil {
-									return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/components/release_table.templ`, Line: 35, Col: 64}
+									return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/components/release_table.templ`, Line: 35, Col: 86}
 								}
 								_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var16))
 								if templ_7745c5c3_Err != nil {

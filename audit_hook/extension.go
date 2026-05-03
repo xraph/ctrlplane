@@ -21,6 +21,18 @@ var (
 	_ plugin.InstanceScaled      = (*Extension)(nil)
 	_ plugin.InstanceSuspended   = (*Extension)(nil)
 	_ plugin.InstanceUnsuspended = (*Extension)(nil)
+	_ plugin.WorkloadCreated     = (*Extension)(nil)
+	_ plugin.WorkloadUpdated     = (*Extension)(nil)
+	_ plugin.WorkloadScaled      = (*Extension)(nil)
+	_ plugin.WorkloadDeployed    = (*Extension)(nil)
+	_ plugin.WorkloadPaused      = (*Extension)(nil)
+	_ plugin.WorkloadResumed     = (*Extension)(nil)
+	_ plugin.WorkloadRestarted   = (*Extension)(nil)
+	_ plugin.WorkloadDeleted     = (*Extension)(nil)
+	_ plugin.WorkloadFailed      = (*Extension)(nil)
+	_ plugin.TemplateCreated     = (*Extension)(nil)
+	_ plugin.TemplateUpdated     = (*Extension)(nil)
+	_ plugin.TemplateDeleted     = (*Extension)(nil)
 	_ plugin.DeployStarted       = (*Extension)(nil)
 	_ plugin.DeploySucceeded     = (*Extension)(nil)
 	_ plugin.DeployFailed        = (*Extension)(nil)
@@ -88,6 +100,18 @@ func New(r Recorder, opts ...Option) *Extension {
 // Name implements plugin.Extension.
 func (e *Extension) Name() string { return "audit-hook" }
 
+// SetRecorder swaps the active audit recorder at runtime. Called
+// by the parent application when a richer Recorder (e.g. chronicle
+// via DI) becomes available after construction. Safe to call from
+// any goroutine: a single pointer swap, no in-flight events lost.
+//
+// Pass nil to disable recording entirely (events will silently
+// drop). The pre-existing default-store recorder is replaced — to
+// chain multiple recorders, wrap them in a composite before passing.
+func (e *Extension) SetRecorder(r Recorder) {
+	e.recorder = r
+}
+
 // ──────────────────────────────────────────────────
 // Instance hooks
 // ──────────────────────────────────────────────────
@@ -130,6 +154,74 @@ func (e *Extension) OnInstanceSuspended(ctx context.Context, evt *event.Event) e
 func (e *Extension) OnInstanceUnsuspended(ctx context.Context, evt *event.Event) error {
 	return e.recordEvent(ctx, ActionInstanceUnsuspended, SeverityInfo, OutcomeSuccess,
 		ResourceInstance, CategoryInstance, evt)
+}
+
+// ──────────────────────────────────────────────────
+// Workload hooks
+// ──────────────────────────────────────────────────
+
+func (e *Extension) OnWorkloadCreated(ctx context.Context, evt *event.Event) error {
+	return e.recordEvent(ctx, ActionWorkloadCreated, SeverityInfo, OutcomeSuccess,
+		ResourceWorkload, CategoryWorkload, evt)
+}
+
+func (e *Extension) OnWorkloadUpdated(ctx context.Context, evt *event.Event) error {
+	return e.recordEvent(ctx, ActionWorkloadUpdated, SeverityInfo, OutcomeSuccess,
+		ResourceWorkload, CategoryWorkload, evt)
+}
+
+func (e *Extension) OnWorkloadScaled(ctx context.Context, evt *event.Event) error {
+	return e.recordEvent(ctx, ActionWorkloadScaled, SeverityInfo, OutcomeSuccess,
+		ResourceWorkload, CategoryWorkload, evt)
+}
+
+func (e *Extension) OnWorkloadDeployed(ctx context.Context, evt *event.Event) error {
+	return e.recordEvent(ctx, ActionWorkloadDeployed, SeverityInfo, OutcomeSuccess,
+		ResourceWorkload, CategoryWorkload, evt)
+}
+
+func (e *Extension) OnWorkloadPaused(ctx context.Context, evt *event.Event) error {
+	return e.recordEvent(ctx, ActionWorkloadPaused, SeverityWarning, OutcomeSuccess,
+		ResourceWorkload, CategoryWorkload, evt)
+}
+
+func (e *Extension) OnWorkloadResumed(ctx context.Context, evt *event.Event) error {
+	return e.recordEvent(ctx, ActionWorkloadResumed, SeverityInfo, OutcomeSuccess,
+		ResourceWorkload, CategoryWorkload, evt)
+}
+
+func (e *Extension) OnWorkloadRestarted(ctx context.Context, evt *event.Event) error {
+	return e.recordEvent(ctx, ActionWorkloadRestarted, SeverityInfo, OutcomeSuccess,
+		ResourceWorkload, CategoryWorkload, evt)
+}
+
+func (e *Extension) OnWorkloadDeleted(ctx context.Context, evt *event.Event) error {
+	return e.recordEvent(ctx, ActionWorkloadDeleted, SeverityWarning, OutcomeSuccess,
+		ResourceWorkload, CategoryWorkload, evt)
+}
+
+func (e *Extension) OnWorkloadFailed(ctx context.Context, evt *event.Event) error {
+	return e.recordEvent(ctx, ActionWorkloadFailed, SeverityCritical, OutcomeFailure,
+		ResourceWorkload, CategoryWorkload, evt)
+}
+
+// ──────────────────────────────────────────────────
+// Template hooks
+// ──────────────────────────────────────────────────
+
+func (e *Extension) OnTemplateCreated(ctx context.Context, evt *event.Event) error {
+	return e.recordEvent(ctx, ActionTemplateCreated, SeverityInfo, OutcomeSuccess,
+		ResourceTemplate, CategoryTemplate, evt)
+}
+
+func (e *Extension) OnTemplateUpdated(ctx context.Context, evt *event.Event) error {
+	return e.recordEvent(ctx, ActionTemplateUpdated, SeverityInfo, OutcomeSuccess,
+		ResourceTemplate, CategoryTemplate, evt)
+}
+
+func (e *Extension) OnTemplateDeleted(ctx context.Context, evt *event.Event) error {
+	return e.recordEvent(ctx, ActionTemplateDeleted, SeverityWarning, OutcomeSuccess,
+		ResourceTemplate, CategoryTemplate, evt)
 }
 
 // ──────────────────────────────────────────────────
@@ -276,6 +368,10 @@ func (e *Extension) recordEvent(
 		Outcome:    outcome,
 		Severity:   severity,
 		Reason:     reason,
+	}
+
+	if e.recorder == nil {
+		return nil
 	}
 
 	if recErr := e.recorder.Record(ctx, auditEvt); recErr != nil {

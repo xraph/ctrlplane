@@ -1,0 +1,109 @@
+package components
+
+import (
+	"strconv"
+
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/table"
+
+	"github.com/xraph/ctrlplane/workload"
+)
+
+// WorkloadTable renders a table of workloads with clickable rows
+// linking to /workloads/detail. Used by the workloads list page
+// and by the deployment-flow workload-selection prompt.
+//
+// Replica count column shows "current/desired" when the workload's
+// state implies a transitional shape (Scaling / Provisioning), else
+// just the desired count for a clean read.
+//
+// The Actions column hosts a Delete button that POSTs to the
+// workloads list endpoint with action=delete; clicks stop propagating
+// so they don't trigger the row's navigate-to-detail behaviour.
+templ WorkloadTable(workloads []*workload.Workload) {
+	if len(workloads) == 0 {
+		@EmptyState("boxes", "No workloads", "Provision a workspace or call cp.Workloads.Create to get started.")
+	} else {
+		@table.Table() {
+			@table.Header() {
+				@table.Row() {
+					@table.Head() { Name }
+					@table.Head() { State }
+					@table.Head() { Replicas }
+					@table.Head() { Provider }
+					@table.Head() { Region }
+					@table.Head() { Image }
+					@table.Head() { Created }
+					@table.Head() { Actions }
+				}
+			}
+			@table.Body() {
+				for _, w := range workloads {
+					@table.Row(table.RowProps{
+						Class: "cursor-pointer",
+						Attributes: templ.Attributes{
+							"hx-get":      "./workloads/detail?workload_id=" + w.ID.String(),
+							"hx-target":   "#content",
+							"hx-push-url": "true",
+							"hx-swap":     "innerHTML",
+						},
+					}) {
+						@table.Cell() {
+							<span class="font-medium">{ w.Name }</span>
+							if w.Slug != "" && w.Slug != w.Name {
+								<span class="text-muted-foreground text-xs ml-2 font-mono">{ w.Slug }</span>
+							}
+							if len(w.Services) > 1 {
+								<span class="text-muted-foreground text-[10px] ml-2 px-1.5 py-0.5 rounded-sm border" title="Multi-service workload">
+									{ strconv.Itoa(len(w.Services)) } services
+								</span>
+							}
+						}
+						@table.Cell() {
+							@WorkloadStateBadge(w.State)
+						}
+						@table.Cell() {
+							<span class="text-muted-foreground">{ strconv.Itoa(w.ReplicaCount) }</span>
+						}
+						@table.Cell() {
+							<span class="text-muted-foreground">{ w.ProviderName }</span>
+						}
+						@table.Cell() {
+							<span class="text-muted-foreground">{ w.Region }</span>
+						}
+						@table.Cell() {
+							<span class="text-muted-foreground text-xs font-mono">{ truncStr(mainServiceImage(w.Services), 40) }</span>
+						}
+						@table.Cell() {
+							<span class="text-muted-foreground">{ w.CreatedAt.Format("Jan 02, 2006") }</span>
+						}
+						@table.Cell() {
+							@workloadDeleteBtn(w.ID.String(), w.Name)
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+// workloadDeleteBtn renders a small destructive button used inside
+// the workloads list table. We stop click propagation so the parent
+// row's navigate-to-detail handler doesn't fire on the same click,
+// and request a confirmation before issuing the delete.
+templ workloadDeleteBtn(workloadID, name string) {
+	@button.Button(button.Props{
+		Variant: button.VariantDestructive,
+		Size:    button.SizeSm,
+		Attributes: templ.Attributes{
+			"hx-get":            "./workloads?action=delete&workload_id=" + workloadID,
+			"hx-target":         "#content",
+			"hx-swap":           "innerHTML",
+			"hx-push-url":       "false",
+			"hx-confirm":        "Delete workload " + name + "? This tears down all its replicas.",
+			"onclick":           "event.stopPropagation();",
+		},
+	}) {
+		Delete
+	}
+}

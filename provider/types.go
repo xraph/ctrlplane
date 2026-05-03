@@ -28,34 +28,43 @@ type ProviderInfo struct {
 }
 
 // ProvisionRequest describes what resources to create for an instance.
+// One ProvisionRequest produces one unit of co-scheduling — a k8s Pod,
+// a Nomad TaskGroup allocation, or a Docker Compose project — containing
+// every entry in Services.
 type ProvisionRequest struct {
-	InstanceID  id.ID             `json:"instance_id"`
-	TenantID    string            `json:"tenant_id"`
-	Name        string            `json:"name"`
-	Image       string            `json:"image"`
-	Resources   ResourceSpec      `json:"resources"`
-	Env         map[string]string `json:"env,omitempty"`
-	Ports       []PortSpec        `json:"ports,omitempty"`
-	Volumes     []VolumeSpec      `json:"volumes,omitempty"`
-	Labels      map[string]string `json:"labels,omitempty"`
-	Annotations map[string]string `json:"annotations,omitempty"`
+	InstanceID id.ID             `json:"instance_id"`
+	TenantID   string            `json:"tenant_id"`
+	Name       string            `json:"name"`
+	Kind       WorkloadKind      `json:"kind"` // deployment | stateful_set
+	Services   []ServiceSpec     `json:"services"`
+	Labels     map[string]string `json:"labels,omitempty"` // workload-level, applied to all services
 }
 
 // ProvisionResult holds the result of a provision operation.
 type ProvisionResult struct {
-	ProviderRef string            `json:"provider_ref"`
-	Endpoints   []Endpoint        `json:"endpoints"`
-	Metadata    map[string]string `json:"metadata,omitempty"`
+	// ProviderRef is the workload-level handle (Pod name on k8s,
+	// Job ID on Nomad, Compose project name on Docker).
+	ProviderRef string `json:"provider_ref"`
+
+	// ServiceRefs maps a service's Name to the provider-specific
+	// per-container/task ref (container ID on Docker, container name
+	// within the Pod on k8s, Task name on Nomad). Used for per-service
+	// log/exec/restart operations.
+	ServiceRefs map[string]string `json:"service_refs,omitempty"`
+
+	Endpoints []Endpoint        `json:"endpoints"`
+	Metadata  map[string]string `json:"metadata,omitempty"`
 }
 
-// DeployRequest describes a deployment operation.
+// DeployRequest describes a deployment operation. Services lists only
+// the services being changed in this rollout — services not listed are
+// left at their previous version (the new Release inherits their
+// snapshots from the prior Release).
 type DeployRequest struct {
-	InstanceID  id.ID             `json:"instance_id"`
-	ReleaseID   id.ID             `json:"release_id"`
-	Image       string            `json:"image"`
-	Env         map[string]string `json:"env,omitempty"`
-	Strategy    string            `json:"strategy"`
-	HealthCheck *HealthCheckSpec  `json:"health_check,omitempty"`
+	InstanceID id.ID               `json:"instance_id"`
+	ReleaseID  id.ID               `json:"release_id"`
+	Services   []ServiceDeploySpec `json:"services"`
+	Strategy   string              `json:"strategy"`
 }
 
 // DeployResult holds the result of a deploy operation.
@@ -65,14 +74,17 @@ type DeployResult struct {
 }
 
 // InstanceStatus describes the current runtime state of an instance.
+// State and Ready aggregate across all services (worst-of); per-service
+// detail is in Services keyed by ServiceSpec.Name.
 type InstanceStatus struct {
-	State     InstanceState     `json:"state"`
-	Ready     bool              `json:"ready"`
-	Restarts  int               `json:"restarts"`
-	StartedAt *time.Time        `json:"started_at,omitempty"`
-	Message   string            `json:"message,omitempty"`
-	Endpoints []Endpoint        `json:"endpoints"`
-	Metadata  map[string]string `json:"metadata,omitempty"`
+	State     InstanceState            `json:"state"`
+	Ready     bool                     `json:"ready"`
+	Restarts  int                      `json:"restarts"` // sum across services
+	StartedAt *time.Time               `json:"started_at,omitempty"`
+	Message   string                   `json:"message,omitempty"`
+	Endpoints []Endpoint               `json:"endpoints"`
+	Services  map[string]ServiceStatus `json:"services,omitempty"`
+	Metadata  map[string]string        `json:"metadata,omitempty"`
 }
 
 // InstanceState represents the lifecycle state of an instance.

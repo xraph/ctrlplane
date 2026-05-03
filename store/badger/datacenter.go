@@ -80,6 +80,7 @@ func (s *Store) GetDatacenterBySlug(_ context.Context, tenantID string, slug str
 		if err := s.get(txn, prefixDatacenterSlug+tenantID+":"+slug, &dcID); err == nil {
 			return nil
 		}
+
 		return s.get(txn, prefixDatacenterSlug+":"+slug, &dcID)
 	})
 	if err != nil {

@@ -7,14 +7,14 @@ import (
 	"go.mongodb.org/mongo-driver/v2/bson"
 
 	ctrlplane "github.com/xraph/ctrlplane"
-	"github.com/xraph/ctrlplane/deploy"
 	"github.com/xraph/ctrlplane/id"
+	"github.com/xraph/ctrlplane/template"
 )
 
 const colTemplates = "cp_templates"
 
-// InsertTemplate persists a new deployment template.
-func (s *Store) InsertTemplate(ctx context.Context, t *deploy.Template) error {
+// InsertTemplate persists a new workload template.
+func (s *Store) InsertTemplate(ctx context.Context, t *template.Template) error {
 	model := toTemplateModel(t)
 
 	_, err := s.mdb.NewInsert(model).Exec(ctx)
@@ -25,8 +25,8 @@ func (s *Store) InsertTemplate(ctx context.Context, t *deploy.Template) error {
 	return nil
 }
 
-// GetTemplate retrieves a deployment template by ID within a tenant.
-func (s *Store) GetTemplate(ctx context.Context, tenantID string, templateID id.ID) (*deploy.Template, error) {
+// GetTemplate retrieves a workload template by ID within a tenant.
+func (s *Store) GetTemplate(ctx context.Context, tenantID string, templateID id.ID) (*template.Template, error) {
 	var model templateModel
 
 	err := s.mdb.NewFind(&model).
@@ -43,8 +43,8 @@ func (s *Store) GetTemplate(ctx context.Context, tenantID string, templateID id.
 	return fromTemplateModel(&model), nil
 }
 
-// UpdateTemplate persists changes to an existing deployment template.
-func (s *Store) UpdateTemplate(ctx context.Context, t *deploy.Template) error {
+// UpdateTemplate persists changes to an existing template.
+func (s *Store) UpdateTemplate(ctx context.Context, t *template.Template) error {
 	t.UpdatedAt = now()
 	model := toTemplateModel(t)
 
@@ -62,7 +62,7 @@ func (s *Store) UpdateTemplate(ctx context.Context, t *deploy.Template) error {
 	return nil
 }
 
-// DeleteTemplate removes a deployment template.
+// DeleteTemplate removes a template.
 func (s *Store) DeleteTemplate(ctx context.Context, tenantID string, templateID id.ID) error {
 	res, err := s.mdb.NewDelete((*templateModel)(nil)).
 		Filter(bson.M{"_id": templateID.String(), "tenant_id": tenantID}).
@@ -78,8 +78,8 @@ func (s *Store) DeleteTemplate(ctx context.Context, tenantID string, templateID 
 	return nil
 }
 
-// ListTemplates returns a paginated list of deployment templates for a tenant.
-func (s *Store) ListTemplates(ctx context.Context, tenantID string, opts deploy.ListOptions) (*deploy.TemplateListResult, error) {
+// ListTemplates returns a paginated list of templates for a tenant.
+func (s *Store) ListTemplates(ctx context.Context, tenantID string, opts template.ListOptions) (*template.ListResult, error) {
 	var models []templateModel
 
 	f := bson.M{"tenant_id": tenantID}
@@ -98,7 +98,6 @@ func (s *Store) ListTemplates(ctx context.Context, tenantID string, opts deploy.
 		return nil, fmt.Errorf("mongo: list templates failed: %w", err)
 	}
 
-	// Count total.
 	total, err := s.mdb.NewFind((*templateModel)(nil)).
 		Filter(f).
 		Count(ctx)
@@ -106,12 +105,12 @@ func (s *Store) ListTemplates(ctx context.Context, tenantID string, opts deploy.
 		return nil, fmt.Errorf("mongo: count templates failed: %w", err)
 	}
 
-	items := make([]*deploy.Template, 0, len(models))
+	items := make([]*template.Template, 0, len(models))
 	for i := range models {
 		items = append(items, fromTemplateModel(&models[i]))
 	}
 
-	return &deploy.TemplateListResult{
+	return &template.ListResult{
 		Items: items,
 		Total: int(total),
 	}, nil

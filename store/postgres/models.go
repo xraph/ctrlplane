@@ -8,6 +8,7 @@ import (
 
 	ctrlplane "github.com/xraph/ctrlplane"
 	"github.com/xraph/ctrlplane/admin"
+	"github.com/xraph/ctrlplane/bootstrap"
 	"github.com/xraph/ctrlplane/datacenter"
 	"github.com/xraph/ctrlplane/deploy"
 	"github.com/xraph/ctrlplane/health"
@@ -17,6 +18,7 @@ import (
 	"github.com/xraph/ctrlplane/provider"
 	"github.com/xraph/ctrlplane/secrets"
 	"github.com/xraph/ctrlplane/telemetry"
+	"github.com/xraph/ctrlplane/template"
 )
 
 // tenantModel is the database model for admin.Tenant.
@@ -45,9 +47,13 @@ type instanceModel struct {
 	ProviderName string    `grove:"provider_name,notnull"`
 	ProviderRef  string    `grove:"provider_ref"`
 	Region       string    `grove:"region"`
-	Image        string    `grove:"image"`
+	Kind         string    `grove:"kind"`
+	Services     []byte    `grove:"services,type:jsonb"`
+	ServiceRefs  []byte    `grove:"service_refs,type:jsonb"`
+	Labels       []byte    `grove:"labels,type:jsonb"`
 	Config       []byte    `grove:"config,type:jsonb"`
 	Metadata     []byte    `grove:"metadata,type:jsonb"`
+	Endpoints    []byte    `grove:"endpoints,type:jsonb"`
 	CreatedAt    time.Time `grove:"created_at,notnull"`
 	UpdatedAt    time.Time `grove:"updated_at,notnull"`
 }
@@ -56,20 +62,21 @@ type instanceModel struct {
 type deploymentModel struct {
 	grove.BaseModel `grove:"table:cp_deployments"`
 
-	ID          string     `grove:"id,pk"`
-	TenantID    string     `grove:"tenant_id,notnull"`
-	InstanceID  string     `grove:"instance_id,notnull"`
-	ReleaseID   string     `grove:"release_id,notnull"`
-	State       string     `grove:"state,notnull"`
-	Strategy    string     `grove:"strategy,notnull"`
-	Image       string     `grove:"image"`
-	ProviderRef string     `grove:"provider_ref"`
-	Error       string     `grove:"error"`
-	Initiator   string     `grove:"initiator"`
-	StartedAt   *time.Time `grove:"started_at"`
-	FinishedAt  *time.Time `grove:"finished_at"`
-	CreatedAt   time.Time  `grove:"created_at,notnull"`
-	UpdatedAt   time.Time  `grove:"updated_at,notnull"`
+	ID              string     `grove:"id,pk"`
+	TenantID        string     `grove:"tenant_id,notnull"`
+	InstanceID      string     `grove:"instance_id,notnull"`
+	ReleaseID       string     `grove:"release_id,notnull"`
+	State           string     `grove:"state,notnull"`
+	Strategy        string     `grove:"strategy,notnull"`
+	Services        []byte     `grove:"services,type:jsonb"`
+	ServiceProgress []byte     `grove:"service_progress,type:jsonb"`
+	ProviderRef     string     `grove:"provider_ref"`
+	Error           string     `grove:"error"`
+	Initiator       string     `grove:"initiator"`
+	StartedAt       *time.Time `grove:"started_at"`
+	FinishedAt      *time.Time `grove:"finished_at"`
+	CreatedAt       time.Time  `grove:"created_at,notnull"`
+	UpdatedAt       time.Time  `grove:"updated_at,notnull"`
 }
 
 // releaseModel is the database model for deploy.Release.
@@ -80,7 +87,7 @@ type releaseModel struct {
 	TenantID   string    `grove:"tenant_id,notnull"`
 	InstanceID string    `grove:"instance_id,notnull"`
 	Version    int       `grove:"version,notnull"`
-	Image      string    `grove:"image,notnull"`
+	Services   []byte    `grove:"services,type:jsonb"`
 	Notes      string    `grove:"notes"`
 	CommitSHA  string    `grove:"commit_sha"`
 	Active     bool      `grove:"active"`
@@ -93,17 +100,18 @@ type releaseModel struct {
 type healthCheckModel struct {
 	grove.BaseModel `grove:"table:cp_health_checks"`
 
-	ID         string    `grove:"id,pk"`
-	TenantID   string    `grove:"tenant_id,notnull"`
-	InstanceID string    `grove:"instance_id,notnull"`
-	Name       string    `grove:"name,notnull"`
-	Type       string    `grove:"type,notnull"`
-	Enabled    bool      `grove:"enabled,notnull"`
-	Interval   int64     `grove:"interval,notnull"`
-	Timeout    int64     `grove:"timeout,notnull"`
-	Config     []byte    `grove:"config,type:jsonb"`
-	CreatedAt  time.Time `grove:"created_at,notnull"`
-	UpdatedAt  time.Time `grove:"updated_at,notnull"`
+	ID          string    `grove:"id,pk"`
+	TenantID    string    `grove:"tenant_id,notnull"`
+	InstanceID  string    `grove:"instance_id,notnull"`
+	ServiceName string    `grove:"service_name"`
+	Name        string    `grove:"name,notnull"`
+	Type        string    `grove:"type,notnull"`
+	Enabled     bool      `grove:"enabled,notnull"`
+	Interval    int64     `grove:"interval,notnull"`
+	Timeout     int64     `grove:"timeout,notnull"`
+	Config      []byte    `grove:"config,type:jsonb"`
+	CreatedAt   time.Time `grove:"created_at,notnull"`
+	UpdatedAt   time.Time `grove:"updated_at,notnull"`
 }
 
 // healthResultModel is the database model for health.HealthResult.
@@ -256,21 +264,21 @@ type auditEntryModel struct {
 	CreatedAt  time.Time `grove:"created_at,notnull"`
 }
 
-// templateModel is the database model for deploy.Template.
+// templateModel is the database model for template.Template.
 type templateModel struct {
 	grove.BaseModel `grove:"table:cp_templates"`
 
-	ID          string    `grove:"id,pk"`
-	TenantID    string    `grove:"tenant_id,notnull"`
-	Name        string    `grove:"name,notnull"`
-	Description string    `grove:"description"`
-	Image       string    `grove:"image,notnull"`
-	Strategy    string    `grove:"strategy,notnull"`
-	Env         []byte    `grove:"env,type:jsonb"`
-	CommitSHA   string    `grove:"commit_sha"`
-	Notes       string    `grove:"notes"`
-	CreatedAt   time.Time `grove:"created_at,notnull"`
-	UpdatedAt   time.Time `grove:"updated_at,notnull"`
+	ID              string    `grove:"id,pk"`
+	TenantID        string    `grove:"tenant_id,notnull"`
+	Name            string    `grove:"name,notnull"`
+	Description     string    `grove:"description"`
+	DefaultKind     string    `grove:"default_kind"`
+	DefaultStrategy string    `grove:"default_strategy"`
+	Services        []byte    `grove:"services,type:jsonb"`
+	Labels          []byte    `grove:"labels,type:jsonb"`
+	Notes           string    `grove:"notes"`
+	CreatedAt       time.Time `grove:"created_at,notnull"`
+	UpdatedAt       time.Time `grove:"updated_at,notnull"`
 }
 
 // --- Conversion helpers ---
@@ -285,14 +293,18 @@ func toInstanceModel(inst *instance.Instance) *instanceModel {
 		ProviderName: inst.ProviderName,
 		ProviderRef:  inst.ProviderRef,
 		Region:       inst.Region,
-		Image:        inst.Image,
+		Kind:         string(inst.Kind),
+		Services:     marshalJSONB(inst.Services),
+		ServiceRefs:  marshalJSONB(inst.ServiceRefs),
+		Labels:       marshalJSONB(inst.Labels),
+		Endpoints:    marshalJSONB(inst.Endpoints),
 		CreatedAt:    inst.CreatedAt,
 		UpdatedAt:    inst.UpdatedAt,
 	}
 }
 
 func fromInstanceModel(m *instanceModel) *instance.Instance {
-	return &instance.Instance{
+	out := &instance.Instance{
 		Entity: ctrlplane.Entity{
 			ID:        id.MustParse(m.ID),
 			CreatedAt: m.CreatedAt,
@@ -305,31 +317,39 @@ func fromInstanceModel(m *instanceModel) *instance.Instance {
 		ProviderName: m.ProviderName,
 		ProviderRef:  m.ProviderRef,
 		Region:       m.Region,
-		Image:        m.Image,
+		Kind:         provider.WorkloadKind(m.Kind),
 	}
+
+	unmarshalJSONB(m.Services, &out.Services)
+	unmarshalJSONB(m.ServiceRefs, &out.ServiceRefs)
+	unmarshalJSONB(m.Labels, &out.Labels)
+	unmarshalJSONB(m.Endpoints, &out.Endpoints)
+
+	return out
 }
 
 func toDeploymentModel(d *deploy.Deployment) *deploymentModel {
 	return &deploymentModel{
-		ID:          d.ID.String(),
-		TenantID:    d.TenantID,
-		InstanceID:  d.InstanceID.String(),
-		ReleaseID:   d.ReleaseID.String(),
-		State:       string(d.State),
-		Strategy:    d.Strategy,
-		Image:       d.Image,
-		ProviderRef: d.ProviderRef,
-		Error:       d.Error,
-		Initiator:   d.Initiator,
-		StartedAt:   d.StartedAt,
-		FinishedAt:  d.FinishedAt,
-		CreatedAt:   d.CreatedAt,
-		UpdatedAt:   d.UpdatedAt,
+		ID:              d.ID.String(),
+		TenantID:        d.TenantID,
+		InstanceID:      d.InstanceID.String(),
+		ReleaseID:       d.ReleaseID.String(),
+		State:           string(d.State),
+		Strategy:        d.Strategy,
+		Services:        marshalJSONB(d.Services),
+		ServiceProgress: marshalJSONB(d.ServiceProgress),
+		ProviderRef:     d.ProviderRef,
+		Error:           d.Error,
+		Initiator:       d.Initiator,
+		StartedAt:       d.StartedAt,
+		FinishedAt:      d.FinishedAt,
+		CreatedAt:       d.CreatedAt,
+		UpdatedAt:       d.UpdatedAt,
 	}
 }
 
 func fromDeploymentModel(m *deploymentModel) *deploy.Deployment {
-	return &deploy.Deployment{
+	out := &deploy.Deployment{
 		Entity: ctrlplane.Entity{
 			ID:        id.MustParse(m.ID),
 			CreatedAt: m.CreatedAt,
@@ -340,13 +360,17 @@ func fromDeploymentModel(m *deploymentModel) *deploy.Deployment {
 		ReleaseID:   id.MustParse(m.ReleaseID),
 		State:       deploy.DeployState(m.State),
 		Strategy:    m.Strategy,
-		Image:       m.Image,
 		ProviderRef: m.ProviderRef,
 		Error:       m.Error,
 		Initiator:   m.Initiator,
 		StartedAt:   m.StartedAt,
 		FinishedAt:  m.FinishedAt,
 	}
+
+	unmarshalJSONB(m.Services, &out.Services)
+	unmarshalJSONB(m.ServiceProgress, &out.ServiceProgress)
+
+	return out
 }
 
 func toReleaseModel(r *deploy.Release) *releaseModel {
@@ -355,7 +379,7 @@ func toReleaseModel(r *deploy.Release) *releaseModel {
 		TenantID:   r.TenantID,
 		InstanceID: r.InstanceID.String(),
 		Version:    r.Version,
-		Image:      r.Image,
+		Services:   marshalJSONB(r.Services),
 		Notes:      r.Notes,
 		CommitSHA:  r.CommitSHA,
 		Active:     r.Active,
@@ -364,7 +388,7 @@ func toReleaseModel(r *deploy.Release) *releaseModel {
 }
 
 func fromReleaseModel(m *releaseModel) *deploy.Release {
-	return &deploy.Release{
+	out := &deploy.Release{
 		Entity: ctrlplane.Entity{
 			ID:        id.MustParse(m.ID),
 			CreatedAt: m.CreatedAt,
@@ -372,25 +396,29 @@ func fromReleaseModel(m *releaseModel) *deploy.Release {
 		TenantID:   m.TenantID,
 		InstanceID: id.MustParse(m.InstanceID),
 		Version:    m.Version,
-		Image:      m.Image,
 		Notes:      m.Notes,
 		CommitSHA:  m.CommitSHA,
 		Active:     m.Active,
 	}
+
+	unmarshalJSONB(m.Services, &out.Services)
+
+	return out
 }
 
 func toHealthCheckModel(check *health.HealthCheck) *healthCheckModel {
 	return &healthCheckModel{
-		ID:         check.ID.String(),
-		TenantID:   check.TenantID,
-		InstanceID: check.InstanceID.String(),
-		Name:       check.Name,
-		Type:       string(check.Type),
-		Enabled:    check.Enabled,
-		Interval:   int64(check.Interval),
-		Timeout:    int64(check.Timeout),
-		CreatedAt:  check.CreatedAt,
-		UpdatedAt:  check.UpdatedAt,
+		ID:          check.ID.String(),
+		TenantID:    check.TenantID,
+		InstanceID:  check.InstanceID.String(),
+		ServiceName: check.ServiceName,
+		Name:        check.Name,
+		Type:        string(check.Type),
+		Enabled:     check.Enabled,
+		Interval:    int64(check.Interval),
+		Timeout:     int64(check.Timeout),
+		CreatedAt:   check.CreatedAt,
+		UpdatedAt:   check.UpdatedAt,
 	}
 }
 
@@ -535,79 +563,95 @@ func toAuditEntryModel(entry *admin.AuditEntry) *auditEntryModel {
 	}
 }
 
-func toTemplateModel(t *deploy.Template) *templateModel {
-	var envBytes []byte
-
-	if len(t.Env) > 0 {
-		data, err := json.Marshal(t.Env)
-		if err == nil {
-			envBytes = data
-		}
-	}
-
+func toTemplateModel(t *template.Template) *templateModel {
 	return &templateModel{
-		ID:          t.ID.String(),
-		TenantID:    t.TenantID,
-		Name:        t.Name,
-		Description: t.Description,
-		Image:       t.Image,
-		Strategy:    t.Strategy,
-		Env:         envBytes,
-		CommitSHA:   t.CommitSHA,
-		Notes:       t.Notes,
-		CreatedAt:   t.CreatedAt,
-		UpdatedAt:   t.UpdatedAt,
+		ID:              t.ID.String(),
+		TenantID:        t.TenantID,
+		Name:            t.Name,
+		Description:     t.Description,
+		DefaultKind:     string(t.DefaultKind),
+		DefaultStrategy: t.DefaultStrategy,
+		Services:        marshalJSONB(t.Services),
+		Labels:          marshalJSONB(t.Labels),
+		Notes:           t.Notes,
+		CreatedAt:       t.CreatedAt,
+		UpdatedAt:       t.UpdatedAt,
 	}
 }
 
-func fromTemplateModel(m *templateModel) *deploy.Template {
-	env := make(map[string]string)
-
-	if len(m.Env) > 0 {
-		_ = json.Unmarshal(m.Env, &env)
-	}
-
-	return &deploy.Template{
+func fromTemplateModel(m *templateModel) *template.Template {
+	t := &template.Template{
 		Entity: ctrlplane.Entity{
 			ID:        id.MustParse(m.ID),
 			CreatedAt: m.CreatedAt,
 			UpdatedAt: m.UpdatedAt,
 		},
-		TenantID:    m.TenantID,
-		Name:        m.Name,
-		Description: m.Description,
-		Image:       m.Image,
-		Strategy:    m.Strategy,
-		Env:         env,
-		CommitSHA:   m.CommitSHA,
-		Notes:       m.Notes,
+		TenantID:        m.TenantID,
+		Name:            m.Name,
+		Description:     m.Description,
+		DefaultKind:     provider.WorkloadKind(m.DefaultKind),
+		DefaultStrategy: m.DefaultStrategy,
+		Notes:           m.Notes,
 	}
+
+	unmarshalJSONB(m.Services, &t.Services)
+	unmarshalJSONB(m.Labels, &t.Labels)
+
+	return t
+}
+
+// marshalJSONB returns the JSON encoding of v as bytes, or nil if v is
+// the zero value of its type. Errors silently produce nil bytes —
+// the caller is expected to round-trip-test schema invariants in
+// store tests, not in production code paths.
+func marshalJSONB(v any) []byte {
+	if v == nil {
+		return nil
+	}
+
+	data, err := json.Marshal(v)
+	if err != nil || len(data) == 0 || string(data) == "null" {
+		return nil
+	}
+
+	return data
+}
+
+// unmarshalJSONB decodes the JSONB bytes into dest. Empty/nil bytes
+// leave dest at its zero value.
+func unmarshalJSONB(data []byte, dest any) {
+	if len(data) == 0 {
+		return
+	}
+
+	_ = json.Unmarshal(data, dest)
 }
 
 // datacenterModel is the database model for datacenter.Datacenter.
 type datacenterModel struct {
 	grove.BaseModel `grove:"table:cp_datacenters"`
 
-	ID            string     `grove:"id,pk"`
-	TenantID      string     `grove:"tenant_id,notnull"`
-	Name          string     `grove:"name,notnull"`
-	Slug          string     `grove:"slug,notnull"`
-	ProviderName  string     `grove:"provider_name,notnull"`
-	Region        string     `grove:"region,notnull"`
-	Zone          string     `grove:"zone"`
-	Status        string     `grove:"status,notnull"`
-	Latitude      float64    `grove:"latitude"`
-	Longitude     float64    `grove:"longitude"`
-	Country       string     `grove:"country"`
-	City          string     `grove:"city"`
-	MaxInstances  int        `grove:"max_instances"`
-	MaxCPUMillis  int        `grove:"max_cpu_millis"`
-	MaxMemoryMB   int        `grove:"max_memory_mb"`
-	Labels        []byte     `grove:"labels,type:jsonb"`
-	Metadata      []byte     `grove:"metadata,type:jsonb"`
-	LastCheckedAt *time.Time `grove:"last_checked_at"`
-	CreatedAt     time.Time  `grove:"created_at,notnull"`
-	UpdatedAt     time.Time  `grove:"updated_at,notnull"`
+	ID                string     `grove:"id,pk"`
+	TenantID          string     `grove:"tenant_id,notnull"`
+	Name              string     `grove:"name,notnull"`
+	Slug              string     `grove:"slug,notnull"`
+	ProviderName      string     `grove:"provider_name,notnull"`
+	Region            string     `grove:"region,notnull"`
+	Zone              string     `grove:"zone"`
+	Status            string     `grove:"status,notnull"`
+	Latitude          float64    `grove:"latitude"`
+	Longitude         float64    `grove:"longitude"`
+	Country           string     `grove:"country"`
+	City              string     `grove:"city"`
+	MaxInstances      int        `grove:"max_instances"`
+	MaxCPUMillis      int        `grove:"max_cpu_millis"`
+	MaxMemoryMB       int        `grove:"max_memory_mb"`
+	Labels            []byte     `grove:"labels,type:jsonb"`
+	Metadata          []byte     `grove:"metadata,type:jsonb"`
+	BootstrapServices []byte     `grove:"bootstrap_services,type:jsonb"`
+	LastCheckedAt     *time.Time `grove:"last_checked_at"`
+	CreatedAt         time.Time  `grove:"created_at,notnull"`
+	UpdatedAt         time.Time  `grove:"updated_at,notnull"`
 }
 
 func toDatacenterModel(dc *datacenter.Datacenter) *datacenterModel {
@@ -628,26 +672,27 @@ func toDatacenterModel(dc *datacenter.Datacenter) *datacenterModel {
 	}
 
 	return &datacenterModel{
-		ID:            dc.ID.String(),
-		TenantID:      dc.TenantID,
-		Name:          dc.Name,
-		Slug:          dc.Slug,
-		ProviderName:  dc.ProviderName,
-		Region:        dc.Region,
-		Zone:          dc.Zone,
-		Status:        string(dc.Status),
-		Latitude:      dc.Location.Latitude,
-		Longitude:     dc.Location.Longitude,
-		Country:       dc.Location.Country,
-		City:          dc.Location.City,
-		MaxInstances:  dc.Capacity.MaxInstances,
-		MaxCPUMillis:  dc.Capacity.MaxCPUMillis,
-		MaxMemoryMB:   dc.Capacity.MaxMemoryMB,
-		Labels:        labelsBytes,
-		Metadata:      metadataBytes,
-		LastCheckedAt: dc.LastCheckedAt,
-		CreatedAt:     dc.CreatedAt,
-		UpdatedAt:     dc.UpdatedAt,
+		ID:                dc.ID.String(),
+		TenantID:          dc.TenantID,
+		Name:              dc.Name,
+		Slug:              dc.Slug,
+		ProviderName:      dc.ProviderName,
+		Region:            dc.Region,
+		Zone:              dc.Zone,
+		Status:            string(dc.Status),
+		Latitude:          dc.Location.Latitude,
+		Longitude:         dc.Location.Longitude,
+		Country:           dc.Location.Country,
+		City:              dc.Location.City,
+		MaxInstances:      dc.Capacity.MaxInstances,
+		MaxCPUMillis:      dc.Capacity.MaxCPUMillis,
+		MaxMemoryMB:       dc.Capacity.MaxMemoryMB,
+		Labels:            labelsBytes,
+		Metadata:          metadataBytes,
+		BootstrapServices: marshalJSONB(dc.BootstrapServices),
+		LastCheckedAt:     dc.LastCheckedAt,
+		CreatedAt:         dc.CreatedAt,
+		UpdatedAt:         dc.UpdatedAt,
 	}
 }
 
@@ -662,6 +707,10 @@ func fromDatacenterModel(m *datacenterModel) *datacenter.Datacenter {
 	if len(m.Metadata) > 0 {
 		_ = json.Unmarshal(m.Metadata, &metadata)
 	}
+
+	var bootstrapServices []bootstrap.BootstrapServiceSpec
+
+	unmarshalJSONB(m.BootstrapServices, &bootstrapServices)
 
 	return &datacenter.Datacenter{
 		Entity: ctrlplane.Entity{
@@ -687,8 +736,84 @@ func fromDatacenterModel(m *datacenterModel) *datacenter.Datacenter {
 			MaxCPUMillis: m.MaxCPUMillis,
 			MaxMemoryMB:  m.MaxMemoryMB,
 		},
-		Labels:        labels,
-		Metadata:      metadata,
-		LastCheckedAt: m.LastCheckedAt,
+		Labels:            labels,
+		Metadata:          metadata,
+		BootstrapServices: bootstrapServices,
+		LastCheckedAt:     m.LastCheckedAt,
+	}
+}
+
+// bootstrapModel is the database model for bootstrap.BootstrapWorkload.
+//
+// JSONB columns: services (the multi-service spec), service_refs
+// (map[string]string), labels (map[string]string). The Services
+// column carries the full provider.ServiceSpec slice so the
+// reconciler can dispatch Provision against a freshly-loaded row
+// without hitting any other table.
+type bootstrapModel struct {
+	grove.BaseModel `grove:"table:cp_bootstrap_workloads"`
+
+	ID           string    `grove:"id,pk"`
+	DatacenterID string    `grove:"datacenter_id,notnull"`
+	Name         string    `grove:"name,notnull"`
+	Kind         string    `grove:"kind,notnull"`
+	Services     []byte    `grove:"services,type:jsonb"`
+	State        string    `grove:"state,notnull"`
+	ProviderRef  string    `grove:"provider_ref"`
+	ServiceRefs  []byte    `grove:"service_refs,type:jsonb"`
+	LastError    string    `grove:"last_error"`
+	Attempts     int       `grove:"attempts"`
+	Labels       []byte    `grove:"labels,type:jsonb"`
+	CreatedAt    time.Time `grove:"created_at,notnull"`
+	UpdatedAt    time.Time `grove:"updated_at,notnull"`
+}
+
+func toBootstrapModel(bw *bootstrap.BootstrapWorkload) *bootstrapModel {
+	return &bootstrapModel{
+		ID:           bw.ID.String(),
+		DatacenterID: bw.DatacenterID.String(),
+		Name:         bw.Name,
+		Kind:         string(bw.Kind),
+		Services:     marshalJSONB(bw.Services),
+		State:        string(bw.State),
+		ProviderRef:  bw.ProviderRef,
+		ServiceRefs:  marshalJSONB(bw.ServiceRefs),
+		LastError:    bw.LastError,
+		Attempts:     bw.Attempts,
+		Labels:       marshalJSONB(bw.Labels),
+		CreatedAt:    bw.CreatedAt,
+		UpdatedAt:    bw.UpdatedAt,
+	}
+}
+
+func fromBootstrapModel(m *bootstrapModel) *bootstrap.BootstrapWorkload {
+	var services []provider.ServiceSpec
+
+	unmarshalJSONB(m.Services, &services)
+
+	serviceRefs := make(map[string]string)
+
+	unmarshalJSONB(m.ServiceRefs, &serviceRefs)
+
+	labels := make(map[string]string)
+
+	unmarshalJSONB(m.Labels, &labels)
+
+	return &bootstrap.BootstrapWorkload{
+		Entity: ctrlplane.Entity{
+			ID:        id.MustParse(m.ID),
+			CreatedAt: m.CreatedAt,
+			UpdatedAt: m.UpdatedAt,
+		},
+		DatacenterID: id.MustParse(m.DatacenterID),
+		Name:         m.Name,
+		Kind:         provider.WorkloadKind(m.Kind),
+		Services:     services,
+		State:        bootstrap.State(m.State),
+		ProviderRef:  m.ProviderRef,
+		ServiceRefs:  serviceRefs,
+		LastError:    m.LastError,
+		Attempts:     m.Attempts,
+		Labels:       labels,
 	}
 }

@@ -5,11 +5,12 @@ package pages
 
 //lint:file-ignore SA4006 This context is only used if a nested component is present.
 
+import "github.com/a-h/templ"
+import templruntime "github.com/a-h/templ/runtime"
+
 import (
 	"strconv"
 
-	"github.com/a-h/templ"
-	templruntime "github.com/a-h/templ/runtime"
 	"github.com/xraph/forgeui/components/badge"
 	"github.com/xraph/forgeui/components/button"
 	"github.com/xraph/forgeui/components/card"
@@ -447,9 +448,9 @@ func TemplatesPage(data TemplateListPageData) templ.Component {
 											return templ_7745c5c3_Err
 										}
 										var templ_7745c5c3_Var22 string
-										templ_7745c5c3_Var22, templ_7745c5c3_Err = templ.JoinStringErrs(tmpl.Image)
+										templ_7745c5c3_Var22, templ_7745c5c3_Err = templ.JoinStringErrs(templateMainImage(tmpl))
 										if templ_7745c5c3_Err != nil {
-											return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/templates.templ`, Line: 75, Col: 54}
+											return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/templates.templ`, Line: 75, Col: 67}
 										}
 										_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var22))
 										if templ_7745c5c3_Err != nil {
@@ -494,9 +495,9 @@ func TemplatesPage(data TemplateListPageData) templ.Component {
 											}
 											ctx = templ.InitializeContext(ctx)
 											var templ_7745c5c3_Var25 string
-											templ_7745c5c3_Var25, templ_7745c5c3_Err = templ.JoinStringErrs(tmpl.Strategy)
+											templ_7745c5c3_Var25, templ_7745c5c3_Err = templ.JoinStringErrs(tmpl.DefaultStrategy)
 											if templ_7745c5c3_Err != nil {
-												return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/templates.templ`, Line: 79, Col: 26}
+												return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/templates.templ`, Line: 79, Col: 33}
 											}
 											_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var25))
 											if templ_7745c5c3_Err != nil {
@@ -535,9 +536,9 @@ func TemplatesPage(data TemplateListPageData) templ.Component {
 											return templ_7745c5c3_Err
 										}
 										var templ_7745c5c3_Var27 string
-										templ_7745c5c3_Var27, templ_7745c5c3_Err = templ.JoinStringErrs(compactResourceSummary(tmpl.Resources))
+										templ_7745c5c3_Var27, templ_7745c5c3_Err = templ.JoinStringErrs(compactResourceSummary(templateMainResources(tmpl)))
 										if templ_7745c5c3_Err != nil {
-											return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/templates.templ`, Line: 83, Col: 94}
+											return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/templates.templ`, Line: 83, Col: 107}
 										}
 										_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var27))
 										if templ_7745c5c3_Err != nil {
@@ -573,7 +574,7 @@ func TemplatesPage(data TemplateListPageData) templ.Component {
 										if templ_7745c5c3_Err != nil {
 											return templ_7745c5c3_Err
 										}
-										if len(tmpl.Ports) > 0 {
+										if len(tmpl.Services) > 1 {
 											templ_7745c5c3_Var29 := templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 												templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
 												templ_7745c5c3_Buffer, templ_7745c5c3_IsBuffer := templruntime.GetBuffer(templ_7745c5c3_W)
@@ -587,15 +588,15 @@ func TemplatesPage(data TemplateListPageData) templ.Component {
 												}
 												ctx = templ.InitializeContext(ctx)
 												var templ_7745c5c3_Var30 string
-												templ_7745c5c3_Var30, templ_7745c5c3_Err = templ.JoinStringErrs(strconv.Itoa(len(tmpl.Ports)))
+												templ_7745c5c3_Var30, templ_7745c5c3_Err = templ.JoinStringErrs(strconv.Itoa(len(tmpl.Services)))
 												if templ_7745c5c3_Err != nil {
-													return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/templates.templ`, Line: 89, Col: 44}
+													return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/templates.templ`, Line: 89, Col: 47}
 												}
 												_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var30))
 												if templ_7745c5c3_Err != nil {
 													return templ_7745c5c3_Err
 												}
-												templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 31, " ports")
+												templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 31, " services")
 												if templ_7745c5c3_Err != nil {
 													return templ_7745c5c3_Err
 												}
@@ -606,7 +607,7 @@ func TemplatesPage(data TemplateListPageData) templ.Component {
 												return templ_7745c5c3_Err
 											}
 										}
-										if len(tmpl.Volumes) > 0 {
+										if pCount := totalPortsAcrossTemplate(tmpl); pCount > 0 {
 											templ_7745c5c3_Var31 := templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 												templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
 												templ_7745c5c3_Buffer, templ_7745c5c3_IsBuffer := templruntime.GetBuffer(templ_7745c5c3_W)
@@ -620,15 +621,15 @@ func TemplatesPage(data TemplateListPageData) templ.Component {
 												}
 												ctx = templ.InitializeContext(ctx)
 												var templ_7745c5c3_Var32 string
-												templ_7745c5c3_Var32, templ_7745c5c3_Err = templ.JoinStringErrs(strconv.Itoa(len(tmpl.Volumes)))
+												templ_7745c5c3_Var32, templ_7745c5c3_Err = templ.JoinStringErrs(strconv.Itoa(pCount))
 												if templ_7745c5c3_Err != nil {
-													return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/templates.templ`, Line: 94, Col: 46}
+													return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/templates.templ`, Line: 94, Col: 35}
 												}
 												_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var32))
 												if templ_7745c5c3_Err != nil {
 													return templ_7745c5c3_Err
 												}
-												templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 32, " vols")
+												templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 32, " ports")
 												if templ_7745c5c3_Err != nil {
 													return templ_7745c5c3_Err
 												}
@@ -639,7 +640,7 @@ func TemplatesPage(data TemplateListPageData) templ.Component {
 												return templ_7745c5c3_Err
 											}
 										}
-										if len(tmpl.Secrets) > 0 {
+										if vCount := totalVolumesAcrossTemplate(tmpl); vCount > 0 {
 											templ_7745c5c3_Var33 := templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 												templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
 												templ_7745c5c3_Buffer, templ_7745c5c3_IsBuffer := templruntime.GetBuffer(templ_7745c5c3_W)
@@ -653,15 +654,15 @@ func TemplatesPage(data TemplateListPageData) templ.Component {
 												}
 												ctx = templ.InitializeContext(ctx)
 												var templ_7745c5c3_Var34 string
-												templ_7745c5c3_Var34, templ_7745c5c3_Err = templ.JoinStringErrs(strconv.Itoa(len(tmpl.Secrets)))
+												templ_7745c5c3_Var34, templ_7745c5c3_Err = templ.JoinStringErrs(strconv.Itoa(vCount))
 												if templ_7745c5c3_Err != nil {
-													return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/templates.templ`, Line: 99, Col: 46}
+													return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/templates.templ`, Line: 99, Col: 35}
 												}
 												_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var34))
 												if templ_7745c5c3_Err != nil {
 													return templ_7745c5c3_Err
 												}
-												templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 33, " secrets")
+												templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 33, " vols")
 												if templ_7745c5c3_Err != nil {
 													return templ_7745c5c3_Err
 												}
@@ -672,7 +673,7 @@ func TemplatesPage(data TemplateListPageData) templ.Component {
 												return templ_7745c5c3_Err
 											}
 										}
-										if len(tmpl.ConfigFiles) > 0 {
+										if sCount := totalSecretsAcrossTemplate(tmpl); sCount > 0 {
 											templ_7745c5c3_Var35 := templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 												templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
 												templ_7745c5c3_Buffer, templ_7745c5c3_IsBuffer := templruntime.GetBuffer(templ_7745c5c3_W)
@@ -686,15 +687,15 @@ func TemplatesPage(data TemplateListPageData) templ.Component {
 												}
 												ctx = templ.InitializeContext(ctx)
 												var templ_7745c5c3_Var36 string
-												templ_7745c5c3_Var36, templ_7745c5c3_Err = templ.JoinStringErrs(strconv.Itoa(len(tmpl.ConfigFiles)))
+												templ_7745c5c3_Var36, templ_7745c5c3_Err = templ.JoinStringErrs(strconv.Itoa(sCount))
 												if templ_7745c5c3_Err != nil {
-													return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/templates.templ`, Line: 104, Col: 50}
+													return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/templates.templ`, Line: 104, Col: 35}
 												}
 												_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var36))
 												if templ_7745c5c3_Err != nil {
 													return templ_7745c5c3_Err
 												}
-												templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 34, " configs")
+												templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 34, " secrets")
 												if templ_7745c5c3_Err != nil {
 													return templ_7745c5c3_Err
 												}
@@ -705,13 +706,40 @@ func TemplatesPage(data TemplateListPageData) templ.Component {
 												return templ_7745c5c3_Err
 											}
 										}
-										if len(tmpl.Ports) == 0 && len(tmpl.Volumes) == 0 && len(tmpl.Secrets) == 0 && len(tmpl.ConfigFiles) == 0 {
-											templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 35, "<span class=\"text-xs text-muted-foreground\">--</span>")
+										if eCount := totalEnvAcrossTemplate(tmpl); eCount > 0 {
+											templ_7745c5c3_Var39 := templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
+												templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
+												templ_7745c5c3_Buffer, templ_7745c5c3_IsBuffer := templruntime.GetBuffer(templ_7745c5c3_W)
+												if !templ_7745c5c3_IsBuffer {
+													defer func() {
+														templ_7745c5c3_BufErr := templruntime.ReleaseBuffer(templ_7745c5c3_Buffer)
+														if templ_7745c5c3_Err == nil {
+															templ_7745c5c3_Err = templ_7745c5c3_BufErr
+														}
+													}()
+												}
+												ctx = templ.InitializeContext(ctx)
+												var templ_7745c5c3_Var40 string
+												templ_7745c5c3_Var40, templ_7745c5c3_Err = templ.JoinStringErrs(strconv.Itoa(eCount))
+												if templ_7745c5c3_Err != nil {
+													return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/templates.templ`, Line: 109, Col: 35}
+												}
+												_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var40))
+												if templ_7745c5c3_Err != nil {
+													return templ_7745c5c3_Err
+												}
+												templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 34, " envs")
+												if templ_7745c5c3_Err != nil {
+													return templ_7745c5c3_Err
+												}
+												return nil
+											})
+											templ_7745c5c3_Err = badge.Badge(badge.Props{Variant: badge.VariantSecondary, Class: "text-[10px] px-1.5 py-0"}).Render(templ.WithChildren(ctx, templ_7745c5c3_Var39), templ_7745c5c3_Buffer)
 											if templ_7745c5c3_Err != nil {
 												return templ_7745c5c3_Err
 											}
 										}
-										templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 36, "</div>")
+										templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 35, "</div>")
 										if templ_7745c5c3_Err != nil {
 											return templ_7745c5c3_Err
 										}
@@ -721,7 +749,7 @@ func TemplatesPage(data TemplateListPageData) templ.Component {
 									if templ_7745c5c3_Err != nil {
 										return templ_7745c5c3_Err
 									}
-									templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 37, " ")
+									templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 36, " ")
 									if templ_7745c5c3_Err != nil {
 										return templ_7745c5c3_Err
 									}
@@ -737,20 +765,20 @@ func TemplatesPage(data TemplateListPageData) templ.Component {
 											}()
 										}
 										ctx = templ.InitializeContext(ctx)
-										templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 38, "<span class=\"text-muted-foreground\">")
+										templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 37, "<span class=\"text-muted-foreground\">")
 										if templ_7745c5c3_Err != nil {
 											return templ_7745c5c3_Err
 										}
 										var templ_7745c5c3_Var38 string
 										templ_7745c5c3_Var38, templ_7745c5c3_Err = templ.JoinStringErrs(tmpl.CreatedAt.Format("Jan 02, 2006"))
 										if templ_7745c5c3_Err != nil {
-											return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/templates.templ`, Line: 113, Col: 85}
+											return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/templates.templ`, Line: 110, Col: 85}
 										}
 										_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var38))
 										if templ_7745c5c3_Err != nil {
 											return templ_7745c5c3_Err
 										}
-										templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 39, "</span>")
+										templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 38, "</span>")
 										if templ_7745c5c3_Err != nil {
 											return templ_7745c5c3_Err
 										}
@@ -800,7 +828,7 @@ func TemplatesPage(data TemplateListPageData) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 40, "</div>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 39, "</div>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

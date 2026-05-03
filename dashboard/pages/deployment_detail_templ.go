@@ -5,11 +5,12 @@ package pages
 
 //lint:file-ignore SA4006 This context is only used if a nested component is present.
 
+import "github.com/a-h/templ"
+import templruntime "github.com/a-h/templ/runtime"
+
 import (
 	"strconv"
 
-	"github.com/a-h/templ"
-	templruntime "github.com/a-h/templ/runtime"
 	"github.com/xraph/forgeui/components/badge"
 	"github.com/xraph/forgeui/components/button"
 	"github.com/xraph/forgeui/components/card"
@@ -230,7 +231,7 @@ func DeploymentDetailPage(dep *deploy.Deployment, rel *deploy.Release) templ.Com
 						templ_7745c5c3_Err = button.Button(button.Props{
 							Size: button.SizeSm,
 							Attributes: templ.Attributes{
-								"hx-get":     "./deployments/create?instance_id=" + dep.InstanceID.String() + "&image=" + dep.Image,
+								"hx-get":     "./deployments/create?instance_id=" + dep.InstanceID.String() + "&image=" + mainDeployImage(dep.Services),
 								"hx-target":  "#content",
 								"hx-swap":    "innerHTML",
 								"hx-confirm": "Redeploy with the same image?",
@@ -338,9 +339,9 @@ func DeploymentDetailPage(dep *deploy.Deployment, rel *deploy.Release) templ.Com
 					return templ_7745c5c3_Err
 				}
 				var templ_7745c5c3_Var15 string
-				templ_7745c5c3_Var15, templ_7745c5c3_Err = templ.JoinStringErrs(dep.Image)
+				templ_7745c5c3_Var15, templ_7745c5c3_Err = templ.JoinStringErrs(mainDeployImage(dep.Services))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/deployment_detail.templ`, Line: 101, Col: 50}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/deployment_detail.templ`, Line: 101, Col: 70}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var15))
 				if templ_7745c5c3_Err != nil {
@@ -576,9 +577,9 @@ func DeploymentDetailPage(dep *deploy.Deployment, rel *deploy.Release) templ.Com
 						return templ_7745c5c3_Err
 					}
 					var templ_7745c5c3_Var28 string
-					templ_7745c5c3_Var28, templ_7745c5c3_Err = templ.JoinStringErrs(rel.Image)
+					templ_7745c5c3_Var28, templ_7745c5c3_Err = templ.JoinStringErrs(mainSnapshotImage(rel.Services))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/deployment_detail.templ`, Line: 159, Col: 51}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/deployment_detail.templ`, Line: 159, Col: 73}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var28))
 					if templ_7745c5c3_Err != nil {
@@ -655,7 +656,7 @@ func DeploymentDetailPage(dep *deploy.Deployment, rel *deploy.Release) templ.Com
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		if len(dep.Env) > 0 {
+		if depEnvKeys := collectDeployEnvKeys(dep.Services); len(depEnvKeys) > 0 {
 			templ_7745c5c3_Var31 := templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 				templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
 				templ_7745c5c3_Buffer, templ_7745c5c3_IsBuffer := templruntime.GetBuffer(templ_7745c5c3_W)
@@ -754,7 +755,7 @@ func DeploymentDetailPage(dep *deploy.Deployment, rel *deploy.Release) templ.Com
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
-					for k := range dep.Env {
+					for _, k := range depEnvKeys {
 						templ_7745c5c3_Var36 := templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 							templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
 							templ_7745c5c3_Buffer, templ_7745c5c3_IsBuffer := templruntime.GetBuffer(templ_7745c5c3_W)

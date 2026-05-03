@@ -36,6 +36,16 @@ templ InstanceDetailPage(data InstanceDetailData) {
 							<h1 class="text-2xl font-bold">{ data.Instance.Name }</h1>
 							@components.InstanceStateBadge(data.Instance.State)
 						</div>
+						if data.ParentWorkload != nil {
+							<div class="text-sm text-muted-foreground">
+								Replica of workload:&nbsp;
+								<a class="font-medium text-foreground hover:underline cursor-pointer"
+									hx-get={ "./workloads/detail?workload_id=" + data.ParentWorkload.ID.String() }
+									hx-target="#content"
+									hx-push-url="true"
+									hx-swap="innerHTML">{ data.ParentWorkload.Name }</a>
+							</div>
+						}
 						<div class="flex items-center gap-4 text-sm text-muted-foreground">
 							<span>Provider: <span class="font-medium text-foreground">{ data.Instance.ProviderName }</span></span>
 							if data.Instance.Region != "" {
@@ -43,9 +53,9 @@ templ InstanceDetailPage(data InstanceDetailData) {
 							}
 							<span class="font-mono text-xs">{ data.Instance.ID.String() }</span>
 						</div>
-						if data.Instance.Image != "" {
+						if main := data.Instance.MainService(); main != nil && main.Image != "" {
 							<div class="text-sm text-muted-foreground">
-								Image: <span class="font-mono text-xs text-foreground">{ data.Instance.Image }</span>
+								Image: <span class="font-mono text-xs text-foreground">{ main.Image }</span>
 							</div>
 						}
 						if len(data.Instance.Endpoints) > 0 {
@@ -168,40 +178,42 @@ templ actionButton(instanceID string, action string, label string, variant butto
 
 templ instanceInfoTab(data InstanceDetailData) {
 	<div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
-		<!-- Resources -->
-		@card.Card(card.Props{Class: "rounded-sm"}) {
-			@card.Header() {
-				@card.Title() {
-					Resources
+		<!-- Resources (Main service) -->
+		if main := data.Instance.MainService(); main != nil {
+			@card.Card(card.Props{Class: "rounded-sm"}) {
+				@card.Header() {
+					@card.Title() {
+						Resources
+					}
 				}
-			}
-			@card.Content() {
-				<div class="space-y-2 text-sm">
-					<div class="flex justify-between">
-						<span class="text-muted-foreground">CPU</span>
-						<span>{ strconv.Itoa(data.Instance.Resources.CPUMillis) }m</span>
-					</div>
-					<div class="flex justify-between">
-						<span class="text-muted-foreground">Memory</span>
-						<span>{ strconv.Itoa(data.Instance.Resources.MemoryMB) } MB</span>
-					</div>
-					if data.Instance.Resources.DiskMB > 0 {
+				@card.Content() {
+					<div class="space-y-2 text-sm">
 						<div class="flex justify-between">
-							<span class="text-muted-foreground">Disk</span>
-							<span>{ strconv.Itoa(data.Instance.Resources.DiskMB) } MB</span>
+							<span class="text-muted-foreground">CPU</span>
+							<span>{ strconv.Itoa(main.Resources.CPUMillis) }m</span>
 						</div>
-					}
-					<div class="flex justify-between">
-						<span class="text-muted-foreground">Replicas</span>
-						<span>{ strconv.Itoa(data.Instance.Resources.Replicas) }</span>
-					</div>
-					if data.Instance.Resources.GPU != "" {
 						<div class="flex justify-between">
-							<span class="text-muted-foreground">GPU</span>
-							<span>{ data.Instance.Resources.GPU }</span>
+							<span class="text-muted-foreground">Memory</span>
+							<span>{ strconv.Itoa(main.Resources.MemoryMB) } MB</span>
 						</div>
-					}
-				</div>
+						if main.Resources.DiskMB > 0 {
+							<div class="flex justify-between">
+								<span class="text-muted-foreground">Disk</span>
+								<span>{ strconv.Itoa(main.Resources.DiskMB) } MB</span>
+							</div>
+						}
+						<div class="flex justify-between">
+							<span class="text-muted-foreground">Replicas</span>
+							<span>{ strconv.Itoa(main.Resources.Replicas) }</span>
+						</div>
+						if main.Resources.GPU != "" {
+							<div class="flex justify-between">
+								<span class="text-muted-foreground">GPU</span>
+								<span>{ main.Resources.GPU }</span>
+							</div>
+						}
+					</div>
+				}
 			}
 		}
 
@@ -248,8 +260,8 @@ templ instanceInfoTab(data InstanceDetailData) {
 			}
 		}
 
-		<!-- Ports -->
-		if len(data.Instance.Ports) > 0 {
+		<!-- Ports (Main service) -->
+		if main := data.Instance.MainService(); main != nil && len(main.Ports) > 0 {
 			@card.Card(card.Props{Class: "rounded-sm"}) {
 				@card.Header() {
 					@card.Title() {
@@ -266,7 +278,7 @@ templ instanceInfoTab(data InstanceDetailData) {
 							}
 						}
 						@table.Body() {
-							for _, p := range data.Instance.Ports {
+							for _, p := range main.Ports {
 								@table.Row() {
 									@table.Cell() {
 										{ strconv.Itoa(p.Container) }
@@ -309,8 +321,8 @@ templ instanceInfoTab(data InstanceDetailData) {
 			}
 		}
 
-		<!-- Environment Variables (keys only) -->
-		if len(data.Instance.Env) > 0 {
+		<!-- Environment Variables (keys only — Main service) -->
+		if main := data.Instance.MainService(); main != nil && len(main.Env) > 0 {
 			@card.Card(card.Props{Class: "rounded-sm"}) {
 				@card.Header() {
 					@card.Title() {
@@ -322,7 +334,7 @@ templ instanceInfoTab(data InstanceDetailData) {
 				}
 				@card.Content() {
 					<div class="flex flex-wrap gap-2">
-						for k := range data.Instance.Env {
+						for k := range main.Env {
 							@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
 								{ k }
 							}

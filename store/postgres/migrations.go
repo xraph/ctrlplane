@@ -449,5 +449,233 @@ CREATE INDEX IF NOT EXISTS idx_cp_audit_entries_created ON cp_audit_entries (cre
 				return err
 			},
 		},
+		// Datacenters table — was missing from the initial migration
+		// set, which meant the postgres backend silently couldn't host
+		// datacenters. Mongo deployments worked because mongo creates
+		// collections lazily on first insert and indexes are configured
+		// separately (see store/mongo/store.go::migrationIndexes).
+		//
+		// (tenant_id, slug) is unique by design: every backend layer
+		// pre-checks for duplicates in datacenter.service.Create, but
+		// the constraint here is the race-free backstop for concurrent
+		// creators (e.g. two studios booting simultaneously and both
+		// running the platform-shared datacenter seeder).
+		&migrate.Migration{
+			Name:    "create_cp_datacenters",
+			Version: "20240101000016",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `
+CREATE TABLE IF NOT EXISTS cp_datacenters (
+    id              TEXT PRIMARY KEY,
+    tenant_id       TEXT NOT NULL,
+    name            TEXT NOT NULL,
+    slug            TEXT NOT NULL,
+    provider_name   TEXT NOT NULL,
+    region          TEXT NOT NULL,
+    zone            TEXT NOT NULL DEFAULT '',
+    status          TEXT NOT NULL,
+    latitude        DOUBLE PRECISION NOT NULL DEFAULT 0,
+    longitude       DOUBLE PRECISION NOT NULL DEFAULT 0,
+    country         TEXT NOT NULL DEFAULT '',
+    city            TEXT NOT NULL DEFAULT '',
+    max_instances   INT NOT NULL DEFAULT 0,
+    max_cpu_millis  INT NOT NULL DEFAULT 0,
+    max_memory_mb   INT NOT NULL DEFAULT 0,
+    labels          JSONB,
+    metadata        JSONB,
+    last_checked_at TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cp_datacenters_tenant_slug ON cp_datacenters (tenant_id, slug);
+CREATE INDEX IF NOT EXISTS idx_cp_datacenters_provider ON cp_datacenters (provider_name);
+CREATE INDEX IF NOT EXISTS idx_cp_datacenters_region ON cp_datacenters (region);
+`)
+
+				return err
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `DROP TABLE IF EXISTS cp_datacenters`)
+
+				return err
+			},
+		},
+		// cp_instances was created without an endpoints column, so any
+		// pg-backed deployment dropped provider-supplied URLs/ports on
+		// every reload. Adding it as a forward-compatible ALTER preserves
+		// existing rows; the column defaults to NULL which fromInstanceModel
+		// already treats as "no endpoints".
+		&migrate.Migration{
+			Name:    "add_endpoints_to_cp_instances",
+			Version: "20240101000017",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `ALTER TABLE cp_instances ADD COLUMN IF NOT EXISTS endpoints JSONB`)
+
+				return err
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `ALTER TABLE cp_instances DROP COLUMN IF EXISTS endpoints`)
+
+				return err
+			},
+		},
+		&migrate.Migration{
+			Name:    "create_cp_templates",
+			Version: "20240101000018",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `
+CREATE TABLE IF NOT EXISTS cp_templates (
+    id               TEXT PRIMARY KEY,
+    tenant_id        TEXT NOT NULL,
+    name             TEXT NOT NULL,
+    description      TEXT NOT NULL DEFAULT '',
+    image            TEXT NOT NULL,
+    default_strategy TEXT NOT NULL DEFAULT '',
+    env              JSONB,
+    resources        JSONB,
+    ports            JSONB,
+    volumes          JSONB,
+    health_check     JSONB,
+    secrets          JSONB,
+    config_files     JSONB,
+    labels           JSONB,
+    annotations      JSONB,
+    notes            TEXT NOT NULL DEFAULT '',
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_cp_templates_tenant ON cp_templates (tenant_id);
+`)
+
+				return err
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `DROP TABLE IF EXISTS cp_templates`)
+
+				return err
+			},
+		},
+		// ─────────────────────────────────────────────────────────────
+		// Phase 4 cleanup: drop the legacy single-image columns. By
+		// this point the multi-service `services` JSONB column has
+		// been the source of truth for several releases and any
+		// pre-multi-service rows have been backfilled by the
+		// synthesise-on-read path. The Down migration is best-effort
+		// "add back as nullable" — historical rows can't be
+		// reconstructed and the synthesis path is gone in Go too, so
+		// in practice rolling back from this point requires a data
+		// restore.
+		// ─────────────────────────────────────────────────────────────
+		&migrate.Migration{
+			Name:    "drop_legacy_single_image_columns",
+			Version: "20240101000019",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				stmts := []string{
+					`ALTER TABLE cp_instances   DROP COLUMN IF EXISTS image`,
+					`ALTER TABLE cp_deployments DROP COLUMN IF EXISTS image`,
+					`ALTER TABLE cp_releases    DROP COLUMN IF EXISTS image`,
+					`ALTER TABLE cp_templates   DROP COLUMN IF EXISTS image`,
+					`ALTER TABLE cp_templates   DROP COLUMN IF EXISTS env`,
+					`ALTER TABLE cp_templates   DROP COLUMN IF EXISTS resources`,
+					`ALTER TABLE cp_templates   DROP COLUMN IF EXISTS ports`,
+					`ALTER TABLE cp_templates   DROP COLUMN IF EXISTS volumes`,
+					`ALTER TABLE cp_templates   DROP COLUMN IF EXISTS health_check`,
+					`ALTER TABLE cp_templates   DROP COLUMN IF EXISTS secrets`,
+					`ALTER TABLE cp_templates   DROP COLUMN IF EXISTS config_files`,
+					`ALTER TABLE cp_templates   DROP COLUMN IF EXISTS annotations`,
+				}
+
+				for _, stmt := range stmts {
+					if _, err := exec.Exec(ctx, stmt); err != nil {
+						return err
+					}
+				}
+
+				return nil
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				stmts := []string{
+					`ALTER TABLE cp_instances   ADD COLUMN IF NOT EXISTS image TEXT NOT NULL DEFAULT ''`,
+					`ALTER TABLE cp_deployments ADD COLUMN IF NOT EXISTS image TEXT NOT NULL DEFAULT ''`,
+					`ALTER TABLE cp_releases    ADD COLUMN IF NOT EXISTS image TEXT NOT NULL DEFAULT ''`,
+					`ALTER TABLE cp_templates   ADD COLUMN IF NOT EXISTS image TEXT NOT NULL DEFAULT ''`,
+					`ALTER TABLE cp_templates   ADD COLUMN IF NOT EXISTS env JSONB`,
+					`ALTER TABLE cp_templates   ADD COLUMN IF NOT EXISTS resources JSONB`,
+					`ALTER TABLE cp_templates   ADD COLUMN IF NOT EXISTS ports JSONB`,
+					`ALTER TABLE cp_templates   ADD COLUMN IF NOT EXISTS volumes JSONB`,
+					`ALTER TABLE cp_templates   ADD COLUMN IF NOT EXISTS health_check JSONB`,
+					`ALTER TABLE cp_templates   ADD COLUMN IF NOT EXISTS secrets JSONB`,
+					`ALTER TABLE cp_templates   ADD COLUMN IF NOT EXISTS config_files JSONB`,
+					`ALTER TABLE cp_templates   ADD COLUMN IF NOT EXISTS annotations JSONB`,
+				}
+
+				for _, stmt := range stmts {
+					if _, err := exec.Exec(ctx, stmt); err != nil {
+						return err
+					}
+				}
+
+				return nil
+			},
+		},
+		// ─────────────────────────────────────────────────────────────
+		// Datacenter bootstrap services (Phase 2). The `bootstrap_services`
+		// JSONB column on cp_datacenters carries the operator-declared
+		// list of platform services that auto-deploy on each datacenter;
+		// the `cp_bootstrap_workloads` table stores one row per running
+		// shared service, owned by the platform and not tenant-scoped.
+		// See bootstrap/doc.go for the documented exception to the
+		// tenant-scoping rule.
+		// ─────────────────────────────────────────────────────────────
+		&migrate.Migration{
+			Name:    "add_bootstrap_services_to_cp_datacenters",
+			Version: "20240101000020",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `ALTER TABLE cp_datacenters ADD COLUMN IF NOT EXISTS bootstrap_services JSONB`)
+
+				return err
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `ALTER TABLE cp_datacenters DROP COLUMN IF EXISTS bootstrap_services`)
+
+				return err
+			},
+		},
+		&migrate.Migration{
+			Name:    "create_cp_bootstrap_workloads",
+			Version: "20240101000021",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `
+CREATE TABLE IF NOT EXISTS cp_bootstrap_workloads (
+    id            TEXT PRIMARY KEY,
+    datacenter_id TEXT NOT NULL,
+    name          TEXT NOT NULL,
+    kind          TEXT NOT NULL,
+    services      JSONB,
+    state         TEXT NOT NULL,
+    provider_ref  TEXT NOT NULL DEFAULT '',
+    service_refs  JSONB,
+    last_error    TEXT NOT NULL DEFAULT '',
+    attempts      INT NOT NULL DEFAULT 0,
+    labels        JSONB,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cp_bootstrap_workloads_dc_name ON cp_bootstrap_workloads (datacenter_id, name);
+CREATE INDEX IF NOT EXISTS idx_cp_bootstrap_workloads_dc ON cp_bootstrap_workloads (datacenter_id);
+CREATE INDEX IF NOT EXISTS idx_cp_bootstrap_workloads_state ON cp_bootstrap_workloads (state);
+`)
+
+				return err
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `DROP TABLE IF EXISTS cp_bootstrap_workloads`)
+
+				return err
+			},
+		},
 	)
 }

@@ -52,6 +52,7 @@ func (s *Store) GetDatacenterBySlug(ctx context.Context, tenantID string, slug s
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: get datacenter by slug: %w", err)
 	}
+
 	if len(models) == 0 {
 		return nil, fmt.Errorf("%w: datacenter slug %s", ctrlplane.ErrNotFound, slug)
 	}
@@ -60,9 +61,11 @@ func (s *Store) GetDatacenterBySlug(ctx context.Context, tenantID string, slug s
 	for i := range models {
 		if models[i].TenantID == tenantID {
 			pick = &models[i]
+
 			break
 		}
 	}
+
 	return fromDatacenterModel(pick), nil
 }
 

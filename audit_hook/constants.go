@@ -25,6 +25,26 @@ const (
 	ActionInstanceUnsuspended = "ctrlplane.instance.unsuspended"
 )
 
+// Workload action constants.
+const (
+	ActionWorkloadCreated   = "ctrlplane.workload.created"
+	ActionWorkloadUpdated   = "ctrlplane.workload.updated"
+	ActionWorkloadScaled    = "ctrlplane.workload.scaled"
+	ActionWorkloadDeployed  = "ctrlplane.workload.deployed"
+	ActionWorkloadPaused    = "ctrlplane.workload.paused"
+	ActionWorkloadResumed   = "ctrlplane.workload.resumed"
+	ActionWorkloadRestarted = "ctrlplane.workload.restarted"
+	ActionWorkloadDeleted   = "ctrlplane.workload.deleted"
+	ActionWorkloadFailed    = "ctrlplane.workload.failed"
+)
+
+// Template action constants.
+const (
+	ActionTemplateCreated = "ctrlplane.template.created"
+	ActionTemplateUpdated = "ctrlplane.template.updated"
+	ActionTemplateDeleted = "ctrlplane.template.deleted"
+)
+
 // Deploy action constants.
 const (
 	ActionDeployStarted    = "ctrlplane.deploy.started"
@@ -61,6 +81,8 @@ const (
 // Resource constants.
 const (
 	ResourceInstance    = "instance"
+	ResourceWorkload    = "workload"
+	ResourceTemplate    = "template"
 	ResourceDeployment  = "deployment"
 	ResourceHealthCheck = "health_check"
 	ResourceDomain      = "domain"
@@ -72,6 +94,8 @@ const (
 // Category constants.
 const (
 	CategoryInstance = "instance"
+	CategoryWorkload = "workload"
+	CategoryTemplate = "template"
 	CategoryDeploy   = "deploy"
 	CategoryHealth   = "health"
 	CategoryNetwork  = "network"

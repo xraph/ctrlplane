@@ -73,3 +73,89 @@ func truncateDescription(s string, maxLen int) string {
 
 	return s[:maxLen] + "..."
 }
+
+// mainServiceImage returns the Image of the Main service in a slice,
+// or empty when none is configured. Used by tables that show a
+// single representative image per row.
+func mainServiceImage(services []provider.ServiceSpec) string {
+	for i := range services {
+		if services[i].Role == provider.RoleMain || services[i].Role == "" {
+			return services[i].Image
+		}
+	}
+
+	return ""
+}
+
+// mainServiceResources returns the Main service's ResourceSpec, or
+// the zero value when none is found. Used by the template card's
+// resource summary.
+func mainServiceResources(services []provider.ServiceSpec) provider.ResourceSpec {
+	for i := range services {
+		if services[i].Role == provider.RoleMain || services[i].Role == "" {
+			return services[i].Resources
+		}
+	}
+
+	return provider.ResourceSpec{}
+}
+
+// totalPorts sums ports across every service in a slice.
+func totalPorts(services []provider.ServiceSpec) int {
+	n := 0
+	for i := range services {
+		n += len(services[i].Ports)
+	}
+
+	return n
+}
+
+// totalVolumes sums volumes across every service.
+func totalVolumes(services []provider.ServiceSpec) int {
+	n := 0
+	for i := range services {
+		n += len(services[i].Volumes)
+	}
+
+	return n
+}
+
+// totalSecrets sums secrets across every service.
+func totalSecrets(services []provider.ServiceSpec) int {
+	n := 0
+	for i := range services {
+		n += len(services[i].Secrets)
+	}
+
+	return n
+}
+
+// totalConfigFiles sums config files across every service.
+func totalConfigFiles(services []provider.ServiceSpec) int {
+	n := 0
+	for i := range services {
+		n += len(services[i].ConfigFiles)
+	}
+
+	return n
+}
+
+// mainDeployImage returns the first ServiceDeploySpec image (used by
+// deployment row displays).
+func mainDeployImage(services []provider.ServiceDeploySpec) string {
+	if len(services) == 0 {
+		return ""
+	}
+
+	return services[0].Image
+}
+
+// mainSnapshotImage returns the first ServiceSnapshot image (used by
+// release row displays).
+func mainSnapshotImage(services []provider.ServiceSnapshot) string {
+	if len(services) == 0 {
+		return ""
+	}
+
+	return services[0].Image
+}

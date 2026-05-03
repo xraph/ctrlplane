@@ -2,6 +2,8 @@ package instance
 
 import (
 	"context"
+	"io"
+	"time"
 
 	"github.com/xraph/ctrlplane/id"
 	"github.com/xraph/ctrlplane/provider"
@@ -14,6 +16,14 @@ type Service interface {
 
 	// Get returns an instance by ID, scoped to the tenant in context.
 	Get(ctx context.Context, instanceID id.ID) (*Instance, error)
+
+	// GetBySlug returns an instance by slug within the caller's tenant.
+	// Returns ctrlplane.ErrNotFound when no row matches. Used by
+	// callers (notably workload.spawnReplica) that need to check
+	// whether the unique (tenant, slug) namespace is already
+	// occupied before attempting an insert that would otherwise
+	// trip the database unique index.
+	GetBySlug(ctx context.Context, slug string) (*Instance, error)
 
 	// List returns instances for the current tenant with filtering.
 	List(ctx context.Context, opts ListOptions) (*ListResult, error)
@@ -41,6 +51,32 @@ type Service interface {
 
 	// Unsuspend restores a suspended instance.
 	Unsuspend(ctx context.Context, instanceID id.ID) error
+
+	// Logs returns a stream of log events from the instance's
+	// container/pod via the underlying provider. Caller closes the
+	// returned ReadCloser to stop. opts.Follow=true keeps the
+	// stream open as new lines arrive.
+	Logs(ctx context.Context, instanceID id.ID, opts LogsOptions) (io.ReadCloser, error)
+
+	// Resources returns a one-shot resource-usage sample for the
+	// instance via the underlying provider (e.g., docker stats).
+	// Used by the metrics package's poller. Returns a zero-valued
+	// usage (no error) when the underlying container has gone away
+	// — the poller treats that as a missing sample, not a failure.
+	Resources(ctx context.Context, instanceID id.ID) (*provider.ResourceUsage, error)
+}
+
+// LogsOptions mirrors provider.LogOptions on the public Service
+// surface so callers don't need to import the provider package.
+//
+// ServiceName picks one service inside the instance — empty defaults
+// to the Main service. Per-service log streaming lets a caller tail a
+// sidecar without merging it into the main container's stream.
+type LogsOptions struct {
+	ServiceName string    `json:"service_name,omitempty"`
+	Follow      bool      `json:"follow"`
+	Since       time.Time `json:"since,omitzero"`
+	Tail        int       `json:"tail,omitempty"`
 }
 
 // DatacenterResolver resolves a datacenter's provider name without introducing
@@ -52,22 +88,20 @@ type DatacenterResolver interface {
 
 // CreateRequest holds the parameters for creating a new instance.
 type CreateRequest struct {
-	Name         string                `json:"name"                    validate:"required"`
-	DatacenterID id.ID                 `json:"datacenter_id,omitzero"`
-	ProviderName string                `json:"provider_name,omitempty"`
-	Region       string                `json:"region,omitempty"`
-	Image        string                `json:"image"                   validate:"required"`
-	Resources    provider.ResourceSpec `json:"resources"`
-	Env          map[string]string     `json:"env,omitempty"`
-	Ports        []provider.PortSpec   `json:"ports,omitempty"`
-	Labels       map[string]string     `json:"labels,omitempty"`
+	Name         string                 `json:"name"                    validate:"required"`
+	DatacenterID id.ID                  `json:"datacenter_id,omitzero"`
+	ProviderName string                 `json:"provider_name,omitempty"`
+	Region       string                 `json:"region,omitempty"`
+	Kind         provider.WorkloadKind  `json:"kind,omitempty"`
+	Services     []provider.ServiceSpec `json:"services"                validate:"required,min=1"`
+	Labels       map[string]string      `json:"labels,omitempty"`
 }
 
 // UpdateRequest holds the parameters for updating an instance.
 type UpdateRequest struct {
-	Name   *string           `json:"name,omitempty"`
-	Env    map[string]string `json:"env,omitempty"`
-	Labels map[string]string `json:"labels,omitempty"`
+	Name     *string                `json:"name,omitempty"`
+	Services []provider.ServiceSpec `json:"services,omitempty"`
+	Labels   map[string]string      `json:"labels,omitempty"`
 }
 
 // ScaleRequest holds the parameters for scaling an instance.

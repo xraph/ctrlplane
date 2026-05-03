@@ -46,7 +46,7 @@ templ InstanceTable(instances []*instance.Instance) {
 							<span class="text-muted-foreground">{ inst.Region }</span>
 						}
 						@table.Cell() {
-							<span class="text-muted-foreground text-xs font-mono">{ truncStr(inst.Image, 40) }</span>
+							<span class="text-muted-foreground text-xs font-mono">{ truncStr(mainServiceImage(inst.Services), 40) }</span>
 						}
 						@table.Cell() {
 							<span class="text-muted-foreground">{ inst.CreatedAt.Format("Jan 02, 2006") }</span>

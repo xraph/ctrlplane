@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/xraph/ctrlplane/admin"
+	"github.com/xraph/ctrlplane/bootstrap"
 	"github.com/xraph/ctrlplane/datacenter"
 	"github.com/xraph/ctrlplane/deploy"
 	"github.com/xraph/ctrlplane/health"
@@ -14,12 +15,15 @@ import (
 	"github.com/xraph/ctrlplane/network"
 	"github.com/xraph/ctrlplane/secrets"
 	"github.com/xraph/ctrlplane/telemetry"
+	"github.com/xraph/ctrlplane/template"
+	"github.com/xraph/ctrlplane/workload"
 )
 
 // Store is the in-memory implementation of store.Store.
 type Store struct {
 	mu sync.RWMutex
 
+	workloads   map[string]*workload.Workload // keyed by ID string
 	instances   map[string]*instance.Instance // keyed by ID string
 	deployments map[string]*deploy.Deployment
 	releases    map[string]*deploy.Release
@@ -38,9 +42,11 @@ type Store struct {
 
 	secretStore map[string]*secrets.Secret // keyed by "instanceID:key"
 
-	templates map[string]*deploy.Template
+	templates map[string]*template.Template
 
 	datacenters map[string]*datacenter.Datacenter
+
+	bootstraps map[string]*bootstrap.BootstrapWorkload // keyed by bootstrap ID
 
 	tenants      map[string]*admin.Tenant
 	auditEntries []admin.AuditEntry
@@ -49,6 +55,7 @@ type Store struct {
 // New creates a new in-memory store.
 func New() *Store {
 	return &Store{
+		workloads:     make(map[string]*workload.Workload),
 		instances:     make(map[string]*instance.Instance),
 		deployments:   make(map[string]*deploy.Deployment),
 		releases:      make(map[string]*deploy.Release),
@@ -58,8 +65,9 @@ func New() *Store {
 		routes:        make(map[string]*network.Route),
 		certificates:  make(map[string]*network.Certificate),
 		secretStore:   make(map[string]*secrets.Secret),
-		templates:     make(map[string]*deploy.Template),
+		templates:     make(map[string]*template.Template),
 		datacenters:   make(map[string]*datacenter.Datacenter),
+		bootstraps:    make(map[string]*bootstrap.BootstrapWorkload),
 		tenants:       make(map[string]*admin.Tenant),
 	}
 }

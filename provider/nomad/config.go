@@ -13,4 +13,8 @@ type Config struct {
 
 	// Namespace is the Nomad namespace for job submissions.
 	Namespace string `default:"default" env:"CP_NOMAD_NAMESPACE" json:"namespace"`
+
+	// Datacenter is the Nomad datacenter to schedule into. Empty
+	// allows Nomad to pick from all known datacenters.
+	Datacenter string `env:"CP_NOMAD_DATACENTER" json:"datacenter,omitempty"`
 }

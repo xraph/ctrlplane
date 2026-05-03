@@ -40,7 +40,7 @@ templ RecentDeploysWidget(deploys []*deploy.Deployment) {
 								},
 							}) {
 								@table.Cell() {
-									<span class="font-mono text-xs">{ truncWidgetStr(dep.Image, 30) }</span>
+									<span class="font-mono text-xs">{ truncWidgetStr(widgetDeployImage(dep), 30) }</span>
 								}
 								@table.Cell() {
 									@components.DeployStateBadge(dep.State)
@@ -63,4 +63,15 @@ func truncWidgetStr(s string, maxLen int) string {
 	}
 
 	return s[:maxLen-3] + "..."
+}
+
+// widgetDeployImage returns the first ServiceDeploySpec image for the
+// recent-deploys widget — picks one image to summarise a multi-service
+// rollout in a tight cell.
+func widgetDeployImage(d *deploy.Deployment) string {
+	if d == nil || len(d.Services) == 0 {
+		return ""
+	}
+
+	return d.Services[0].Image
 }

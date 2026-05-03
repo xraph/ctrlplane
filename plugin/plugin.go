@@ -69,6 +69,74 @@ type InstanceUnsuspended interface {
 }
 
 // ──────────────────────────────────────────────────
+// Workload lifecycle hooks
+// ──────────────────────────────────────────────────
+
+// WorkloadCreated is called when a workload is provisioned.
+type WorkloadCreated interface {
+	OnWorkloadCreated(ctx context.Context, evt *event.Event) error
+}
+
+// WorkloadUpdated is called when a workload spec is mutated.
+type WorkloadUpdated interface {
+	OnWorkloadUpdated(ctx context.Context, evt *event.Event) error
+}
+
+// WorkloadScaled is called when a workload's replica count changes.
+type WorkloadScaled interface {
+	OnWorkloadScaled(ctx context.Context, evt *event.Event) error
+}
+
+// WorkloadDeployed is called when a workload Deploy rollout starts.
+type WorkloadDeployed interface {
+	OnWorkloadDeployed(ctx context.Context, evt *event.Event) error
+}
+
+// WorkloadPaused is called when a workload is scaled to zero with spec retained.
+type WorkloadPaused interface {
+	OnWorkloadPaused(ctx context.Context, evt *event.Event) error
+}
+
+// WorkloadResumed is called when a paused workload is restored.
+type WorkloadResumed interface {
+	OnWorkloadResumed(ctx context.Context, evt *event.Event) error
+}
+
+// WorkloadRestarted is called when an in-place restart sweeps every replica.
+type WorkloadRestarted interface {
+	OnWorkloadRestarted(ctx context.Context, evt *event.Event) error
+}
+
+// WorkloadDeleted is called when a workload is torn down.
+type WorkloadDeleted interface {
+	OnWorkloadDeleted(ctx context.Context, evt *event.Event) error
+}
+
+// WorkloadFailed is called when a workload enters StateFailed.
+type WorkloadFailed interface {
+	OnWorkloadFailed(ctx context.Context, evt *event.Event) error
+}
+
+// ──────────────────────────────────────────────────
+// Template lifecycle hooks
+// ──────────────────────────────────────────────────
+
+// TemplateCreated is called when a workload template is created.
+type TemplateCreated interface {
+	OnTemplateCreated(ctx context.Context, evt *event.Event) error
+}
+
+// TemplateUpdated is called when a workload template is updated.
+type TemplateUpdated interface {
+	OnTemplateUpdated(ctx context.Context, evt *event.Event) error
+}
+
+// TemplateDeleted is called when a workload template is deleted.
+type TemplateDeleted interface {
+	OnTemplateDeleted(ctx context.Context, evt *event.Event) error
+}
+
+// ──────────────────────────────────────────────────
 // Deploy lifecycle hooks
 // ──────────────────────────────────────────────────
 

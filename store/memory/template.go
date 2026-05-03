@@ -8,12 +8,12 @@ import (
 	"sort"
 
 	ctrlplane "github.com/xraph/ctrlplane"
-	"github.com/xraph/ctrlplane/deploy"
 	"github.com/xraph/ctrlplane/id"
+	"github.com/xraph/ctrlplane/template"
 )
 
-// InsertTemplate persists a new deployment template.
-func (s *Store) InsertTemplate(_ context.Context, t *deploy.Template) error {
+// InsertTemplate persists a new workload template.
+func (s *Store) InsertTemplate(_ context.Context, t *template.Template) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -27,8 +27,8 @@ func (s *Store) InsertTemplate(_ context.Context, t *deploy.Template) error {
 	return nil
 }
 
-// GetTemplate retrieves a deployment template by ID within a tenant.
-func (s *Store) GetTemplate(_ context.Context, tenantID string, templateID id.ID) (*deploy.Template, error) {
+// GetTemplate retrieves a template by ID within a tenant.
+func (s *Store) GetTemplate(_ context.Context, tenantID string, templateID id.ID) (*template.Template, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -40,8 +40,8 @@ func (s *Store) GetTemplate(_ context.Context, tenantID string, templateID id.ID
 	return cloneTemplate(t), nil
 }
 
-// UpdateTemplate persists changes to an existing deployment template.
-func (s *Store) UpdateTemplate(_ context.Context, t *deploy.Template) error {
+// UpdateTemplate persists changes to an existing template.
+func (s *Store) UpdateTemplate(_ context.Context, t *template.Template) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -56,7 +56,7 @@ func (s *Store) UpdateTemplate(_ context.Context, t *deploy.Template) error {
 	return nil
 }
 
-// DeleteTemplate removes a deployment template.
+// DeleteTemplate removes a template.
 func (s *Store) DeleteTemplate(_ context.Context, tenantID string, templateID id.ID) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -73,12 +73,12 @@ func (s *Store) DeleteTemplate(_ context.Context, tenantID string, templateID id
 	return nil
 }
 
-// ListTemplates returns a paginated list of deployment templates for a tenant.
-func (s *Store) ListTemplates(_ context.Context, tenantID string, opts deploy.ListOptions) (*deploy.TemplateListResult, error) {
+// ListTemplates returns a paginated list of templates for a tenant.
+func (s *Store) ListTemplates(_ context.Context, tenantID string, opts template.ListOptions) (*template.ListResult, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	var items []*deploy.Template
+	var items []*template.Template
 
 	for _, t := range s.templates {
 		if t.TenantID != tenantID {
@@ -101,47 +101,25 @@ func (s *Store) ListTemplates(_ context.Context, tenantID string, opts deploy.Li
 
 	items = items[:limit]
 
-	return &deploy.TemplateListResult{
+	return &template.ListResult{
 		Items: items,
 		Total: total,
 	}, nil
 }
 
-// cloneTemplate returns a deep copy of a Template.
-func cloneTemplate(t *deploy.Template) *deploy.Template {
+// cloneTemplate returns a shallow copy of a Template with independent
+// top-level slices and maps. Per-service nested fields share storage —
+// templates are immutable post-write so the deep clone overhead is
+// unwarranted.
+func cloneTemplate(t *template.Template) *template.Template {
 	clone := *t
-
-	if t.Env != nil {
-		clone.Env = maps.Clone(t.Env)
-	}
 
 	if t.Labels != nil {
 		clone.Labels = maps.Clone(t.Labels)
 	}
 
-	if t.Annotations != nil {
-		clone.Annotations = maps.Clone(t.Annotations)
-	}
-
-	if t.Ports != nil {
-		clone.Ports = slices.Clone(t.Ports)
-	}
-
-	if t.Volumes != nil {
-		clone.Volumes = slices.Clone(t.Volumes)
-	}
-
-	if t.Secrets != nil {
-		clone.Secrets = slices.Clone(t.Secrets)
-	}
-
-	if t.ConfigFiles != nil {
-		clone.ConfigFiles = slices.Clone(t.ConfigFiles)
-	}
-
-	if t.HealthCheck != nil {
-		hc := *t.HealthCheck
-		clone.HealthCheck = &hc
+	if t.Services != nil {
+		clone.Services = slices.Clone(t.Services)
 	}
 
 	return &clone

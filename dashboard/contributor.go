@@ -3,6 +3,7 @@ package dashboard
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/xraph/ctrlplane/admin"
 	"github.com/xraph/ctrlplane/app"
 	"github.com/xraph/ctrlplane/auth"
+	"github.com/xraph/ctrlplane/bootstrap"
 	"github.com/xraph/ctrlplane/dashboard/components"
 	"github.com/xraph/ctrlplane/dashboard/pages"
 	"github.com/xraph/ctrlplane/dashboard/settings"
@@ -25,6 +27,8 @@ import (
 	"github.com/xraph/ctrlplane/instance"
 	"github.com/xraph/ctrlplane/network"
 	"github.com/xraph/ctrlplane/provider"
+	"github.com/xraph/ctrlplane/template"
+	"github.com/xraph/ctrlplane/workload"
 )
 
 // Compile-time interface assertions.
@@ -49,23 +53,32 @@ func (c *Contributor) Manifest() *contributor.Manifest {
 	return c.manifest
 }
 
-// dashboardClaims are injected into every dashboard request context so that
+// dashboardClaims are injected into every dashboard request context so
 // ctrlplane service calls (which require auth.RequireClaims) succeed.
-// Dashboard access is already gated by the Forge dashboard auth layer.
+// Dashboard access is already gated by the Forge dashboard auth layer,
+// so granting system:admin here is safe.
+//
+// TenantID is intentionally empty: the dashboard is the operator
+// console, so List/Get queries should span every tenant rather than
+// filter to one. Stores treat tenantID=="" as "no tenant filter" (see
+// store/mongo/instance.go::List). Without this the dashboard would
+// only show platform-shared rows, or — if upstream auth middleware
+// populated tenant-scoped claims — only the viewer's personal
+// tenant's data, which is wrong for a cross-tenant admin view.
 var dashboardClaims = &auth.Claims{
 	SubjectID: "dashboard",
-	TenantID:  "default",
+	TenantID:  "",
 	Roles:     []string{"system:admin"},
 }
 
-// dashboardContext returns a context with dashboard-level admin claims
-// injected. All ctrlplane service methods require auth claims, but the
-// dashboard rendering context does not carry them by default.
+// dashboardContext returns ctx with platform-admin auth claims
+// injected. The dashboard is the cross-tenant admin view, so we
+// always elevate — even when the request already carries
+// tenant-scoped claims from upstream auth middleware. Per-row
+// access stays safe because the dashboard only reads (List / Get);
+// mutations (Suspend / Scale / etc.) live behind separate admin
+// handlers that re-check authorization themselves.
 func (c *Contributor) dashboardContext(ctx context.Context) context.Context {
-	if auth.ClaimsFrom(ctx) != nil {
-		return ctx
-	}
-
 	return auth.WithClaims(ctx, dashboardClaims)
 }
 
@@ -80,6 +93,10 @@ func (c *Contributor) RenderPage(ctx context.Context, route string, params contr
 		return c.renderInstances(ctx, params)
 	case "/instances/detail":
 		return c.renderInstanceDetail(ctx, params)
+	case "/workloads":
+		return c.renderWorkloads(ctx, params)
+	case "/workloads/detail":
+		return c.renderWorkloadDetail(ctx, params)
 	case "/deployments":
 		return c.renderDeployments(ctx, params)
 	case "/deployments/detail":
@@ -238,6 +255,17 @@ func (c *Contributor) renderInstanceDetail(ctx context.Context, params contribut
 		Tab:      tab,
 	}
 
+	// Best-effort: surface the parent workload when this instance
+	// was created as a replica. Failures collapse silently — the
+	// header just doesn't show the link.
+	if widLabel, ok := inst.Labels["ctrlplane.workload"]; ok && widLabel != "" {
+		if wid, parseErr := id.Parse(widLabel); parseErr == nil {
+			if w, getErr := c.cp.Workloads.Get(ctx, wid); getErr == nil {
+				data.ParentWorkload = w
+			}
+		}
+	}
+
 	// Load tab-specific data.
 	switch tab {
 	case "deploys":
@@ -325,23 +353,16 @@ func (c *Contributor) handleInstanceAction(ctx context.Context, instanceID id.ID
 	}
 }
 
+// renderDeployments serves the /deployments page. Three shapes:
+//
+//  1. ?workload_id=... — aggregate deployments across the
+//     workload's replicas (the workload-centric default).
+//  2. ?instance_id=... — legacy per-instance view, kept for
+//     deep-links from the instance detail page.
+//  3. neither — render the workload-selection landing page so
+//     users see something useful instead of "select an instance"
+//     filled with replica names that look opaque.
 func (c *Contributor) renderDeployments(ctx context.Context, params contributor.Params) (templ.Component, error) {
-	instanceIDStr := params.QueryParams["instance_id"]
-	if instanceIDStr == "" {
-		// Show all instances and prompt user to select.
-		result, err := c.cp.Instances.List(ctx, instance.ListOptions{Limit: 100})
-		if err != nil {
-			return nil, fmt.Errorf("dashboard: list instances for deployments: %w", err)
-		}
-
-		return pages.DeploymentsSelectInstancePage(result.Items), nil
-	}
-
-	instanceID, err := id.Parse(instanceIDStr)
-	if err != nil {
-		return nil, fmt.Errorf("dashboard: parse instance_id: %w", err)
-	}
-
 	limit := 20
 
 	if v := params.QueryParams["limit"]; v != "" {
@@ -350,20 +371,72 @@ func (c *Contributor) renderDeployments(ctx context.Context, params contributor.
 		}
 	}
 
-	result, err := c.cp.Deploys.ListDeployments(ctx, instanceID, deploy.ListOptions{
-		Cursor: params.QueryParams["cursor"],
-		Limit:  limit,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("dashboard: list deployments: %w", err)
+	// Workload-centric path: aggregate deployments across the
+	// workload's replicas. This is the default the user sees
+	// when they click a workload row in the selection landing.
+	if widStr := params.QueryParams["workload_id"]; widStr != "" {
+		wid, err := id.Parse(widStr)
+		if err != nil {
+			return nil, fmt.Errorf("dashboard: parse workload_id: %w", err)
+		}
+
+		w, err := c.cp.Workloads.Get(ctx, wid)
+		if err != nil {
+			return nil, fmt.Errorf("dashboard: get workload for deployments: %w", err)
+		}
+
+		replicas, err := c.cp.Workloads.ListInstances(ctx, wid)
+		if err != nil {
+			return nil, fmt.Errorf("dashboard: list workload replicas: %w", err)
+		}
+
+		var all []*deploy.Deployment
+
+		for _, r := range replicas {
+			res, dErr := c.cp.Deploys.ListDeployments(ctx, r.ID, deploy.ListOptions{Limit: limit})
+			if dErr != nil {
+				continue
+			}
+
+			all = append(all, res.Items...)
+		}
+
+		result := &deploy.DeployListResult{Items: all, Total: len(all)}
+
+		return pages.DeploymentsForWorkloadPage(w, result), nil
 	}
 
-	inst, err := c.cp.Instances.Get(ctx, instanceID)
-	if err != nil {
-		return nil, fmt.Errorf("dashboard: get instance for deployments: %w", err)
+	// Legacy per-instance path: kept so links from instance
+	// detail keep working.
+	if instanceIDStr := params.QueryParams["instance_id"]; instanceIDStr != "" {
+		instanceID, err := id.Parse(instanceIDStr)
+		if err != nil {
+			return nil, fmt.Errorf("dashboard: parse instance_id: %w", err)
+		}
+
+		result, err := c.cp.Deploys.ListDeployments(ctx, instanceID, deploy.ListOptions{
+			Cursor: params.QueryParams["cursor"],
+			Limit:  limit,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("dashboard: list deployments: %w", err)
+		}
+
+		inst, err := c.cp.Instances.Get(ctx, instanceID)
+		if err != nil {
+			return nil, fmt.Errorf("dashboard: get instance for deployments: %w", err)
+		}
+
+		return pages.DeploymentsPage(inst, result), nil
 	}
 
-	return pages.DeploymentsPage(inst, result), nil
+	// No selection yet — show the workload-selection landing.
+	wResult, err := c.cp.Workloads.List(ctx, workload.ListOptions{Limit: 100})
+	if err != nil {
+		return nil, fmt.Errorf("dashboard: list workloads for deployments: %w", err)
+	}
+
+	return pages.DeploymentsSelectWorkloadPage(wResult.Items), nil
 }
 
 func (c *Contributor) renderDeploymentDetail(ctx context.Context, params contributor.Params) (templ.Component, error) {
@@ -404,17 +477,36 @@ func (c *Contributor) renderDeploymentDetail(ctx context.Context, params contrib
 func (c *Contributor) renderHealth(ctx context.Context, params contributor.Params) (templ.Component, error) {
 	_ = params
 
+	// Workload rollup leads — primary unit operators reason about
+	// in the new model.
+	wResult, err := c.cp.Workloads.List(ctx, workload.ListOptions{Limit: 100})
+	if err != nil {
+		return nil, fmt.Errorf("dashboard: list workloads for health: %w", err)
+	}
+
+	workloadRows := make([]pages.WorkloadHealthRow, 0, len(wResult.Items))
+	for _, w := range wResult.Items {
+		wh, hErr := c.cp.Workloads.GetHealth(ctx, w.ID)
+		if hErr != nil {
+			workloadRows = append(workloadRows, pages.WorkloadHealthRow{Workload: w})
+
+			continue
+		}
+
+		workloadRows = append(workloadRows, pages.WorkloadHealthRow{Workload: w, Health: wh})
+	}
+
+	// Per-instance drill-down underneath.
 	result, err := c.cp.Instances.List(ctx, instance.ListOptions{Limit: 100})
 	if err != nil {
 		return nil, fmt.Errorf("dashboard: list instances for health: %w", err)
 	}
 
-	healthData := make([]pages.InstanceHealthRow, 0, len(result.Items))
-
+	instanceRows := make([]pages.InstanceHealthRow, 0, len(result.Items))
 	for _, inst := range result.Items {
 		ih, healthErr := c.cp.Health.GetHealth(ctx, inst.ID)
 		if healthErr != nil {
-			healthData = append(healthData, pages.InstanceHealthRow{
+			instanceRows = append(instanceRows, pages.InstanceHealthRow{
 				Instance: inst,
 				Health:   &health.InstanceHealth{Status: health.StatusUnknown},
 			})
@@ -422,13 +514,13 @@ func (c *Contributor) renderHealth(ctx context.Context, params contributor.Param
 			continue
 		}
 
-		healthData = append(healthData, pages.InstanceHealthRow{
+		instanceRows = append(instanceRows, pages.InstanceHealthRow{
 			Instance: inst,
 			Health:   ih,
 		})
 	}
 
-	return pages.HealthPage(healthData), nil
+	return pages.HealthPage(workloadRows, instanceRows), nil
 }
 
 func (c *Contributor) renderNetwork(ctx context.Context, params contributor.Params) (templ.Component, error) {
@@ -775,23 +867,14 @@ func (c *Contributor) renderDeployCreate(ctx context.Context, params contributor
 
 			req := deploy.DeployRequest{
 				InstanceID: instID,
-				Image:      image,
 				Strategy:   strategy,
-				Env:        env,
-				CommitSHA:  params.FormData["commit_sha"],
-				Notes:      params.FormData["notes"],
-			}
-
-			// If deploying from a template, include config files and secrets.
-			if tmplIDStr := params.FormData["template_id"]; tmplIDStr != "" {
-				tmplID, tmplParseErr := id.Parse(tmplIDStr)
-				if tmplParseErr == nil {
-					selectedTemplate, tmplGetErr := c.cp.Deploys.GetTemplate(ctx, tmplID)
-					if tmplGetErr == nil {
-						req.ConfigFiles = selectedTemplate.ConfigFiles
-						req.Secrets = selectedTemplate.Secrets
-					}
-				}
+				Services: []provider.ServiceDeploySpec{{
+					Name:  "main",
+					Image: image,
+					Env:   env,
+				}},
+				CommitSHA: params.FormData["commit_sha"],
+				Notes:     params.FormData["notes"],
 			}
 
 			_, deployErr := c.cp.Deploys.Deploy(ctx, req)
@@ -814,23 +897,6 @@ func (c *Contributor) renderDeployCreate(ctx context.Context, params contributor
 		}
 
 		data.Instances = result.Items
-	}
-
-	// Load available templates.
-	templates, err := c.cp.Deploys.ListTemplates(ctx, deploy.ListOptions{Limit: 100})
-	if err == nil && templates.Total > 0 {
-		data.Templates = templates.Items
-	}
-
-	// If a template_id is provided, pre-fill the form from that template.
-	if tmplIDStr := params.QueryParams["template_id"]; tmplIDStr != "" {
-		tmplID, parseErr := id.Parse(tmplIDStr)
-		if parseErr == nil {
-			tmpl, getErr := c.cp.Deploys.GetTemplate(ctx, tmplID)
-			if getErr == nil {
-				data.SelectedTemplate = tmpl
-			}
-		}
 	}
 
 	return pages.DeployCreatePage(data), nil
@@ -928,14 +994,22 @@ func (c *Contributor) renderProviderDetail(ctx context.Context, params contribut
 		Provider: *found,
 	}
 
-	// Handle test health action.
-	if action := params.QueryParams["action"]; action == "test_health" {
+	// Handle actions.
+	switch params.QueryParams["action"] {
+	case "test_health":
 		result, testErr := c.cp.Admin.TestProviderHealth(ctx, providerName)
 		if testErr != nil {
 			return nil, fmt.Errorf("dashboard: test provider health: %w", testErr)
 		}
 
 		data.HealthTest = result
+	case "purge":
+		summary, purgeErr := c.purgeProvider(ctx, providerName)
+
+		data.PurgeSummary = summary
+		if purgeErr != nil {
+			data.PurgeError = purgeErr.Error()
+		}
 	}
 
 	// Load instances for this provider.
@@ -950,6 +1024,72 @@ func (c *Contributor) renderProviderDetail(ctx context.Context, params contribut
 	data.Instances = instResult.Items
 
 	return pages.ProviderDetailPage(data), nil
+}
+
+// purgeProvider tears down every workload (and orphan instance) on
+// the named provider. Workloads are deleted first so their cascade
+// covers most replicas; remaining instances (workload-less, e.g.
+// older rows or partial provisioning) are swept directly.
+//
+// Returns a summary regardless of error: when one component fails
+// to delete, the rest still get a chance, and the caller surfaces
+// the partial result + the wrapped error so operators can retry.
+func (c *Contributor) purgeProvider(ctx context.Context, providerName string) (*pages.PurgeSummary, error) {
+	summary := &pages.PurgeSummary{Provider: providerName}
+
+	// Phase 1: delete workloads (cascades to their replicas).
+	workloads, err := c.cp.Workloads.List(ctx, workload.ListOptions{
+		ProviderName: providerName,
+		Limit:        1000,
+	})
+	if err != nil {
+		return summary, fmt.Errorf("list workloads on provider %s: %w", providerName, err)
+	}
+
+	var workloadFailures []string
+
+	for _, w := range workloads.Items {
+		if delErr := c.cp.Workloads.Delete(ctx, w.ID); delErr != nil {
+			workloadFailures = append(workloadFailures, fmt.Sprintf("%s: %v", w.Name, delErr))
+
+			continue
+		}
+
+		summary.WorkloadsDeleted++
+	}
+
+	summary.WorkloadFailures = workloadFailures
+
+	// Phase 2: sweep orphan instances (any that weren't owned by a
+	// deleted workload — older rows, partial provisioning, etc).
+	instResult, err := c.cp.Instances.List(ctx, instance.ListOptions{
+		Provider: providerName,
+		Limit:    1000,
+	})
+	if err != nil {
+		return summary, fmt.Errorf("list instances on provider %s: %w", providerName, err)
+	}
+
+	var instanceFailures []string
+
+	for _, inst := range instResult.Items {
+		if delErr := c.cp.Instances.Delete(ctx, inst.ID); delErr != nil {
+			instanceFailures = append(instanceFailures, fmt.Sprintf("%s: %v", inst.Name, delErr))
+
+			continue
+		}
+
+		summary.InstancesDeleted++
+	}
+
+	summary.InstanceFailures = instanceFailures
+
+	if len(workloadFailures) > 0 || len(instanceFailures) > 0 {
+		return summary, fmt.Errorf("purge %s: %d workload + %d instance failure(s)",
+			providerName, len(workloadFailures), len(instanceFailures))
+	}
+
+	return summary, nil
 }
 
 // --- Worker & Events Pages ---
@@ -1134,7 +1274,7 @@ func (c *Contributor) renderWorkersWidget(ctx context.Context) (templ.Component,
 func (c *Contributor) renderTemplates(ctx context.Context, params contributor.Params) (templ.Component, error) {
 	_ = params
 
-	result, err := c.cp.Deploys.ListTemplates(ctx, deploy.ListOptions{Limit: 100})
+	result, err := c.cp.Templates.List(ctx, template.ListOptions{Limit: 100})
 	if err != nil {
 		return nil, fmt.Errorf("dashboard: list templates: %w", err)
 	}
@@ -1159,9 +1299,9 @@ func (c *Contributor) renderTemplateDetail(ctx context.Context, params contribut
 
 	// Handle delete action.
 	if action := params.QueryParams["action"]; action == "delete" {
-		if delErr := c.cp.Deploys.DeleteTemplate(ctx, templateID); delErr != nil {
+		if delErr := c.cp.Templates.Delete(ctx, templateID); delErr != nil {
 			// Template not found or delete failed — show the templates list with error.
-			result, listErr := c.cp.Deploys.ListTemplates(ctx, deploy.ListOptions{Limit: 100})
+			result, listErr := c.cp.Templates.List(ctx, template.ListOptions{Limit: 100})
 			if listErr != nil {
 				return nil, fmt.Errorf("dashboard: list templates after failed delete: %w", listErr)
 			}
@@ -1172,7 +1312,7 @@ func (c *Contributor) renderTemplateDetail(ctx context.Context, params contribut
 		}
 
 		// Redirect to templates list after successful deletion.
-		result, listErr := c.cp.Deploys.ListTemplates(ctx, deploy.ListOptions{Limit: 100})
+		result, listErr := c.cp.Templates.List(ctx, template.ListOptions{Limit: 100})
 		if listErr != nil {
 			return nil, fmt.Errorf("dashboard: list templates after delete: %w", listErr)
 		}
@@ -1182,7 +1322,7 @@ func (c *Contributor) renderTemplateDetail(ctx context.Context, params contribut
 		}), nil
 	}
 
-	tmpl, err := c.cp.Deploys.GetTemplate(ctx, templateID)
+	tmpl, err := c.cp.Templates.Get(ctx, templateID)
 	if err != nil {
 		return nil, fmt.Errorf("dashboard: get template: %w", err)
 	}
@@ -1195,46 +1335,38 @@ func (c *Contributor) renderTemplateDetail(ctx context.Context, params contribut
 func (c *Contributor) renderTemplateCreate(ctx context.Context, params contributor.Params) (templ.Component, error) {
 	data := pages.TemplateFormData{}
 
-	// Handle form submission.
+	// Handle form submission. The form covers a single Main service
+	// (image + cpu/mem + env/secrets/config-files). Sidecars / init
+	// containers land in a future dashboard refresh.
 	if params.FormData != nil && params.FormData["name"] != "" {
-		env := parseEnvJSON(params.FormData["env_json"])
 		labels := parseEnvJSON(params.FormData["labels_json"])
-		annotations := parseEnvJSON(params.FormData["annotations_json"])
-		ports := parsePortsJSON(params.FormData["ports_json"])
-		volumes := parseVolumesJSON(params.FormData["volumes_json"])
-		secretRefs := parseSecretsJSON(params.FormData["secrets_json"])
-		configFiles := parseConfigFilesJSON(params.FormData["config_files_json"])
-		healthCheck := parseHealthCheckJSON(params.FormData["health_check_json"])
 
-		resources := provider.ResourceSpec{
-			CPUMillis: parseIntFormField(params.FormData["cpu_millis"]),
-			MemoryMB:  parseIntFormField(params.FormData["memory_mb"]),
-			DiskMB:    parseIntFormField(params.FormData["disk_mb"]),
-			Replicas:  parseIntFormField(params.FormData["replicas"]),
-			GPU:       params.FormData["gpu"],
+		main := provider.ServiceSpec{
+			Name:  "main",
+			Image: params.FormData["service_image"],
+			Role:  provider.RoleMain,
+			Resources: provider.ResourceSpec{
+				CPUMillis: parseIntFormField(params.FormData["cpu_millis"]),
+				MemoryMB:  parseIntFormField(params.FormData["memory_mb"]),
+			},
+			Env:         parseEnvJSON(params.FormData["env_json"]),
+			Secrets:     parseSecretsJSON(params.FormData["secrets_json"]),
+			ConfigFiles: parseConfigFilesJSON(params.FormData["config_files_json"]),
 		}
 
-		strategy := params.FormData["strategy"]
-		if strategy == "" {
-			strategy = "rolling"
+		kind := provider.WorkloadKind(params.FormData["default_kind"])
+		if kind == "" {
+			kind = provider.KindDeployment
 		}
 
-		tmpl, createErr := c.cp.Deploys.CreateTemplate(ctx, deploy.CreateTemplateRequest{
-			Name:        params.FormData["name"],
-			Description: params.FormData["description"],
-			Image:       params.FormData["image"],
-			Strategy:    strategy,
-			Resources:   resources,
-			Ports:       ports,
-			Volumes:     volumes,
-			HealthCheck: healthCheck,
-			Env:         env,
-			Secrets:     secretRefs,
-			ConfigFiles: configFiles,
-			Labels:      labels,
-			Annotations: annotations,
-			CommitSHA:   params.FormData["commit_sha"],
-			Notes:       params.FormData["notes"],
+		tmpl, createErr := c.cp.Templates.Create(ctx, template.CreateRequest{
+			Name:            params.FormData["name"],
+			Description:     params.FormData["description"],
+			DefaultKind:     kind,
+			DefaultStrategy: params.FormData["strategy"],
+			Services:        []provider.ServiceSpec{main},
+			Labels:          labels,
+			Notes:           params.FormData["notes"],
 		})
 		if createErr != nil {
 			data.Error = createErr.Error()
@@ -1242,7 +1374,6 @@ func (c *Contributor) renderTemplateCreate(ctx context.Context, params contribut
 			return pages.TemplateFormPage(data), nil //nolint:nilerr // render form with validation error
 		}
 
-		// Show the created template detail page with PRG redirect.
 		return pages.TemplateDetailPage(pages.TemplateDetailPageData{
 			Template:    tmpl,
 			Success:     "Template created successfully",
@@ -1264,7 +1395,7 @@ func (c *Contributor) renderTemplateEdit(ctx context.Context, params contributor
 		return nil, fmt.Errorf("dashboard: parse template_id for edit: %w", err)
 	}
 
-	tmpl, err := c.cp.Deploys.GetTemplate(ctx, templateID)
+	tmpl, err := c.cp.Templates.Get(ctx, templateID)
 	if err != nil {
 		return nil, fmt.Errorf("dashboard: get template for edit: %w", err)
 	}
@@ -1273,48 +1404,42 @@ func (c *Contributor) renderTemplateEdit(ctx context.Context, params contributor
 		Template: tmpl,
 	}
 
-	// Handle form submission.
+	// Handle form submission. Phase 1 edit covers Main service spec
+	// only — non-Main services are preserved as-is on Update.
 	if params.FormData != nil && params.FormData["name"] != "" {
-		env := parseEnvJSON(params.FormData["env_json"])
-		labels := parseEnvJSON(params.FormData["labels_json"])
-		annotations := parseEnvJSON(params.FormData["annotations_json"])
-		ports := parsePortsJSON(params.FormData["ports_json"])
-		volumes := parseVolumesJSON(params.FormData["volumes_json"])
-		secretRefs := parseSecretsJSON(params.FormData["secrets_json"])
-		configFiles := parseConfigFilesJSON(params.FormData["config_files_json"])
-		healthCheck := parseHealthCheckJSON(params.FormData["health_check_json"])
-
-		resources := provider.ResourceSpec{
-			CPUMillis: parseIntFormField(params.FormData["cpu_millis"]),
-			MemoryMB:  parseIntFormField(params.FormData["memory_mb"]),
-			DiskMB:    parseIntFormField(params.FormData["disk_mb"]),
-			Replicas:  parseIntFormField(params.FormData["replicas"]),
-			GPU:       params.FormData["gpu"],
-		}
-
 		name := params.FormData["name"]
 		description := params.FormData["description"]
-		image := params.FormData["image"]
 		strategy := params.FormData["strategy"]
-		commitSHA := params.FormData["commit_sha"]
 		notes := params.FormData["notes"]
+		kind := provider.WorkloadKind(params.FormData["default_kind"])
 
-		updated, updateErr := c.cp.Deploys.UpdateTemplate(ctx, templateID, deploy.UpdateTemplateRequest{
-			Name:        &name,
-			Description: &description,
-			Image:       &image,
-			Strategy:    &strategy,
-			Resources:   &resources,
-			Ports:       ports,
-			Volumes:     volumes,
-			HealthCheck: healthCheck,
-			Env:         env,
-			Secrets:     secretRefs,
-			ConfigFiles: configFiles,
-			Labels:      labels,
-			Annotations: annotations,
-			CommitSHA:   &commitSHA,
-			Notes:       &notes,
+		// Preserve existing services, but mutate the Main service's
+		// image, resources, env, secrets, and config files from the
+		// form. Non-Main services pass through untouched.
+		services := append([]provider.ServiceSpec(nil), tmpl.Services...)
+
+		for i := range services {
+			if services[i].Role == provider.RoleMain || services[i].Role == "" {
+				services[i].Image = params.FormData["service_image"]
+				services[i].Resources = provider.ResourceSpec{
+					CPUMillis: parseIntFormField(params.FormData["cpu_millis"]),
+					MemoryMB:  parseIntFormField(params.FormData["memory_mb"]),
+				}
+				services[i].Env = parseEnvJSON(params.FormData["env_json"])
+				services[i].Secrets = parseSecretsJSON(params.FormData["secrets_json"])
+				services[i].ConfigFiles = parseConfigFilesJSON(params.FormData["config_files_json"])
+
+				break
+			}
+		}
+
+		updated, updateErr := c.cp.Templates.Update(ctx, templateID, template.UpdateRequest{
+			Name:            &name,
+			Description:     &description,
+			DefaultKind:     &kind,
+			DefaultStrategy: &strategy,
+			Services:        services,
+			Notes:           &notes,
 		})
 		if updateErr != nil {
 			data.Error = updateErr.Error()
@@ -1379,12 +1504,12 @@ func parseVolumesJSON(volumesJSON string) []provider.VolumeSpec {
 }
 
 // parseSecretsJSON deserializes the secrets_json form field into a slice of SecretRef.
-func parseSecretsJSON(secretsJSON string) []deploy.SecretRef {
+func parseSecretsJSON(secretsJSON string) []template.SecretRef {
 	if secretsJSON == "" || secretsJSON == "[]" {
 		return nil
 	}
 
-	var refs []deploy.SecretRef
+	var refs []template.SecretRef
 
 	if err := json.Unmarshal([]byte(secretsJSON), &refs); err != nil {
 		return nil
@@ -1394,12 +1519,12 @@ func parseSecretsJSON(secretsJSON string) []deploy.SecretRef {
 }
 
 // parseConfigFilesJSON deserializes the config_files_json form field into a slice of ConfigFile.
-func parseConfigFilesJSON(configFilesJSON string) []deploy.ConfigFile {
+func parseConfigFilesJSON(configFilesJSON string) []template.ConfigFile {
 	if configFilesJSON == "" || configFilesJSON == "[]" {
 		return nil
 	}
 
-	var files []deploy.ConfigFile
+	var files []template.ConfigFile
 
 	if err := json.Unmarshal([]byte(configFilesJSON), &files); err != nil {
 		return nil
@@ -1486,7 +1611,7 @@ func (c *Contributor) renderDatacenterDetail(ctx context.Context, params contrib
 
 	// Handle actions before rendering.
 	if action := params.QueryParams["action"]; action != "" {
-		if handleErr := c.handleDatacenterAction(ctx, dcID, action); handleErr != nil {
+		if handleErr := c.handleDatacenterAction(ctx, dcID, action, params.QueryParams); handleErr != nil {
 			// If delete succeeded, redirect to list.
 			if action == "delete" {
 				return c.renderDatacenters(ctx, params)
@@ -1533,10 +1658,22 @@ func (c *Contributor) renderDatacenterDetail(ctx context.Context, params contrib
 		}
 	}
 
+	// Load bootstrap workloads for the services tab. Read-only —
+	// the bootstrap reconciler is the only writer of these rows in
+	// production; operators interact via the Redeploy action which
+	// flips a Failed row back to Pending so the next reconcile tick
+	// retries (handled by handleDatacenterAction).
+	if tab == "services" && c.cp.Bootstraps != nil {
+		bootstraps, bsErr := c.cp.Bootstraps.ListByDatacenter(ctx, dcID)
+		if bsErr == nil {
+			data.BootstrapServices = bootstraps
+		}
+	}
+
 	return pages.DatacenterDetailPage(data), nil
 }
 
-func (c *Contributor) handleDatacenterAction(ctx context.Context, dcID id.ID, action string) error {
+func (c *Contributor) handleDatacenterAction(ctx context.Context, dcID id.ID, action string, qp map[string]string) error {
 	switch action {
 	case "set_active":
 		return c.cp.Datacenters.SetStatus(ctx, dcID, datacenter.StatusActive)
@@ -1548,9 +1685,57 @@ func (c *Contributor) handleDatacenterAction(ctx context.Context, dcID id.ID, ac
 		return c.cp.Datacenters.SetStatus(ctx, dcID, datacenter.StatusOffline)
 	case "delete":
 		return c.cp.Datacenters.Delete(ctx, dcID)
+	case "redeploy_bootstrap":
+		return c.redeployBootstrap(ctx, qp["bootstrap_id"])
 	default:
 		return nil
 	}
+}
+
+// redeployBootstrap flips a single bootstrap workload back into the
+// Pending state so the reconciler retries Provision on its next
+// tick. Operator escape hatch for rows stuck in StateFailed after
+// transient provider errors — without this they'd still recover
+// automatically, but the operator may not want to wait the full
+// reconcile interval (default 60s).
+//
+// The action is a no-op when the bootstrap subsystem isn't wired
+// (cp.Bootstraps == nil). Errors propagate up to the page so the
+// dashboard surfaces them; on success the page re-renders the
+// services tab via the same handler chain and the row appears in
+// StatePending → StateProvisioning → StateRunning over the next few
+// ticks.
+func (c *Contributor) redeployBootstrap(ctx context.Context, bootstrapIDStr string) error {
+	if c.cp.Bootstraps == nil {
+		return nil
+	}
+
+	if bootstrapIDStr == "" {
+		return errors.New("redeploy_bootstrap: missing bootstrap_id")
+	}
+
+	bootstrapID, err := id.Parse(bootstrapIDStr)
+	if err != nil {
+		return fmt.Errorf("redeploy_bootstrap: parse bootstrap_id: %w", err)
+	}
+
+	bw, err := c.cp.Bootstraps.Get(ctx, bootstrapID)
+	if err != nil {
+		return fmt.Errorf("redeploy_bootstrap: get %s: %w", bootstrapID, err)
+	}
+
+	// Only retry rows that have actually failed — flipping a
+	// running row back to Pending would tear down a healthy
+	// service. Quietly succeed on non-Failed rows so accidental
+	// double-clicks are harmless.
+	if bw.State != bootstrap.StateFailed {
+		return nil
+	}
+
+	bw.State = bootstrap.StatePending
+	bw.LastError = ""
+
+	return c.cp.Store().UpdateBootstrap(ctx, bw)
 }
 
 func (c *Contributor) renderDatacenterCreate(ctx context.Context, params contributor.Params) (templ.Component, error) {
@@ -1630,4 +1815,184 @@ func (c *Contributor) renderConfigSettings(ctx context.Context) (templ.Component
 	}
 
 	return settings.ConfigPanel(cfg, providers), nil
+}
+
+// --- Workloads (list + detail) ---
+
+// renderWorkloads is the /workloads list page. Cross-tenant via
+// the dashboard's elevated context (set by dashboardContext).
+// Filter by ?state= to narrow to e.g. only failed workloads.
+//
+// Supports an inline ?action=delete&workload_id=<id> handler so the
+// per-row Delete button on the workloads list works without
+// bouncing through the detail page first. After the delete the list
+// is re-rendered showing the deletion took effect; failures bubble
+// up so the user sees them rather than a silently stale list.
+func (c *Contributor) renderWorkloads(ctx context.Context, params contributor.Params) (templ.Component, error) {
+	if action := params.QueryParams["action"]; action == "delete" {
+		widStr := params.QueryParams["workload_id"]
+		if widStr == "" {
+			return nil, errors.New("dashboard: workload delete: workload_id required")
+		}
+
+		wid, err := id.Parse(widStr)
+		if err != nil {
+			return nil, fmt.Errorf("dashboard: workload delete: parse workload_id: %w", err)
+		}
+
+		if delErr := c.cp.Workloads.Delete(ctx, wid); delErr != nil {
+			// Surface the error so the user knows the row didn't go
+			// away. The list still renders below with the workload
+			// in StateFailed (Delete leaves it in place on partial
+			// teardown failure), so the operator can retry.
+			return nil, fmt.Errorf("dashboard: delete workload %s: %w", wid, delErr)
+		}
+	}
+
+	limit := 50
+
+	if v := params.QueryParams["limit"]; v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			limit = n
+		}
+	}
+
+	opts := workload.ListOptions{
+		ProviderName: params.QueryParams["provider"],
+		Region:       params.QueryParams["region"],
+		Limit:        limit,
+	}
+	if state := params.QueryParams["state"]; state != "" {
+		opts.State = workload.State(state)
+	}
+
+	result, err := c.cp.Workloads.List(ctx, opts)
+	if err != nil {
+		return nil, fmt.Errorf("dashboard: list workloads: %w", err)
+	}
+
+	return pages.WorkloadsPage(result), nil
+}
+
+// renderWorkloadDetail is the /workloads/detail page. Loads
+// everything the tabbed view shows in one shot — cheap because
+// each tab's underlying call is sub-millisecond.
+//
+// Supports an optional ?action=<verb> query param for the
+// lifecycle buttons (restart / pause / resume / delete). Errors
+// from the action are wrapped into the page error and surfaced
+// to the user; success re-renders the detail view.
+func (c *Contributor) renderWorkloadDetail(ctx context.Context, params contributor.Params) (templ.Component, error) {
+	idStr := params.QueryParams["workload_id"]
+	if idStr == "" {
+		return nil, fmt.Errorf("dashboard: missing workload_id: %w", contributor.ErrPageNotFound)
+	}
+
+	wid, err := id.Parse(idStr)
+	if err != nil {
+		return nil, fmt.Errorf("dashboard: parse workload_id: %w", err)
+	}
+
+	if action := params.QueryParams["action"]; action != "" {
+		if actErr := c.handleWorkloadAction(ctx, wid, action, params); actErr != nil {
+			// Delete-failed-after-row-removed is the expected
+			// "workload not found" race; treat it as a successful
+			// teardown and bounce to the list.
+			if action == "delete" {
+				return c.renderWorkloads(ctx, params)
+			}
+
+			return nil, fmt.Errorf("dashboard: workload action %q: %w", action, actErr)
+		}
+		// After a successful delete, the workload row is gone.
+		// Re-rendering the detail page would 404 — bounce to the
+		// list instead so the user lands somewhere useful.
+		if action == "delete" {
+			return c.renderWorkloads(ctx, params)
+		}
+		// Fall through to re-render the detail view with the
+		// post-action state.
+	}
+
+	w, err := c.cp.Workloads.Get(ctx, wid)
+	if err != nil {
+		return nil, fmt.Errorf("dashboard: get workload: %w", err)
+	}
+
+	tab := params.QueryParams["tab"]
+	if tab == "" {
+		tab = "replicas"
+	}
+
+	data := pages.WorkloadDetailData{Workload: w, Tab: tab}
+
+	// Replicas — always loaded so the header replica-count
+	// reads true even when the user is on a non-replicas tab.
+	replicas, err := c.cp.Workloads.ListInstances(ctx, wid)
+	if err != nil {
+		return nil, fmt.Errorf("dashboard: list workload replicas: %w", err)
+	}
+
+	data.Replicas = replicas
+
+	switch tab {
+	case "deploys":
+		if res, derr := c.cp.Workloads.ListDeployments(ctx, wid, deploy.ListOptions{Limit: 20}); derr == nil {
+			data.Deployments = res
+		}
+	case "releases":
+		if res, rerr := c.cp.Workloads.ListReleases(ctx, wid, deploy.ListOptions{Limit: 20}); rerr == nil {
+			data.Releases = res
+		}
+	case "health":
+		if wh, herr := c.cp.Workloads.GetHealth(ctx, wid); herr == nil {
+			data.Health = wh
+		}
+	case "network":
+		if ds, derr := c.cp.Workloads.ListDomains(ctx, wid); derr == nil {
+			data.Domains = ds
+		}
+
+		if rs, rerr := c.cp.Workloads.ListRoutes(ctx, wid); rerr == nil {
+			data.Routes = rs
+		}
+	}
+
+	return pages.WorkloadDetailPage(data), nil
+}
+
+// handleWorkloadAction dispatches workload lifecycle verbs from
+// the detail page's action buttons to the workload service.
+//
+// Scale takes a `replicas` query param; everything else is verb-
+// only. Errors propagate so the caller can decide whether to
+// re-render the detail page or bounce elsewhere (delete bounces
+// to the list).
+func (c *Contributor) handleWorkloadAction(ctx context.Context, wid id.ID, action string, params contributor.Params) error {
+	switch action {
+	case "restart":
+		return c.cp.Workloads.Restart(ctx, wid)
+	case "pause":
+		return c.cp.Workloads.Pause(ctx, wid)
+	case "resume":
+		return c.cp.Workloads.Resume(ctx, wid)
+	case "delete":
+		return c.cp.Workloads.Delete(ctx, wid)
+	case "scale":
+		raw := params.QueryParams["replicas"]
+		if raw == "" {
+			return errors.New("scale: replicas query param required")
+		}
+
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 0 {
+			return fmt.Errorf("scale: invalid replicas value %q", raw)
+		}
+
+		_, err = c.cp.Workloads.Scale(ctx, wid, n)
+
+		return err
+	default:
+		return fmt.Errorf("unknown workload action %q", action)
+	}
 }

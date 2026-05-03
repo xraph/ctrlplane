@@ -3,6 +3,7 @@ package datacenter
 import (
 	"context"
 
+	"github.com/xraph/ctrlplane/bootstrap"
 	"github.com/xraph/ctrlplane/id"
 )
 
@@ -35,24 +36,32 @@ type Service interface {
 
 // CreateRequest holds the parameters for creating a datacenter.
 type CreateRequest struct {
-	Name         string            `json:"name"               validate:"required"`
-	ProviderName string            `json:"provider_name"      validate:"required"`
-	Region       string            `json:"region"             validate:"required"`
-	Zone         string            `json:"zone,omitempty"`
-	Location     *Location         `json:"location,omitempty"`
-	Capacity     *Capacity         `json:"capacity,omitempty"`
-	Labels       map[string]string `json:"labels,omitempty"`
-	Metadata     map[string]string `json:"metadata,omitempty"`
+	Name              string                           `json:"name"                         validate:"required"`
+	ProviderName      string                           `json:"provider_name"                validate:"required"`
+	Region            string                           `json:"region"                       validate:"required"`
+	Zone              string                           `json:"zone,omitempty"`
+	Location          *Location                        `json:"location,omitempty"`
+	Capacity          *Capacity                        `json:"capacity,omitempty"`
+	Labels            map[string]string                `json:"labels,omitempty"`
+	Metadata          map[string]string                `json:"metadata,omitempty"`
+	BootstrapServices []bootstrap.BootstrapServiceSpec `json:"bootstrap_services,omitempty"`
 }
 
 // UpdateRequest holds the parameters for updating a datacenter.
+//
+// BootstrapServices uses a pointer-to-slice to distinguish "not
+// supplied" (nil — leave existing list untouched) from "explicit
+// empty" (non-nil zero-length slice — clear all bootstrap services).
+// The reconciler diffs against whatever ends up persisted on the
+// row.
 type UpdateRequest struct {
-	Name     *string           `json:"name,omitempty"`
-	Zone     *string           `json:"zone,omitempty"`
-	Location *Location         `json:"location,omitempty"`
-	Capacity *Capacity         `json:"capacity,omitempty"`
-	Labels   map[string]string `json:"labels,omitempty"`
-	Metadata map[string]string `json:"metadata,omitempty"`
+	Name              *string                           `json:"name,omitempty"`
+	Zone              *string                           `json:"zone,omitempty"`
+	Location          *Location                         `json:"location,omitempty"`
+	Capacity          *Capacity                         `json:"capacity,omitempty"`
+	Labels            map[string]string                 `json:"labels,omitempty"`
+	Metadata          map[string]string                 `json:"metadata,omitempty"`
+	BootstrapServices *[]bootstrap.BootstrapServiceSpec `json:"bootstrap_services,omitempty"`
 }
 
 // ListOptions configures datacenter listing with optional filters and pagination.

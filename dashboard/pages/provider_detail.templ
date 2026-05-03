@@ -55,8 +55,56 @@ templ ProviderDetailPage(data ProviderDetailData) {
 				>
 					Deploy to Provider
 				</a>
+				<a
+					class="text-sm px-3 py-1.5 rounded-sm bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors cursor-pointer"
+					hx-get={ "./providers/detail?provider=" + data.Provider.Name + "&action=purge" }
+					hx-target="#content"
+					hx-push-url="true"
+					hx-swap="innerHTML"
+					hx-confirm={ "Purge ALL workloads and instances on " + data.Provider.Name + "? This deprovisions every container/pod/alloc this provider is managing and cannot be undone." }
+				>
+					Purge All
+				</a>
 			</div>
 		</div>
+
+		<!-- Purge result panel (shown only after a purge action). -->
+		if data.PurgeSummary != nil {
+			@card.Card(card.Props{Class: "rounded-sm border-destructive/50"}) {
+				@card.Header() {
+					@card.Title() {
+						Purge Result
+					}
+					@card.Description() {
+						{ "Purged " + strconv.Itoa(data.PurgeSummary.WorkloadsDeleted) + " workloads and " + strconv.Itoa(data.PurgeSummary.InstancesDeleted) + " orphan instances on " + data.PurgeSummary.Provider + "." }
+					}
+				}
+				@card.Content() {
+					if data.PurgeError != "" {
+						<div class="text-sm text-destructive font-medium mb-2">{ data.PurgeError }</div>
+					}
+					if len(data.PurgeSummary.WorkloadFailures) > 0 {
+						<div class="text-xs text-muted-foreground mb-1">Workload failures:</div>
+						<ul class="text-xs font-mono space-y-1 mb-3">
+							for _, f := range data.PurgeSummary.WorkloadFailures {
+								<li class="text-destructive">{ f }</li>
+							}
+						</ul>
+					}
+					if len(data.PurgeSummary.InstanceFailures) > 0 {
+						<div class="text-xs text-muted-foreground mb-1">Instance failures:</div>
+						<ul class="text-xs font-mono space-y-1">
+							for _, f := range data.PurgeSummary.InstanceFailures {
+								<li class="text-destructive">{ f }</li>
+							}
+						</ul>
+					}
+					if len(data.PurgeSummary.WorkloadFailures) == 0 && len(data.PurgeSummary.InstanceFailures) == 0 && data.PurgeError == "" {
+						<div class="text-sm text-muted-foreground">All resources purged cleanly.</div>
+					}
+				}
+			}
+		}
 
 		<!-- Provider Info -->
 		@card.Card(card.Props{Class: "rounded-sm"}) {
