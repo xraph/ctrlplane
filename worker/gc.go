@@ -29,6 +29,13 @@ const workloadLabelKey = "ctrlplane.workload"
 // reaps via this field.
 const gcReasonOrphanSwept = "orphan_swept"
 
+// gcStoreCallTimeout caps each individual store roundtrip
+// (ListTenants, instances.List, Delete) so a stalled driver session
+// can't pin a connection from the shared pool past the next tick.
+// 30 seconds is generous for cross-tenant scans on a healthy mongo
+// and tight enough that one slow tenant doesn't blind-spot the rest.
+const gcStoreCallTimeout = 30 * time.Second
+
 // gcReasonTenantFailed tags an event published when a per-tenant
 // sweep aborted half-way. Lets operators correlate GC error spikes
 // with specific tenants (e.g. one tenant's storage backend down
@@ -156,7 +163,9 @@ func (g *GarbageCollector) Interval() time.Duration {
 // the sweep continues to the next tenant — one broken tenant
 // must not blind-spot the rest.
 func (g *GarbageCollector) Run(ctx context.Context) error {
-	tenants, err := g.tenants.ListTenants(ctx, admin.ListTenantsOptions{Limit: 1000})
+	listCtx, listCancel := context.WithTimeout(ctx, gcStoreCallTimeout)
+	tenants, err := g.tenants.ListTenants(listCtx, admin.ListTenantsOptions{Limit: 1000})
+	listCancel()
 	if err != nil {
 		return fmt.Errorf("gc: list tenants: %w", err)
 	}
@@ -206,7 +215,9 @@ func (g *GarbageCollector) Run(ctx context.Context) error {
 func (g *GarbageCollector) sweepTenant(ctx context.Context, tenantID string) (int, error) {
 	tCtx := withSystemClaims(ctx, tenantID)
 
-	res, err := g.instances.List(tCtx, instance.ListOptions{Limit: g.cfg.MaxInstancesPerTick})
+	listCtx, listCancel := context.WithTimeout(tCtx, gcStoreCallTimeout)
+	res, err := g.instances.List(listCtx, instance.ListOptions{Limit: g.cfg.MaxInstancesPerTick})
+	listCancel()
 	if err != nil {
 		return 0, fmt.Errorf("list instances: %w", err)
 	}
@@ -224,7 +235,10 @@ func (g *GarbageCollector) sweepTenant(ctx context.Context, tenantID string) (in
 			continue
 		}
 
-		if err := g.instances.Delete(tCtx, inst.ID); err != nil {
+		delCtx, delCancel := context.WithTimeout(tCtx, gcStoreCallTimeout)
+		err := g.instances.Delete(delCtx, inst.ID)
+		delCancel()
+		if err != nil {
 			// Don't abort the tenant sweep on a single Delete
 			// failure — convergent Delete will retry next tick.
 			// We still emit a tagged event so operators see the
