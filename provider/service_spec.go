@@ -66,11 +66,11 @@ type ServiceSpec struct {
 	// Resources / Env / Ports / Volumes / HealthCheck are per-service.
 	// Two services in the same workload can request different CPU/memory
 	// or expose different ports.
-	Resources   ResourceSpec     `json:"resources"`
+	Resources   ResourceSpec      `json:"resources"`
 	Env         map[string]string `json:"env,omitempty"`
-	Ports       []PortSpec       `json:"ports,omitempty"`
-	Volumes     []VolumeSpec     `json:"volumes,omitempty"`
-	HealthCheck *HealthCheckSpec `json:"health_check,omitempty"`
+	Ports       []PortSpec        `json:"ports,omitempty"`
+	Volumes     []VolumeSpec      `json:"volumes,omitempty"`
+	HealthCheck *HealthCheckSpec  `json:"health_check,omitempty"`
 
 	// Secrets references env-injected secrets resolved against the
 	// vault at deploy time. Per-service so a sidecar can have its own

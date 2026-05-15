@@ -356,4 +356,3 @@ func firstName(names []string) string {
 
 	return names[0]
 }
-

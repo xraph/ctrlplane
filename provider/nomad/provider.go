@@ -522,4 +522,3 @@ func (p *Provider) doRequest(ctx context.Context, method, endpoint string, body,
 
 	return nil
 }
-

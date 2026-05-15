@@ -589,7 +589,6 @@ func (s *service) ListReleases(ctx context.Context, instanceID id.ID, opts ListO
 	return result, nil
 }
 
-
 // buildReleaseSnapshot constructs the per-service Services slice for a
 // new Release. Services in `updates` provide the new image/env;
 // services not listed inherit their snapshot from the prior Release

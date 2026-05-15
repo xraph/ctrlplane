@@ -84,8 +84,8 @@ type nomadResources struct {
 }
 
 type nomadNetwork struct {
-	Mode         string             `json:"Mode,omitempty"`
-	DynamicPorts []*nomadPortLabel  `json:"DynamicPorts,omitempty"`
+	Mode          string            `json:"Mode,omitempty"`
+	DynamicPorts  []*nomadPortLabel `json:"DynamicPorts,omitempty"`
 	ReservedPorts []*nomadPortLabel `json:"ReservedPorts,omitempty"`
 }
 
@@ -191,7 +191,7 @@ func buildJob(cfg Config, req provider.ProvisionRequest) *nomadJobRequest {
 		RestartPolicy: &nomadRestart{
 			Attempts: 3,
 			Mode:     "delay",
-			Delay:    int64(15 * 1e9), // 15s in ns
+			Delay:    int64(15 * 1e9),     // 15s in ns
 			Interval: int64(2 * 60 * 1e9), // 2min in ns
 		},
 		Meta: map[string]string{

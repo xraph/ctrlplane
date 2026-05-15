@@ -14,11 +14,11 @@ import (
 type Instance struct {
 	ctrlplane.Entity
 
-	TenantID     string                `db:"tenant_id"     json:"tenant_id"`
-	Name         string                `db:"name"          json:"name"`
-	Slug         string                `db:"slug"          json:"slug"`
-	DatacenterID id.ID                 `db:"datacenter_id" json:"datacenter_id,omitzero"`
-	ProviderName string                `db:"provider_name" json:"provider_name"`
+	TenantID     string `db:"tenant_id"     json:"tenant_id"`
+	Name         string `db:"name"          json:"name"`
+	Slug         string `db:"slug"          json:"slug"`
+	DatacenterID id.ID  `db:"datacenter_id" json:"datacenter_id,omitzero"`
+	ProviderName string `db:"provider_name" json:"provider_name"`
 
 	// ProviderRef is the workload-level handle (Pod name on k8s,
 	// Compose project name on Docker, Allocation ID on Nomad).
@@ -30,8 +30,8 @@ type Instance struct {
 	// log/exec/restart operations.
 	ServiceRefs map[string]string `db:"service_refs" json:"service_refs,omitempty"`
 
-	Region string                  `db:"region" json:"region"`
-	State  provider.InstanceState  `db:"state"  json:"state"`
+	Region string                 `db:"region" json:"region"`
+	State  provider.InstanceState `db:"state"  json:"state"`
 
 	// Kind is inherited from the Workload at provision time and locked
 	// for the instance's lifetime. Mirrors Workload.Kind so per-replica

@@ -111,7 +111,7 @@ type healthCheckModel struct {
 	Timeout     int64     `grove:"timeout,notnull"`
 	Config      []byte    `grove:"config"`
 	CreatedAt   time.Time `grove:"created_at,notnull"`
-	UpdatedAt  time.Time `grove:"updated_at,notnull"`
+	UpdatedAt   time.Time `grove:"updated_at,notnull"`
 }
 
 // healthResultModel is the database model for health.HealthResult.
@@ -268,11 +268,11 @@ type auditEntryModel struct {
 type templateModel struct {
 	grove.BaseModel `grove:"table:cp_templates"`
 
-	ID              string `grove:"id,pk"`
-	TenantID        string `grove:"tenant_id,notnull"`
-	Name            string `grove:"name,notnull"`
-	Description     string `grove:"description"`
-	DefaultKind     string `grove:"default_kind"`
+	ID              string    `grove:"id,pk"`
+	TenantID        string    `grove:"tenant_id,notnull"`
+	Name            string    `grove:"name,notnull"`
+	Description     string    `grove:"description"`
+	DefaultKind     string    `grove:"default_kind"`
 	DefaultStrategy string    `grove:"default_strategy"`
 	Services        []byte    `grove:"services"`
 	Labels          []byte    `grove:"labels"`

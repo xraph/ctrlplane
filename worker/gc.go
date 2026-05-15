@@ -79,9 +79,9 @@ func defaultGCConfig() GCConfig {
 //
 //   - Instances whose ctrlplane.workload label points at a Workload
 //     that no longer exists. These are produced by:
-//     • a workload.Service.Delete that crashed mid-cascade,
-//     • workload rows force-removed via direct store access,
-//     • backup-restore drift between the workloads and instances
+//   - a workload.Service.Delete that crashed mid-cascade,
+//   - workload rows force-removed via direct store access,
+//   - backup-restore drift between the workloads and instances
 //     tables.
 //
 // The GC is a backstop, not the primary cleanup path. The convergent
