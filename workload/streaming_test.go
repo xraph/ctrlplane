@@ -327,7 +327,7 @@ func itoa(n int) string {
 // Closing the reader (via subCtx cancel from fanInLogs) makes the
 // next read return io.EOF so the scanner loop exits.
 type tickReader struct {
-	ctx     context.Context
+	ctx     context.Context //nolint:containedctx // io.Reader.Read has no ctx param; reader stops when ctx is done
 	payload []byte
 	tick    time.Duration
 	mu      sync.Mutex

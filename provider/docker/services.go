@@ -24,10 +24,10 @@ import (
 	"slices"
 	"sort"
 
+	cerrdefs "github.com/containerd/errdefs"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/errdefs"
 
 	"github.com/xraph/ctrlplane/id"
 	"github.com/xraph/ctrlplane/provider"
@@ -182,7 +182,7 @@ func (p *Provider) ensureProjectNetwork(ctx context.Context, instanceID id.ID, t
 
 	if _, err := p.cli.NetworkInspect(ctx, name, network.InspectOptions{}); err == nil {
 		return nil
-	} else if !errdefs.IsNotFound(err) {
+	} else if !cerrdefs.IsNotFound(err) {
 		return fmt.Errorf("docker: inspect network %s: %w", name, err)
 	}
 

@@ -8,11 +8,11 @@ import (
 	"strconv"
 	"time"
 
+	cerrdefs "github.com/containerd/errdefs"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
-	"github.com/docker/docker/errdefs"
 	"github.com/docker/go-connections/nat"
 
 	"github.com/xraph/ctrlplane/id"
@@ -174,7 +174,7 @@ func (p *Provider) Deprovision(ctx context.Context, instanceID id.ID) error {
 		if rmErr := p.cli.ContainerRemove(ctx, c.ID, container.RemoveOptions{
 			Force:         true,
 			RemoveVolumes: true,
-		}); rmErr != nil && !errdefs.IsNotFound(rmErr) {
+		}); rmErr != nil && !cerrdefs.IsNotFound(rmErr) {
 			return fmt.Errorf("docker: remove %s: %w", c.Name, rmErr)
 		}
 	}
@@ -182,7 +182,7 @@ func (p *Provider) Deprovision(ctx context.Context, instanceID id.ID) error {
 	// Remove the project network. NotFound is fine — leftover network
 	// without containers is the same end-state we want.
 	netName := projectNetwork(instanceID)
-	if rmErr := p.cli.NetworkRemove(ctx, netName); rmErr != nil && !errdefs.IsNotFound(rmErr) {
+	if rmErr := p.cli.NetworkRemove(ctx, netName); rmErr != nil && !cerrdefs.IsNotFound(rmErr) {
 		return fmt.Errorf("docker: remove network %s: %w", netName, rmErr)
 	}
 
@@ -289,7 +289,7 @@ func (p *Provider) Status(ctx context.Context, instanceID id.ID) (*provider.Inst
 	for _, c := range containers {
 		inspect, ierr := p.cli.ContainerInspect(ctx, c.ID)
 		if ierr != nil {
-			if errdefs.IsNotFound(ierr) {
+			if cerrdefs.IsNotFound(ierr) {
 				continue
 			}
 
@@ -432,7 +432,7 @@ func (p *Provider) recreateServiceContainer(ctx context.Context, req provider.De
 
 	_ = p.pullImage(ctx, target.Image)
 
-	if err := p.cli.ContainerRemove(ctx, current.ID, container.RemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
+	if err := p.cli.ContainerRemove(ctx, current.ID, container.RemoveOptions{Force: true}); err != nil && !cerrdefs.IsNotFound(err) {
 		return fmt.Errorf("remove old %s: %w", current.Name, err)
 	}
 
@@ -505,7 +505,7 @@ func (p *Provider) Scale(_ context.Context, _ id.ID, _ provider.ResourceSpec) er
 func (p *Provider) Resources(ctx context.Context, instanceID id.ID) (*provider.ResourceUsage, error) {
 	resp, err := p.cli.ContainerStatsOneShot(ctx, containerName(instanceID))
 	if err != nil {
-		if errdefs.IsNotFound(err) {
+		if cerrdefs.IsNotFound(err) {
 			return &provider.ResourceUsage{}, nil
 		}
 
@@ -547,7 +547,7 @@ func (p *Provider) Logs(ctx context.Context, instanceID id.ID, opts provider.Log
 
 	rc, err := p.cli.ContainerLogs(ctx, target, dockerOpts)
 	if err != nil {
-		if errdefs.IsNotFound(err) {
+		if cerrdefs.IsNotFound(err) {
 			return nil, fmt.Errorf("docker: logs: container not found: %w", err)
 		}
 
@@ -633,7 +633,7 @@ func (p *Provider) pullImage(ctx context.Context, ref string) error {
 // success. Used before create to make Provision/Deploy idempotent.
 func (p *Provider) removeIfExists(ctx context.Context, name string) error {
 	err := p.cli.ContainerRemove(ctx, name, container.RemoveOptions{Force: true})
-	if err != nil && !errdefs.IsNotFound(err) {
+	if err != nil && !cerrdefs.IsNotFound(err) {
 		return fmt.Errorf("docker: remove pre-existing %s: %w", name, err)
 	}
 

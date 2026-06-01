@@ -151,6 +151,7 @@ linters:
           - errcheck
           - dupl
           - gosec
+          - nilnil # test stubs/fakes commonly return (nil, nil) for unused methods
       - linters:
           - staticcheck
         text: "SA9003:"
