@@ -25,12 +25,14 @@ func AttachToEvents(svc Service, bus event.Bus) event.Subscription {
 		if ev.InstanceID.IsNil() {
 			return nil
 		}
+
 		switch ev.Type {
 		case event.InstanceCreated, event.InstanceStarted, event.InstanceUnsuspended:
 			svc.Track(ev.InstanceID)
 		case event.InstanceDeleted:
 			svc.Untrack(ev.InstanceID)
 		}
+
 		return nil
 	}
 

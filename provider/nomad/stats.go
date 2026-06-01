@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -45,16 +46,19 @@ func fetchAllocResources(ctx context.Context, address, namespace string, instanc
 
 	// 1. List allocations for the conventional job name.
 	jobName := nomadJobName(instanceID)
+
 	allocs, err := listJobAllocs(ctx, httpClient, address, namespace, jobName)
 	if err != nil || len(allocs) == 0 {
 		return &provider.ResourceUsage{}, nil //nolint:nilerr // missing job = no sample
 	}
 
 	usage := &provider.ResourceUsage{}
+
 	for _, a := range allocs {
 		if a.ClientStatus != "running" {
 			continue
 		}
+
 		stats, err := getAllocStats(ctx, httpClient, address, a.ID)
 		if err != nil || stats == nil {
 			continue
@@ -66,8 +70,9 @@ func fetchAllocResources(ctx context.Context, address, namespace string, instanc
 			if stats.ResourceUsage.CPUStats != nil {
 				usage.CPUPercent += stats.ResourceUsage.CPUStats.Percent
 			}
+
 			if stats.ResourceUsage.MemoryStats != nil {
-				usage.MemoryUsedMB += int(stats.ResourceUsage.MemoryStats.RSS / (1024 * 1024))
+				usage.MemoryUsedMB += bytesToMB(stats.ResourceUsage.MemoryStats.RSS)
 			}
 		}
 		// Per-task fallback: some Nomad versions only populate
@@ -76,14 +81,17 @@ func fetchAllocResources(ctx context.Context, address, namespace string, instanc
 			if stats.ResourceUsage != nil {
 				continue // aggregate already counted
 			}
+
 			if t.ResourceUsage == nil {
 				continue
 			}
+
 			if t.ResourceUsage.CPUStats != nil {
 				usage.CPUPercent += t.ResourceUsage.CPUStats.Percent
 			}
+
 			if t.ResourceUsage.MemoryStats != nil {
-				usage.MemoryUsedMB += int(t.ResourceUsage.MemoryStats.RSS / (1024 * 1024))
+				usage.MemoryUsedMB += bytesToMB(t.ResourceUsage.MemoryStats.RSS)
 			}
 		}
 	}
@@ -156,27 +164,33 @@ func listJobAllocs(ctx context.Context, httpClient *http.Client, address, namesp
 	if namespace != "" {
 		u += "?namespace=" + namespace
 	}
+
 	body, err := nomadGet(ctx, httpClient, u)
 	if err != nil {
 		return nil, err
 	}
+
 	var out []nomadAlloc
 	if err := json.Unmarshal(body, &out); err != nil {
 		return nil, fmt.Errorf("nomad: decode allocs: %w", err)
 	}
+
 	return out, nil
 }
 
 func getAllocStats(ctx context.Context, httpClient *http.Client, address, allocID string) (*nomadAllocStats, error) {
 	u := fmt.Sprintf("%s/v1/client/allocation/%s/stats", address, allocID)
+
 	body, err := nomadGet(ctx, httpClient, u)
 	if err != nil {
 		return nil, err
 	}
+
 	var out nomadAllocStats
 	if err := json.Unmarshal(body, &out); err != nil {
 		return nil, fmt.Errorf("nomad: decode alloc stats: %w", err)
 	}
+
 	return &out, nil
 }
 
@@ -185,16 +199,31 @@ func nomadGet(ctx context.Context, httpClient *http.Client, url string) ([]byte,
 	if err != nil {
 		return nil, err
 	}
+
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
+
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, fmt.Errorf("nomad: %s: 404", url)
 	}
+
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("nomad: %s: status %d", url, resp.StatusCode)
 	}
+
 	return io.ReadAll(resp.Body)
+}
+
+// bytesToMB converts a byte count to whole megabytes, clamping to
+// math.MaxInt so the conversion can never overflow int.
+func bytesToMB(b uint64) int {
+	mb := b / (1024 * 1024)
+	if mb > math.MaxInt {
+		return math.MaxInt
+	}
+
+	return int(mb)
 }

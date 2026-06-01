@@ -120,7 +120,6 @@ func (s *service) fanInHealth(ctx context.Context, workloadID id.ID, out chan<- 
 		repID := rep.ID
 
 		wg.Go(func() {
-
 			for r := range ch {
 				select {
 				case out <- &HealthEvent{

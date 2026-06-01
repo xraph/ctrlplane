@@ -9,14 +9,17 @@ import (
 // a 3-slot ring fed 5 samples drops the first 2 and snapshots 3.
 func TestRingBuffer_PushOverwritesOldest(t *testing.T) {
 	r := newRingBuffer(3)
+
 	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		r.push(Sample{At: base.Add(time.Duration(i) * time.Second), CPUPercent: float64(i)})
 	}
+
 	got := r.snapshot()
 	if len(got) != 3 {
 		t.Fatalf("snapshot length: want 3, got %d", len(got))
 	}
+
 	if got[0].CPUPercent != 2 || got[1].CPUPercent != 3 || got[2].CPUPercent != 4 {
 		t.Fatalf("snapshot values: want [2 3 4], got %v", []float64{got[0].CPUPercent, got[1].CPUPercent, got[2].CPUPercent})
 	}
@@ -28,8 +31,10 @@ func TestRingBuffer_LastReturnsLatest(t *testing.T) {
 	if _, ok := r.last(); ok {
 		t.Fatal("last on empty ring should return ok=false")
 	}
+
 	r.push(Sample{CPUPercent: 1})
 	r.push(Sample{CPUPercent: 2})
+
 	last, ok := r.last()
 	if !ok || last.CPUPercent != 2 {
 		t.Fatalf("last: want CPU=2 ok=true, got %v ok=%v", last.CPUPercent, ok)
@@ -42,13 +47,14 @@ func TestRingBuffer_DownsampleAveragesPerBucket(t *testing.T) {
 	r := newRingBuffer(20)
 	since := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	// 10 samples, one per second.
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		r.push(Sample{
 			At:           since.Add(time.Duration(i) * time.Second),
 			CPUPercent:   float64(i),
 			MemoryUsedMB: i * 10,
 		})
 	}
+
 	until := since.Add(10 * time.Second)
 	buckets := r.downsample(since, until, 5*time.Second)
 
@@ -73,6 +79,7 @@ func TestAutoResolution_NeverBelowSourceFrequency(t *testing.T) {
 	if got != 10*time.Second {
 		t.Fatalf("want 10s floor, got %v", got)
 	}
+
 	got = autoResolution(24*time.Hour, 120) // 24h / 120 = 12m
 	if got != 12*time.Minute {
 		t.Fatalf("want 12m, got %v", got)

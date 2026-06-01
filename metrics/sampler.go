@@ -45,6 +45,7 @@ func (s *instanceSampler) Sample(ctx context.Context, instanceID id.ID) (*Sample
 	if err != nil {
 		return nil, err
 	}
+
 	if usage == nil {
 		return nil, nil //nolint:nilnil // empty usage == no sample for this tick
 	}

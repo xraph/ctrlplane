@@ -50,6 +50,7 @@ func (a *API) streamInstanceHealth(ctx forge.Context, stream forge.Stream) error
 			if !ok {
 				return nil
 			}
+
 			if err := stream.SendJSON("health", r); err != nil {
 				return nil
 			}
@@ -78,13 +79,16 @@ func (a *API) streamInstanceLogs(ctx forge.Context, stream forge.Stream) error {
 		Follow: true,
 		Tail:   100,
 	}
+
 	if v := ctx.Request().URL.Query().Get("tail"); v != "" {
 		var n int
+
 		_, _ = fmt.Sscanf(v, "%d", &n)
 		if n >= 0 {
 			opts.Tail = n
 		}
 	}
+
 	if v := ctx.Request().URL.Query().Get("follow"); v == "false" || v == "0" {
 		opts.Follow = false
 	}
@@ -106,6 +110,7 @@ func (a *API) streamInstanceLogs(ctx forge.Context, stream forge.Stream) error {
 
 	go func() {
 		defer close(lines)
+
 		for scanner.Scan() {
 			b := append(json.RawMessage(nil), scanner.Bytes()...)
 			select {
@@ -126,6 +131,7 @@ func (a *API) streamInstanceLogs(ctx forge.Context, stream forge.Stream) error {
 			if !ok {
 				return nil
 			}
+
 			if err := stream.Send("log", line); err != nil {
 				return nil
 			}
@@ -138,7 +144,7 @@ func (a *API) streamInstanceLogs(ctx forge.Context, stream forge.Stream) error {
 // streamWorkloadHealth fans-in HealthEvents from every replica
 // in a workload.
 //
-// GET /v1/workloads/:workloadId/health/stream
+// GET /v1/workloads/:workloadId/health/stream.
 func (a *API) streamWorkloadHealth(ctx forge.Context, stream forge.Stream) error {
 	workloadID, err := id.Parse(ctx.Param("workloadId"))
 	if err != nil {
@@ -165,6 +171,7 @@ func (a *API) streamWorkloadHealth(ctx forge.Context, stream forge.Stream) error
 			if !ok {
 				return nil
 			}
+
 			if err := stream.SendJSON("health", ev); err != nil {
 				return nil
 			}
@@ -176,7 +183,7 @@ func (a *API) streamWorkloadHealth(ctx forge.Context, stream forge.Stream) error
 
 // streamWorkloadLogs fans-in log lines from every replica in a workload.
 //
-// GET /v1/workloads/:workloadId/logs/stream
+// GET /v1/workloads/:workloadId/logs/stream.
 func (a *API) streamWorkloadLogs(ctx forge.Context, stream forge.Stream) error {
 	workloadID, err := id.Parse(ctx.Param("workloadId"))
 	if err != nil {
@@ -184,13 +191,16 @@ func (a *API) streamWorkloadLogs(ctx forge.Context, stream forge.Stream) error {
 	}
 
 	opts := workload.LogsOptions{Follow: true, Tail: 100}
+
 	if v := ctx.Request().URL.Query().Get("tail"); v != "" {
 		var n int
+
 		_, _ = fmt.Sscanf(v, "%d", &n)
 		if n >= 0 {
 			opts.Tail = n
 		}
 	}
+
 	if v := ctx.Request().URL.Query().Get("follow"); v == "false" || v == "0" {
 		opts.Follow = false
 	}
@@ -215,6 +225,7 @@ func (a *API) streamWorkloadLogs(ctx forge.Context, stream forge.Stream) error {
 			if !ok {
 				return nil
 			}
+
 			if err := stream.SendJSON("log", ev); err != nil {
 				return nil
 			}

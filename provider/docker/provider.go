@@ -1,6 +1,3 @@
-// Package docker is a Docker-backed provider.Provider. It maps each
-// ctrlplane Instance to one Docker container, named "cp-<instanceID>"
-// so lookups by ID are O(1) inspect calls.
 package docker
 
 import (
@@ -41,6 +38,7 @@ func (p *Provider) HealthCheck(ctx context.Context) (*provider.HealthStatus, err
 	start := time.Now()
 	_, err := p.cli.Ping(ctx)
 	latency := time.Since(start)
+
 	now := time.Now().UTC()
 	if err != nil {
 		return &provider.HealthStatus{
@@ -50,6 +48,7 @@ func (p *Provider) HealthCheck(ctx context.Context) (*provider.HealthStatus, err
 			CheckedAt: now,
 		}, nil
 	}
+
 	return &provider.HealthStatus{
 		Healthy:   true,
 		Message:   "docker daemon reachable",
@@ -86,10 +85,12 @@ func New(opts ...Option) (*Provider, error) {
 	if p.cfg.Host != "" {
 		cliOpts = append(cliOpts, client.WithHost(p.cfg.Host))
 	}
+
 	cli, err := client.NewClientWithOpts(cliOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("docker: client init: %w", err)
 	}
+
 	p.cli = cli
 
 	return p, nil
@@ -138,11 +139,11 @@ func (p *Provider) Capabilities() []provider.Capability {
 // succeeds with the fresh config.
 func (p *Provider) Provision(ctx context.Context, req provider.ProvisionRequest) (*provider.ProvisionResult, error) {
 	if len(req.Services) == 0 {
-		return nil, fmt.Errorf("docker: provision requires at least one service")
+		return nil, errors.New("docker: provision requires at least one service")
 	}
 
 	if pickMainService(req.Services) == nil {
-		return nil, fmt.Errorf("docker: provision requires exactly one Main service")
+		return nil, errors.New("docker: provision requires exactly one Main service")
 	}
 
 	return p.provisionProject(ctx, req)
@@ -296,6 +297,7 @@ func (p *Provider) Status(ctx context.Context, instanceID id.ID) (*provider.Inst
 		}
 
 		svcState := provider.StateStopped
+
 		switch {
 		case inspect.State.Running:
 			svcState = provider.StateRunning
@@ -342,6 +344,7 @@ func (p *Provider) Status(ctx context.Context, instanceID id.ID) (*provider.Inst
 	}
 
 	state := provider.StateRunning
+
 	switch {
 	case anyFailed:
 		state = provider.StateFailed
@@ -378,7 +381,7 @@ func (p *Provider) Status(ctx context.Context, instanceID id.ID) (*provider.Inst
 // recreation so sibling services don't drop their network namespace.
 func (p *Provider) Deploy(ctx context.Context, req provider.DeployRequest) (*provider.DeployResult, error) {
 	if len(req.Services) == 0 {
-		return nil, fmt.Errorf("docker: deploy requires at least one service")
+		return nil, errors.New("docker: deploy requires at least one service")
 	}
 
 	// Inspect the existing project to recover full ServiceSpec for each
@@ -505,6 +508,7 @@ func (p *Provider) Resources(ctx context.Context, instanceID id.ID) (*provider.R
 		if errdefs.IsNotFound(err) {
 			return &provider.ResourceUsage{}, nil
 		}
+
 		return nil, fmt.Errorf("container stats %s: %w", instanceID, err)
 	}
 	defer resp.Body.Close()
@@ -531,6 +535,7 @@ func (p *Provider) Logs(ctx context.Context, instanceID id.ID, opts provider.Log
 	if opts.Tail > 0 {
 		dockerOpts.Tail = strconv.Itoa(opts.Tail)
 	}
+
 	if !opts.Since.IsZero() {
 		dockerOpts.Since = opts.Since.UTC().Format(time.RFC3339Nano)
 	}
@@ -545,8 +550,10 @@ func (p *Provider) Logs(ctx context.Context, instanceID id.ID, opts provider.Log
 		if errdefs.IsNotFound(err) {
 			return nil, fmt.Errorf("docker: logs: container not found: %w", err)
 		}
+
 		return nil, fmt.Errorf("docker: logs: %w", err)
 	}
+
 	return demuxedDockerStream(rc), nil
 }
 
@@ -618,6 +625,7 @@ func (p *Provider) pullImage(ctx context.Context, ref string) error {
 	defer body.Close()
 	// The pull stream must be drained for the pull to complete.
 	_, _ = io.Copy(io.Discard, body)
+
 	return nil
 }
 
@@ -628,6 +636,7 @@ func (p *Provider) removeIfExists(ctx context.Context, name string) error {
 	if err != nil && !errdefs.IsNotFound(err) {
 		return fmt.Errorf("docker: remove pre-existing %s: %w", name, err)
 	}
+
 	return nil
 }
 
@@ -640,6 +649,7 @@ func (p *Provider) endpointsFor(ctx context.Context, containerID, name string) (
 	if err != nil {
 		return nil, err
 	}
+
 	return endpointsFromInspect(name, inspect.NetworkSettings.Ports), nil
 }
 
@@ -652,6 +662,7 @@ func endpointsFromInspect(name string, ports nat.PortMap) []provider.Endpoint {
 		if natPort.Proto() != "tcp" {
 			continue
 		}
+
 		port := natPort.Int()
 
 		// In-network address: http://cp-<id>:<containerPort>. Other
@@ -671,16 +682,18 @@ func endpointsFromInspect(name string, ports nat.PortMap) []provider.Endpoint {
 			if b.HostPort == "" || seen[b.HostPort] {
 				continue
 			}
+
 			seen[b.HostPort] = true
 			hp, _ := strconv.Atoi(b.HostPort)
 			out = append(out, provider.Endpoint{
-				URL:      fmt.Sprintf("http://localhost:%s", b.HostPort),
+				URL:      "http://localhost:" + b.HostPort,
 				Port:     hp,
 				Protocol: "http",
 				Public:   true,
 			})
 		}
 	}
+
 	return out
 }
 
@@ -692,23 +705,28 @@ func endpointsFromInspect(name string, ports nat.PortMap) []provider.Endpoint {
 func buildPortConfig(ports []provider.PortSpec) (nat.PortSet, nat.PortMap, error) {
 	exposed := nat.PortSet{}
 	bindings := nat.PortMap{}
+
 	for _, p := range ports {
 		proto := p.Protocol
 		if proto == "" {
 			proto = "tcp"
 		}
+
 		port, err := nat.NewPort(proto, strconv.Itoa(p.Container))
 		if err != nil {
 			return nil, nil, fmt.Errorf("docker: parse port %d/%s: %w", p.Container, proto, err)
 		}
+
 		exposed[port] = struct{}{}
 
 		hostPort := ""
 		if p.Host > 0 {
 			hostPort = strconv.Itoa(p.Host)
 		}
+
 		bindings[port] = []nat.PortBinding{{HostIP: "0.0.0.0", HostPort: hostPort}}
 	}
+
 	return exposed, bindings, nil
 }
 
@@ -719,6 +737,7 @@ func networkingConfig(networkName string) *network.NetworkingConfig {
 	if networkName == "" || networkName == "bridge" {
 		return nil
 	}
+
 	return &network.NetworkingConfig{
 		EndpointsConfig: map[string]*network.EndpointSettings{
 			networkName: {},

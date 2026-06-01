@@ -256,16 +256,20 @@ func (s *service) Watch(ctx context.Context, instanceID id.ID) (<-chan *HealthRe
 		<-ctx.Done()
 		s.subsMu.Lock()
 		defer s.subsMu.Unlock()
+
 		current := s.subs[key]
 		for i, c := range current {
 			if c == ch {
 				s.subs[key] = append(current[:i], current[i+1:]...)
+
 				break
 			}
 		}
+
 		if len(s.subs[key]) == 0 {
 			delete(s.subs, key)
 		}
+
 		close(ch)
 	}()
 
@@ -279,8 +283,10 @@ func (s *service) fanOutResult(result *HealthResult) {
 	if result == nil {
 		return
 	}
+
 	s.subsMu.RLock()
 	defer s.subsMu.RUnlock()
+
 	for _, ch := range s.subs[result.InstanceID.String()] {
 		select {
 		case ch <- result:

@@ -72,6 +72,7 @@ func WithProvider(name string, p provider.Provider) ServerOption {
 		if c.providers == nil {
 			c.providers = map[string]provider.Provider{}
 		}
+
 		c.providers[name] = p
 	}
 }
@@ -132,6 +133,7 @@ func NewServer(t *testing.T, opts ...ServerOption) *TestServer {
 	}
 
 	t.Cleanup(ts.Close)
+
 	return ts
 }
 
@@ -140,6 +142,7 @@ func (ts *TestServer) Close() {
 	if ts == nil {
 		return
 	}
+
 	if ts.Server != nil {
 		ts.Server.Close()
 		ts.Server = nil

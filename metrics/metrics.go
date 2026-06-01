@@ -43,7 +43,7 @@ type Sample struct {
 // slice as immutable — buckets returned from Range are copies.
 type Series []Sample
 
-// Range describes a query window. Resolution=0 means "auto" — the
+// RangeQuery describes a query window. Resolution=0 means "auto" — the
 // store picks a bucket size that targets ~120 points across the
 // window so sparkline rendering stays fluid regardless of range.
 type RangeQuery struct {

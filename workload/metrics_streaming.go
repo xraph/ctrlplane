@@ -162,7 +162,6 @@ func (s *service) fanInMetrics(ctx context.Context, workloadID id.ID, out chan<-
 		repID := rep.ID
 
 		wg.Go(func() {
-
 			for sample := range ch {
 				select {
 				case out <- &MetricsEvent{

@@ -123,7 +123,7 @@ func (s *service) Create(ctx context.Context, req CreateRequest) (*Workload, err
 	// Provision replicas. On any failure we mark the Workload as
 	// failed but keep the Instances that did come up — operators can
 	// inspect, then either retry Scale or Delete to clean up.
-	for i := 0; i < replicas; i++ {
+	for i := range replicas {
 		if _, err := s.spawnReplica(ctx, w, i); err != nil {
 			w.State = StateFailed
 			_ = s.store.UpdateWorkload(ctx, w)
@@ -371,13 +371,9 @@ func (s *service) Scale(ctx context.Context, workloadID id.ID, replicas int) (*W
 	case 0:
 		w.State = StatePaused
 	default:
-		// Return to whichever resting state we came from when the
-		// scale was a no-op, otherwise back to Active.
-		if prevState == StatePaused {
-			w.State = StateActive
-		} else {
-			w.State = StateActive
-		}
+		// Any non-zero replica count resolves to Active, including
+		// resuming from a previously paused workload.
+		w.State = StateActive
 	}
 
 	if err := s.store.UpdateWorkload(ctx, w); err != nil {
@@ -837,16 +833,16 @@ func (s *service) spawnReplica(ctx context.Context, w *Workload, replicaIndex in
 // in the slice. Used to allocate unique slots when scaling up after
 // a previous scale-down.
 func nextReplicaIndex(replicas []*instance.Instance) int {
-	max := -1
+	highest := -1
 
 	for _, r := range replicas {
 		idx := readReplicaIndex(r)
-		if idx > max {
-			max = idx
+		if idx > highest {
+			highest = idx
 		}
 	}
 
-	return max + 1
+	return highest + 1
 }
 
 // readReplicaIndex pulls the replica index off the label, defaulting

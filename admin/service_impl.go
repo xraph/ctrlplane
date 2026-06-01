@@ -424,6 +424,7 @@ func (s *service) ListProviders(ctx context.Context) ([]ProviderStatus, error) {
 		// is attached, prefer its live read so the dashboard
 		// reflects actual provider reachability.
 		healthy := true
+
 		if s.providerHealth != nil {
 			if snap, ok := s.providerHealth.Get(info.Name); ok {
 				healthy = snap.Healthy

@@ -31,12 +31,15 @@ func NewService(sampler Sampler, cfg Config) Service {
 	if cfg.PollInterval <= 0 {
 		cfg.PollInterval = DefaultConfig().PollInterval
 	}
+
 	if cfg.RetentionCapacity <= 0 {
 		cfg.RetentionCapacity = DefaultConfig().RetentionCapacity
 	}
+
 	if cfg.WatchBuffer <= 0 {
 		cfg.WatchBuffer = DefaultConfig().WatchBuffer
 	}
+
 	return &service{
 		cfg:     cfg,
 		sampler: sampler,
@@ -54,11 +57,14 @@ func (s *service) Track(instanceID id.ID) {
 	s.mu.Lock()
 	if _, exists := s.pollers[key]; exists {
 		s.mu.Unlock()
+
 		return
 	}
+
 	if _, exists := s.rings[key]; !exists {
 		s.rings[key] = newRingBuffer(s.cfg.RetentionCapacity)
 	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	s.pollers[key] = cancel
 	s.mu.Unlock()
@@ -76,6 +82,7 @@ func (s *service) Untrack(instanceID id.ID) {
 		cancel()
 		delete(s.pollers, key)
 	}
+
 	delete(s.rings, key)
 	s.mu.Unlock()
 
@@ -85,39 +92,49 @@ func (s *service) Untrack(instanceID id.ID) {
 	for _, ch := range s.subs[key] {
 		close(ch)
 	}
+
 	delete(s.subs, key)
 	s.subsMu.Unlock()
 }
 
 func (s *service) Range(_ context.Context, instanceID id.ID, q RangeQuery) (Series, error) {
 	key := keyFor(instanceID)
+
 	s.mu.RLock()
 	ring, ok := s.rings[key]
 	s.mu.RUnlock()
+
 	if !ok {
 		return nil, nil
 	}
+
 	if q.Until.IsZero() {
 		q.Until = time.Now()
 	}
+
 	if q.Since.IsZero() {
 		q.Since = q.Until.Add(-1 * time.Hour)
 	}
+
 	resolution := q.Resolution
 	if resolution <= 0 {
 		resolution = autoResolution(q.Until.Sub(q.Since), 120)
 	}
+
 	return ring.downsample(q.Since, q.Until, resolution), nil
 }
 
 func (s *service) Latest(instanceID id.ID) (Sample, bool) {
 	key := keyFor(instanceID)
+
 	s.mu.RLock()
 	ring, ok := s.rings[key]
 	s.mu.RUnlock()
+
 	if !ok {
 		return Sample{}, false
 	}
+
 	return ring.last()
 }
 
@@ -135,11 +152,14 @@ func (s *service) Watch(ctx context.Context, instanceID id.ID) (<-chan Sample, e
 		<-ctx.Done()
 		s.subsMu.Lock()
 		defer s.subsMu.Unlock()
+
 		list := s.subs[key]
 		for i, c := range list {
 			if c == ch {
 				s.subs[key] = append(list[:i], list[i+1:]...)
+
 				close(ch)
+
 				return
 			}
 		}
@@ -164,10 +184,12 @@ func (s *service) runPoller(ctx context.Context, instanceID id.ID) {
 	tick := func() {
 		sampleCtx, cancel := context.WithTimeout(ctx, s.cfg.PollInterval)
 		defer cancel()
+
 		raw, err := s.sampler.Sample(sampleCtx, instanceID)
 		if err != nil || raw == nil {
 			return
 		}
+
 		now := raw.At
 		if now.IsZero() {
 			now = time.Now()
@@ -183,9 +205,11 @@ func (s *service) runPoller(ctx context.Context, instanceID id.ID) {
 			if dt > 0 {
 				inDelta := raw.NetworkInBytesPerSec - prevNetInBytes
 				outDelta := raw.NetworkOutBytesPerSec - prevNetOutBytes
+
 				if inDelta < 0 {
 					inDelta = 0 // counter reset (container restart)
 				}
+
 				if outDelta < 0 {
 					outDelta = 0
 				}
@@ -202,6 +226,7 @@ func (s *service) runPoller(ctx context.Context, instanceID id.ID) {
 			raw.NetworkInBytesPerSec = 0
 			raw.NetworkOutBytesPerSec = 0
 		}
+
 		prevAt = now
 
 		s.push(instanceID, *raw)
@@ -229,13 +254,16 @@ func (s *service) push(instanceID id.ID, sample Sample) {
 	s.mu.RLock()
 	ring := s.rings[key]
 	s.mu.RUnlock()
+
 	if ring == nil {
 		return // Untrack raced with the poller; drop.
 	}
+
 	ring.push(sample)
 
 	s.subsMu.RLock()
 	defer s.subsMu.RUnlock()
+
 	for _, ch := range s.subs[key] {
 		select {
 		case ch <- sample:

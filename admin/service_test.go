@@ -35,8 +35,10 @@ func adminClaims() *auth.Claims {
 // targeted method only touches `store` + the auth-from-context check.
 func newServiceForGetByExternalID(t *testing.T) (admin.Service, *memory.Store) {
 	t.Helper()
+
 	store := memory.New()
 	svc := admin.NewService(store, nil, nil, nil, nil, nil, nil)
+
 	return svc, store
 }
 
@@ -66,10 +68,12 @@ func TestService_GetTenantByExternalID_authenticated_returnsTenant(t *testing.T)
 	}
 
 	ctx := auth.WithClaims(context.Background(), userClaims())
+
 	got, err := svc.GetTenantByExternalID(ctx, "org-acme")
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
+
 	if got.ID.String() != tenant.ID.String() {
 		t.Fatalf("returned wrong tenant")
 	}
@@ -79,6 +83,7 @@ func TestService_GetTenantByExternalID_authenticatedButMissing_returnsNotFound(t
 	svc, _ := newServiceForGetByExternalID(t)
 
 	ctx := auth.WithClaims(context.Background(), userClaims())
+
 	_, err := svc.GetTenantByExternalID(ctx, "no-such")
 	if !errors.Is(err, ctrlplane.ErrNotFound) {
 		t.Fatalf("want ErrNotFound, got %v", err)
@@ -105,11 +110,14 @@ func TestService_GetTenantByExternalID_adminAndUser_bothSucceed(t *testing.T) {
 		"admin": adminClaims(),
 	} {
 		ctx := auth.WithClaims(context.Background(), claims)
+
 		got, err := svc.GetTenantByExternalID(ctx, "org-acme-2")
 		if err != nil {
 			t.Errorf("%s: %v", label, err)
+
 			continue
 		}
+
 		if got.ID.String() != tenant.ID.String() {
 			t.Errorf("%s: returned wrong tenant", label)
 		}

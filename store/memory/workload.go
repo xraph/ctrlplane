@@ -36,7 +36,7 @@ func (s *Store) InsertWorkload(_ context.Context, w *workload.Workload) error {
 	return nil
 }
 
-// GetByID returns the workload with the given ID when it belongs
+// GetWorkloadByID returns the workload with the given ID when it belongs
 // to the supplied tenant. Empty tenantID is the cross-tenant
 // admin convention (matches instance/deploy stores).
 func (s *Store) GetWorkloadByID(_ context.Context, tenantID string, workloadID id.ID) (*workload.Workload, error) {

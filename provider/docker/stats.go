@@ -3,6 +3,7 @@ package docker
 import (
 	"encoding/json"
 	"io"
+	"math"
 
 	"github.com/docker/docker/api/types/container"
 
@@ -46,6 +47,7 @@ func decodeStats(r io.Reader) (*provider.ResourceUsage, error) {
 		rxBytes += n.RxBytes
 		txBytes += n.TxBytes
 	}
+
 	usage.NetworkInMB = bytesToMBFloat(rxBytes)
 	usage.NetworkOutMB = bytesToMBFloat(txBytes)
 
@@ -58,17 +60,21 @@ func decodeStats(r io.Reader) (*provider.ResourceUsage, error) {
 // sample) — the poller smooths this out across subsequent reads.
 func cpuPercent(s *container.StatsResponse) float64 {
 	cpuDelta := float64(s.CPUStats.CPUUsage.TotalUsage) - float64(s.PreCPUStats.CPUUsage.TotalUsage)
+
 	systemDelta := float64(s.CPUStats.SystemUsage) - float64(s.PreCPUStats.SystemUsage)
 	if systemDelta <= 0 || cpuDelta < 0 {
 		return 0
 	}
+
 	cpus := float64(s.CPUStats.OnlineCPUs)
 	if cpus == 0 {
 		cpus = float64(len(s.CPUStats.CPUUsage.PercpuUsage))
 	}
+
 	if cpus == 0 {
 		cpus = 1
 	}
+
 	return (cpuDelta / systemDelta) * cpus * 100.0
 }
 
@@ -80,13 +86,20 @@ func memoryUsage(m *container.MemoryStats) uint64 {
 		if m.Usage > cache {
 			return m.Usage - cache
 		}
+
 		return 0
 	}
+
 	return m.Usage
 }
 
 func bytesToMB(b uint64) int {
-	return int(b / (1024 * 1024))
+	mb := b / (1024 * 1024)
+	if mb > math.MaxInt {
+		return math.MaxInt
+	}
+
+	return int(mb)
 }
 
 func bytesToMBFloat(b uint64) float64 {

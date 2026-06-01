@@ -295,7 +295,7 @@ func (cp *CtrlPlane) wireServices() {
 	// ProviderHealthSnapshot without cross-importing.
 	adminSvc := admin.NewService(cp.store, cp.store, cp.store, cp.store, cp.providers, cp.events, cp.auth)
 	if setter, ok := adminSvc.(interface {
-		SetProviderHealth(admin.ProviderHealthGetter)
+		SetProviderHealth(getter admin.ProviderHealthGetter)
 	}); ok {
 		setter.SetProviderHealth(providerHealthAdapter{cache: cp.ProviderHealth})
 	}

@@ -107,8 +107,8 @@ type ServiceStatus struct {
 // Deploy carries Services []ServiceDeploySpec — partial deploys leave
 // services not listed here untouched.
 type ServiceDeploySpec struct {
-	Name        string            `json:"name"  validate:"required"`
-	Image       string            `json:"image" validate:"required"`
+	Name        string            `json:"name"                   validate:"required"`
+	Image       string            `json:"image"                  validate:"required"`
 	Env         map[string]string `json:"env,omitempty"`
 	HealthCheck *HealthCheckSpec  `json:"health_check,omitempty"`
 }

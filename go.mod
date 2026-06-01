@@ -7,7 +7,7 @@ require (
 	github.com/dgraph-io/badger/v4 v4.9.1
 	github.com/docker/docker v28.5.2+incompatible
 	github.com/docker/go-connections v0.6.0
-	github.com/xraph/forge v1.6.4
+	github.com/xraph/forge v1.6.6
 	github.com/xraph/forgeui v1.4.1
 	github.com/xraph/go-utils v1.1.1
 	github.com/xraph/grove v1.5.2
@@ -17,9 +17,9 @@ require (
 	github.com/xraph/vessel v1.0.2
 	go.jetify.com/typeid/v2 v2.0.0-alpha.3
 	go.mongodb.org/mongo-driver/v2 v2.5.0
-	k8s.io/api v0.35.0
-	k8s.io/apimachinery v0.35.0
-	k8s.io/client-go v0.35.0
+	k8s.io/api v0.35.5
+	k8s.io/apimachinery v0.35.5
+	k8s.io/client-go v0.35.5
 )
 
 require (

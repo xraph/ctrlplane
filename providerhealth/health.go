@@ -67,9 +67,11 @@ func NewCache(registry *provider.Registry, cfg Config) *Cache {
 	if cfg.PollInterval <= 0 {
 		cfg.PollInterval = DefaultConfig().PollInterval
 	}
+
 	if cfg.CheckTimeout <= 0 {
 		cfg.CheckTimeout = DefaultConfig().CheckTimeout
 	}
+
 	return &Cache{
 		registry:     registry,
 		pollInterval: cfg.PollInterval,
@@ -86,8 +88,10 @@ func NewCache(registry *provider.Registry, cfg Config) *Cache {
 // startup to depend on that.
 func (c *Cache) Run(ctx context.Context) {
 	c.sweep(ctx)
+
 	ticker := time.NewTicker(c.pollInterval)
 	defer ticker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -110,7 +114,9 @@ func (c *Cache) CheckNow(ctx context.Context) {
 func (c *Cache) Get(name string) (Status, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
+
 	s, ok := c.results[name]
+
 	return s, ok
 }
 
@@ -119,10 +125,12 @@ func (c *Cache) Get(name string) (Status, bool) {
 func (c *Cache) Snapshot() []Status {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
+
 	out := make([]Status, 0, len(c.results))
 	for _, s := range c.results {
 		out = append(out, s)
 	}
+
 	return out
 }
 
@@ -149,6 +157,7 @@ func (c *Cache) sweep(ctx context.Context) {
 		name   string
 		status Status
 	}
+
 	results := make(chan result, len(providers))
 
 	for name, p := range providers {
@@ -180,11 +189,14 @@ func (c *Cache) sweep(ctx context.Context) {
 	}
 
 	now := time.Now().UTC()
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
 	for name := range providers {
 		if s, ok := collected[name]; ok {
 			c.results[name] = s
+
 			continue
 		}
 		// Worker didn't finish by the deadline. Don't clobber a
@@ -193,6 +205,7 @@ func (c *Cache) sweep(ctx context.Context) {
 		if _, exists := c.results[name]; exists {
 			continue
 		}
+
 		c.results[name] = Status{
 			Name:      name,
 			Healthy:   false,
@@ -219,6 +232,7 @@ func (c *Cache) checkOne(parent context.Context, name string, p provider.Provide
 	defer cancel()
 
 	hs, err := hc.HealthCheck(ctx)
+
 	checked := time.Now().UTC()
 	if err != nil {
 		return Status{
@@ -229,6 +243,7 @@ func (c *Cache) checkOne(parent context.Context, name string, p provider.Provide
 			CheckedAt: checked,
 		}
 	}
+
 	if hs == nil {
 		return Status{
 			Name:      name,
@@ -238,6 +253,7 @@ func (c *Cache) checkOne(parent context.Context, name string, p provider.Provide
 			CheckedAt: checked,
 		}
 	}
+
 	return Status{
 		Name:      name,
 		Healthy:   hs.Healthy,

@@ -38,6 +38,7 @@ func (ts *TestServer) UserContext(subjectID string) context.Context {
 	if subjectID == "" {
 		subjectID = "ctrlplanetest:user"
 	}
+
 	return auth.WithClaims(context.Background(), &auth.Claims{
 		SubjectID: subjectID,
 	})
@@ -51,6 +52,7 @@ func (ts *TestServer) UserContext(subjectID string) context.Context {
 // reason — empty is treated as "I don't care".
 func (ts *TestServer) SeedTenant(t *testing.T, name, externalID, plan string) *admin.Tenant {
 	t.Helper()
+
 	if plan == "" {
 		plan = "free"
 	}
@@ -66,6 +68,7 @@ func (ts *TestServer) SeedTenant(t *testing.T, name, externalID, plan string) *a
 	if err := ts.Store.InsertTenant(context.Background(), tenant); err != nil {
 		t.Fatalf("ctrlplanetest: seed tenant %q: %v", name, err)
 	}
+
 	return tenant
 }
 
@@ -74,10 +77,12 @@ func (ts *TestServer) SeedTenant(t *testing.T, name, externalID, plan string) *a
 // test needs both side-by-side.
 func (ts *TestServer) SeedTenantWithQuota(t *testing.T, name, externalID, plan string, q admin.Quota) *admin.Tenant {
 	t.Helper()
+
 	tenant := ts.SeedTenant(t, name, externalID, plan)
 	if err := ts.CP.Admin.SetQuota(ts.AdminContext(), tenant.ID.String(), q); err != nil {
 		t.Fatalf("ctrlplanetest: seed quota for %q: %v", name, err)
 	}
+
 	return tenant
 }
 
@@ -86,9 +91,11 @@ func (ts *TestServer) SeedTenantWithQuota(t *testing.T, name, externalID, plan s
 // asserted the tenant exists and want a one-liner.
 func (ts *TestServer) MustGetTenantByExternalID(t *testing.T, externalID string) *admin.Tenant {
 	t.Helper()
+
 	got, err := ts.CP.Admin.GetTenantByExternalID(ts.UserContext(""), externalID)
 	if err != nil {
 		t.Fatalf("ctrlplanetest: get tenant by external id %q: %v", externalID, err)
 	}
+
 	return got
 }

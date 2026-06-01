@@ -70,11 +70,11 @@ type SuspendInstanceRequest struct {
 // Services lists only services being changed in this rollout — services
 // not listed inherit their snapshot from the prior Release.
 type DeployAPIRequest struct {
-	InstanceID id.ID                        `description:"Instance identifier"   path:"instanceId"`
-	Services   []provider.ServiceDeploySpec `description:"Per-service deploy spec" json:"services" validate:"required,min=1"`
-	Strategy   string                       `description:"Deploy strategy"       json:"strategy,omitempty"`
-	Notes      string                       `description:"Deploy notes"          json:"notes,omitempty"`
-	CommitSHA  string                       `description:"Git commit SHA"        json:"commit_sha,omitempty"`
+	InstanceID id.ID                        `description:"Instance identifier"     path:"instanceId"`
+	Services   []provider.ServiceDeploySpec `description:"Per-service deploy spec" json:"services"             validate:"required,min=1"`
+	Strategy   string                       `description:"Deploy strategy"         json:"strategy,omitempty"`
+	Notes      string                       `description:"Deploy notes"            json:"notes,omitempty"`
+	CommitSHA  string                       `description:"Git commit SHA"          json:"commit_sha,omitempty"`
 }
 
 // ListDeploymentsRequest binds path + query for GET /v1/instances/:instanceId/deployments.

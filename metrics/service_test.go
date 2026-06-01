@@ -24,18 +24,23 @@ func (f *fakeSampler) Sample(_ context.Context, _ id.ID) (*Sample, error) {
 	if f.err != nil {
 		return nil, f.err
 	}
+
 	f.mu.Lock()
 	defer f.mu.Unlock()
+
 	if idx >= len(f.samples) {
 		// repeat the last sample so the poller has something to push
 		s := f.samples[len(f.samples)-1]
 		s.At = time.Now()
+
 		return &s, nil
 	}
+
 	s := f.samples[idx]
 	if s.At.IsZero() {
 		s.At = time.Now()
 	}
+
 	return &s, nil
 }
 
@@ -58,8 +63,7 @@ func TestService_TrackPushesSamples(t *testing.T) {
 
 	instID := id.New(id.PrefixInstance)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	ch, err := svc.Watch(ctx, instID)
 	if err != nil {
@@ -71,6 +75,7 @@ func TestService_TrackPushesSamples(t *testing.T) {
 
 	// Wait for at least 2 samples to land.
 	deadline := time.After(500 * time.Millisecond)
+
 	got := 0
 	for got < 2 {
 		select {
@@ -103,8 +108,8 @@ func TestService_UntrackClosesWatcherAndStopsPoller(t *testing.T) {
 
 	instID := id.New(id.PrefixInstance)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
+
 	ch, err := svc.Watch(ctx, instID)
 	if err != nil {
 		t.Fatalf("Watch: %v", err)
@@ -114,6 +119,7 @@ func TestService_UntrackClosesWatcherAndStopsPoller(t *testing.T) {
 	time.Sleep(60 * time.Millisecond)
 
 	beforeCalls := sampler.calls.Load()
+
 	svc.Untrack(instID)
 
 	// Watcher should close.
@@ -129,6 +135,7 @@ func TestService_UntrackClosesWatcherAndStopsPoller(t *testing.T) {
 
 	// Sampler should stop being called.
 	time.Sleep(80 * time.Millisecond)
+
 	afterCalls := sampler.calls.Load()
 	if afterCalls > beforeCalls+1 {
 		// allow one in-flight tick
@@ -156,13 +163,14 @@ func TestService_NetworkRateDerivedFromCumulative(t *testing.T) {
 	})
 
 	instID := id.New(id.PrefixInstance)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+
+	ctx := t.Context()
 
 	ch, err := svc.Watch(ctx, instID)
 	if err != nil {
 		t.Fatalf("Watch: %v", err)
 	}
+
 	svc.Track(instID)
 	defer svc.Untrack(instID)
 
@@ -183,6 +191,7 @@ func TestService_NetworkRateDerivedFromCumulative(t *testing.T) {
 		if s.NetworkInBytesPerSec <= 0 {
 			t.Fatalf("expected positive in-rate, got %v", s.NetworkInBytesPerSec)
 		}
+
 		if s.NetworkOutBytesPerSec <= 0 {
 			t.Fatalf("expected positive out-rate, got %v", s.NetworkOutBytesPerSec)
 		}

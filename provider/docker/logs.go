@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -44,10 +45,12 @@ type logEvent struct {
 // detection path or an explicit flag.
 func demuxedDockerStream(src io.ReadCloser) io.ReadCloser {
 	r, w := io.Pipe()
+
 	go func() {
 		defer src.Close()
 		defer w.Close()
-		if err := streamDockerLogs(src, w); err != nil && err != io.EOF {
+
+		if err := streamDockerLogs(src, w); err != nil && !errors.Is(err, io.EOF) {
 			// Best-effort: surface the parse error as a final event
 			// so the consumer sees why the stream ended.
 			ev := logEvent{
@@ -55,10 +58,12 @@ func demuxedDockerStream(src io.ReadCloser) io.ReadCloser {
 				Stream:    "stderr",
 				Line:      "ctrlplane/docker: log stream ended: " + err.Error(),
 			}
-			data, _ := json.Marshal(ev)
-			_, _ = w.Write(append(data, '\n'))
+			if data, mErr := json.Marshal(ev); mErr == nil {
+				_, _ = w.Write(append(data, '\n'))
+			}
 		}
 	}()
+
 	return r
 }
 
@@ -74,10 +79,12 @@ func streamDockerLogs(src io.Reader, dst io.Writer) error {
 			if err == io.EOF || err == io.ErrUnexpectedEOF {
 				return nil
 			}
+
 			return fmt.Errorf("read header: %w", err)
 		}
 
 		streamType := streamTypeName(header[0])
+
 		size := binary.BigEndian.Uint32(header[4:8])
 		if size == 0 {
 			continue
@@ -92,20 +99,23 @@ func streamDockerLogs(src io.Reader, dst io.Writer) error {
 		// line). Splitting by '\n' is sufficient because docker's
 		// timestamp prefix already escapes embedded newlines in
 		// container output.
-		for _, raw := range strings.Split(string(payload), "\n") {
+		for raw := range strings.SplitSeq(string(payload), "\n") {
 			ts, line := splitDockerTimestamp(raw)
 			if line == "" && ts == "" {
 				continue
 			}
+
 			ev := logEvent{
 				Timestamp: ts,
 				Stream:    streamType,
 				Line:      line,
 			}
+
 			data, err := json.Marshal(ev)
 			if err != nil {
 				return fmt.Errorf("marshal log event: %w", err)
 			}
+
 			if _, err := dst.Write(append(data, '\n')); err != nil {
 				return fmt.Errorf("write log event: %w", err)
 			}
@@ -138,12 +148,15 @@ func splitDockerTimestamp(raw string) (ts, body string) {
 	if len(raw) < 20 || raw[19] != '.' && raw[19] != 'Z' && raw[19] != ' ' {
 		return "", raw
 	}
+
 	parts := strings.SplitN(raw, " ", 2)
 	if len(parts) != 2 {
 		return "", raw
 	}
+
 	if _, err := time.Parse(time.RFC3339Nano, parts[0]); err != nil {
 		return "", raw
 	}
+
 	return parts[0], parts[1]
 }

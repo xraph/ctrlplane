@@ -27,6 +27,7 @@ func newRingBuffer(capacity int) *ringBuffer {
 	if capacity <= 0 {
 		capacity = 1
 	}
+
 	return &ringBuffer{
 		cap:   capacity,
 		items: make([]Sample, 0, capacity),
@@ -41,8 +42,10 @@ func (r *ringBuffer) push(s Sample) {
 	if r.size < r.cap {
 		r.items = append(r.items, s)
 		r.size++
+
 		return
 	}
+
 	r.items[r.start] = s
 	r.start = (r.start + 1) % r.cap
 }
@@ -57,8 +60,9 @@ func (r *ringBuffer) snapshot() []Sample {
 	if r.size == 0 {
 		return nil
 	}
+
 	out := make([]Sample, r.size)
-	for i := 0; i < r.size; i++ {
+	for i := range r.size {
 		out[i] = r.items[(r.start+i)%r.cap]
 	}
 	// Defensive: items may briefly be non-monotonic if a sample's
@@ -66,6 +70,7 @@ func (r *ringBuffer) snapshot() []Sample {
 	// pollers — shouldn't happen with one poller per instance, but
 	// snapshot is meant to be sortable for downstream consumers).
 	sort.Slice(out, func(i, j int) bool { return out[i].At.Before(out[j].At) })
+
 	return out
 }
 
@@ -73,10 +78,13 @@ func (r *ringBuffer) snapshot() []Sample {
 func (r *ringBuffer) last() (Sample, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
+
 	if r.size == 0 {
 		return Sample{}, false
 	}
+
 	idx := (r.start + r.size - 1) % r.cap
+
 	return r.items[idx], true
 }
 
@@ -87,6 +95,7 @@ func (r *ringBuffer) downsample(since, until time.Time, resolution time.Duration
 	if resolution <= 0 {
 		return nil
 	}
+
 	all := r.snapshot()
 	if len(all) == 0 {
 		return nil
@@ -97,8 +106,10 @@ func (r *ringBuffer) downsample(since, until time.Time, resolution time.Duration
 		if offset < 0 {
 			return since
 		}
-		n := offset / resolution
-		return since.Add(n * resolution)
+
+		n := int64(offset / resolution)
+
+		return since.Add(time.Duration(n) * resolution)
 	}
 
 	type acc struct {
@@ -107,18 +118,22 @@ func (r *ringBuffer) downsample(since, until time.Time, resolution time.Duration
 		netIn, netOut          float64
 		reqRate, latP95        float64
 	}
+
 	buckets := map[time.Time]*acc{}
 
 	for _, s := range all {
 		if s.At.Before(since) || !s.At.Before(until) {
 			continue
 		}
+
 		b := bucket(s.At)
+
 		a, ok := buckets[b]
 		if !ok {
 			a = &acc{}
 			buckets[b] = a
 		}
+
 		a.count++
 		a.cpu += s.CPUPercent
 		a.memUsed += float64(s.MemoryUsedMB)
@@ -143,7 +158,9 @@ func (r *ringBuffer) downsample(since, until time.Time, resolution time.Duration
 			LatencyP95Ms:          a.latP95 / c,
 		})
 	}
+
 	sort.Slice(out, func(i, j int) bool { return out[i].At.Before(out[j].At) })
+
 	return out
 }
 
@@ -154,9 +171,8 @@ func autoResolution(window time.Duration, targetPoints int) time.Duration {
 	if targetPoints <= 0 {
 		targetPoints = 120
 	}
-	res := window / time.Duration(targetPoints)
-	if res < 10*time.Second {
-		res = 10 * time.Second
-	}
+
+	res := max(window/time.Duration(targetPoints), 10*time.Second)
+
 	return res
 }

@@ -186,7 +186,7 @@ func (p *Provider) Start(ctx context.Context, instanceID id.ID) error {
 // Stop halts the Job (Nomad keeps the spec for resurrection via
 // Start). Equivalent to `nomad job stop` without `-purge`.
 func (p *Provider) Stop(ctx context.Context, instanceID id.ID) error {
-	endpoint := fmt.Sprintf("/v1/job/%s", url.PathEscape(jobName(instanceID)))
+	endpoint := "/v1/job/" + url.PathEscape(jobName(instanceID))
 	if err := p.doRequest(ctx, http.MethodDelete, endpoint, nil, nil); err != nil {
 		return fmt.Errorf("nomad: stop job: %w", err)
 	}
@@ -263,6 +263,7 @@ func (p *Provider) Status(ctx context.Context, instanceID id.ID) (*provider.Inst
 	}
 
 	state := provider.StateRunning
+
 	switch {
 	case anyFailed:
 		state = provider.StateFailed
@@ -465,6 +466,7 @@ func (e notFoundError) Error() string { return "nomad: not found: " + e.url }
 
 func isNotFound(err error) bool {
 	var nf notFoundError
+
 	return errors.As(err, &nf)
 }
 
@@ -511,6 +513,7 @@ func (p *Provider) doRequest(ctx context.Context, method, endpoint string, body,
 
 	if resp.StatusCode >= 400 {
 		raw, _ := io.ReadAll(resp.Body)
+
 		return fmt.Errorf("nomad %s %s: status %d: %s", method, endpoint, resp.StatusCode, string(raw))
 	}
 

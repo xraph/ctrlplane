@@ -22,13 +22,15 @@ const usageRangeMaxResolution = time.Hour
 // body when no sample is stored yet — a fresh instance the poller
 // hasn't sampled yet shouldn't 404.
 //
-// GET /v1/instances/:instanceId/usage
+// GET /v1/instances/:instanceId/usage.
 func (a *API) getInstanceUsage(ctx forge.Context) error {
 	instanceID, err := id.Parse(ctx.Param("instanceId"))
 	if err != nil {
 		return forge.BadRequest("invalid instanceId")
 	}
+
 	sample, _ := a.cp.Metrics.Latest(instanceID)
+
 	return ctx.JSON(200, sample)
 }
 
@@ -38,20 +40,23 @@ func (a *API) getInstanceUsage(ctx forge.Context) error {
 //	?range=1h|6h|24h|7d  (anything time.ParseDuration accepts)
 //	?resolution=...      (optional; default = auto, ~120 buckets)
 //
-// GET /v1/instances/:instanceId/usage/range
+// GET /v1/instances/:instanceId/usage/range.
 func (a *API) getInstanceUsageRange(ctx forge.Context) error {
 	instanceID, err := id.Parse(ctx.Param("instanceId"))
 	if err != nil {
 		return forge.BadRequest("invalid instanceId")
 	}
+
 	q, err := parseUsageRange(ctx)
 	if err != nil {
 		return err
 	}
+
 	series, err := a.cp.Metrics.Range(ctx.Request().Context(), instanceID, q)
 	if err != nil {
 		return forge.InternalError(err)
 	}
+
 	return ctx.JSON(200, series)
 }
 
@@ -59,7 +64,7 @@ func (a *API) getInstanceUsageRange(ctx forge.Context) error {
 // poller produces them. Same auth + keepalive shape as the other
 // streaming handlers.
 //
-// GET /v1/instances/:instanceId/usage/stream
+// GET /v1/instances/:instanceId/usage/stream.
 func (a *API) streamInstanceUsage(ctx forge.Context, stream forge.Stream) error {
 	instanceID, err := id.Parse(ctx.Param("instanceId"))
 	if err != nil {
@@ -86,6 +91,7 @@ func (a *API) streamInstanceUsage(ctx forge.Context, stream forge.Stream) error 
 			if !ok {
 				return nil
 			}
+
 			if err := stream.SendJSON("usage", s); err != nil {
 				return nil
 			}
@@ -98,21 +104,25 @@ func (a *API) streamInstanceUsage(ctx forge.Context, stream forge.Stream) error 
 // getWorkloadUsageRange returns the workload-aggregated time-series
 // summed across replicas.
 //
-// GET /v1/workloads/:workloadId/usage/range
+// GET /v1/workloads/:workloadId/usage/range.
 func (a *API) getWorkloadUsageRange(ctx forge.Context) error {
 	workloadID, err := id.Parse(ctx.Param("workloadId"))
 	if err != nil {
 		return forge.BadRequest("invalid workloadId")
 	}
+
 	q, err := parseUsageRange(ctx)
 	if err != nil {
 		return err
 	}
+
 	wq := workload.MetricsRange{Since: q.Since, Until: q.Until, Resolution: q.Resolution}
+
 	series, err := a.cp.Workloads.RangeMetrics(ctx.Request().Context(), workloadID, wq)
 	if err != nil {
 		return forge.InternalError(err)
 	}
+
 	return ctx.JSON(200, series)
 }
 
@@ -120,7 +130,7 @@ func (a *API) getWorkloadUsageRange(ctx forge.Context) error {
 // The consumer aggregates client-side (or just renders per-replica
 // sparklines next to the workload total).
 //
-// GET /v1/workloads/:workloadId/usage/stream
+// GET /v1/workloads/:workloadId/usage/stream.
 func (a *API) streamWorkloadUsage(ctx forge.Context, stream forge.Stream) error {
 	workloadID, err := id.Parse(ctx.Param("workloadId"))
 	if err != nil {
@@ -147,6 +157,7 @@ func (a *API) streamWorkloadUsage(ctx forge.Context, stream forge.Stream) error 
 			if !ok {
 				return nil
 			}
+
 			if err := stream.SendJSON("usage", ev); err != nil {
 				return nil
 			}
@@ -168,10 +179,12 @@ func parseUsageRange(ctx forge.Context) (metrics.RangeQuery, error) {
 	if rangeStr == "" {
 		rangeStr = "1h"
 	}
+
 	dur, err := time.ParseDuration(rangeStr)
 	if err != nil || dur <= 0 {
 		return q, forge.BadRequest("invalid range parameter")
 	}
+
 	q.Since = now.Add(-dur)
 
 	if v := ctx.Request().URL.Query().Get("resolution"); v != "" {
@@ -185,6 +198,7 @@ func parseUsageRange(ctx forge.Context) (metrics.RangeQuery, error) {
 			return q, forge.BadRequest("invalid resolution parameter")
 		}
 	}
+
 	return q, nil
 }
 
@@ -192,5 +206,6 @@ func capResolution(r time.Duration) time.Duration {
 	if r > usageRangeMaxResolution {
 		return usageRangeMaxResolution
 	}
+
 	return r
 }

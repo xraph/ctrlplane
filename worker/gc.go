@@ -165,7 +165,9 @@ func (g *GarbageCollector) Interval() time.Duration {
 func (g *GarbageCollector) Run(ctx context.Context) error {
 	listCtx, listCancel := context.WithTimeout(ctx, gcStoreCallTimeout)
 	tenants, err := g.tenants.ListTenants(listCtx, admin.ListTenantsOptions{Limit: 1000})
+
 	listCancel()
+
 	if err != nil {
 		return fmt.Errorf("gc: list tenants: %w", err)
 	}
@@ -217,7 +219,9 @@ func (g *GarbageCollector) sweepTenant(ctx context.Context, tenantID string) (in
 
 	listCtx, listCancel := context.WithTimeout(tCtx, gcStoreCallTimeout)
 	res, err := g.instances.List(listCtx, instance.ListOptions{Limit: g.cfg.MaxInstancesPerTick})
+
 	listCancel()
+
 	if err != nil {
 		return 0, fmt.Errorf("list instances: %w", err)
 	}
@@ -237,7 +241,9 @@ func (g *GarbageCollector) sweepTenant(ctx context.Context, tenantID string) (in
 
 		delCtx, delCancel := context.WithTimeout(tCtx, gcStoreCallTimeout)
 		err := g.instances.Delete(delCtx, inst.ID)
+
 		delCancel()
+
 		if err != nil {
 			// Don't abort the tenant sweep on a single Delete
 			// failure — convergent Delete will retry next tick.

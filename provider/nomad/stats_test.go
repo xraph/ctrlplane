@@ -51,9 +51,11 @@ func TestFetchAllocResources_HappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fetchAllocResources: %v", err)
 	}
+
 	if usage.CPUPercent != 20.0 {
 		t.Fatalf("CPUPercent: want 20.0 (12.5+7.5), got %v", usage.CPUPercent)
 	}
+
 	if usage.MemoryUsedMB != 96 {
 		t.Fatalf("MemoryUsedMB: want 96 (64+32), got %d", usage.MemoryUsedMB)
 	}
@@ -74,6 +76,7 @@ func TestFetchAllocResources_JobMissingReturnsZero(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fetchAllocResources should not error on missing job: %v", err)
 	}
+
 	if usage.CPUPercent != 0 || usage.MemoryUsedMB != 0 {
 		t.Fatalf("missing job should yield zero usage, got %+v", usage)
 	}
@@ -83,11 +86,14 @@ func TestFetchAllocResources_JobMissingReturnsZero(t *testing.T) {
 // flips Healthy=true and the message describes reachability.
 func TestHealthCheck_AgentReachable(t *testing.T) {
 	t.Parallel()
+
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/agent/health" {
 			http.NotFound(w, r)
+
 			return
 		}
+
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
@@ -96,10 +102,12 @@ func TestHealthCheck_AgentReachable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
+
 	hs, err := p.HealthCheck(context.Background())
 	if err != nil {
 		t.Fatalf("HealthCheck: %v", err)
 	}
+
 	if !hs.Healthy {
 		t.Fatalf("expected healthy, got %+v", hs)
 	}
@@ -109,17 +117,21 @@ func TestHealthCheck_AgentReachable(t *testing.T) {
 // Use a port we know nothing listens on.
 func TestHealthCheck_AgentDown(t *testing.T) {
 	t.Parallel()
+
 	p, err := New(WithAddress("http://127.0.0.1:1")) // nothing on port 1
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
+
 	hs, err := p.HealthCheck(context.Background())
 	if err != nil {
 		t.Fatalf("HealthCheck should not error on unreachable: %v", err)
 	}
+
 	if hs.Healthy {
 		t.Fatal("expected unhealthy when agent unreachable")
 	}
+
 	if hs.Message == "" {
 		t.Fatal("unhealthy message must describe the failure")
 	}
@@ -159,9 +171,11 @@ func TestFetchAllocResources_PerTaskFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fetchAllocResources: %v", err)
 	}
+
 	if usage.CPUPercent != 33.3 {
 		t.Fatalf("CPUPercent: want 33.3 (per-task), got %v", usage.CPUPercent)
 	}
+
 	if usage.MemoryUsedMB != 16 {
 		t.Fatalf("MemoryUsedMB: want 16 (per-task), got %d", usage.MemoryUsedMB)
 	}

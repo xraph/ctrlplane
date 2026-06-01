@@ -20,12 +20,15 @@ func TestService_Watch_fansOutToMultipleSubscribers(t *testing.T) {
 
 	ctxA, cancelA := context.WithCancel(adminCtx())
 	defer cancelA()
+
 	chA, err := svc.Watch(ctxA, instanceID)
 	if err != nil {
 		t.Fatalf("Watch A: %v", err)
 	}
+
 	ctxB, cancelB := context.WithCancel(adminCtx())
 	defer cancelB()
+
 	chB, err := svc.Watch(ctxB, instanceID)
 	if err != nil {
 		t.Fatalf("Watch B: %v", err)
@@ -53,6 +56,7 @@ func TestService_Watch_closesOnContextCancel(t *testing.T) {
 	svc, instanceID, _ := setupWatchHarness(t)
 
 	ctx, cancel := context.WithCancel(adminCtx())
+
 	ch, err := svc.Watch(ctx, instanceID)
 	if err != nil {
 		t.Fatalf("Watch: %v", err)
@@ -87,15 +91,18 @@ func TestService_Watch_dropsOnSlowConsumer(t *testing.T) {
 
 	ctxStuck, cancelStuck := context.WithCancel(adminCtx())
 	defer cancelStuck()
+
 	if _, err := svc.Watch(ctxStuck, instanceID); err != nil {
 		t.Fatalf("Watch stuck: %v", err)
 	}
 
 	done := make(chan struct{})
+
 	go func() {
-		for i := 0; i < 50; i++ {
+		for range 50 {
 			_, _ = svc.RunCheck(adminCtx(), checkID)
 		}
+
 		close(done)
 	}()
 
@@ -110,6 +117,7 @@ func TestService_Watch_dropsOnSlowConsumer(t *testing.T) {
 
 func setupWatchHarness(t *testing.T) (Service, id.ID, id.ID) {
 	t.Helper()
+
 	store := newFakeStore()
 	svc := NewService(store, event.NewInMemoryBus(), &auth.NoopProvider{})
 	svc.RegisterChecker(&fakeChecker{})
@@ -131,6 +139,7 @@ func setupWatchHarness(t *testing.T) (Service, id.ID, id.ID) {
 	if err := store.InsertCheck(context.Background(), check); err != nil {
 		t.Fatalf("insert check: %v", err)
 	}
+
 	return svc, instanceID, check.ID
 }
 
@@ -158,17 +167,21 @@ func newFakeStore() *fakeStore {
 func (s *fakeStore) InsertCheck(_ context.Context, c *HealthCheck) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	s.checks[c.ID.String()] = c
+
 	return nil
 }
 
 func (s *fakeStore) GetCheck(_ context.Context, _ string, checkID id.ID) (*HealthCheck, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	c, ok := s.checks[checkID.String()]
 	if !ok {
 		return nil, ctrlplane.ErrNotFound
 	}
+
 	return c, nil
 }
 
@@ -179,21 +192,27 @@ func (s *fakeStore) ListChecks(_ context.Context, _ string, _ id.ID) ([]HealthCh
 func (s *fakeStore) UpdateCheck(_ context.Context, c *HealthCheck) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	s.checks[c.ID.String()] = c
+
 	return nil
 }
 
 func (s *fakeStore) DeleteCheck(_ context.Context, _ string, checkID id.ID) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	delete(s.checks, checkID.String())
+
 	return nil
 }
 
 func (s *fakeStore) InsertResult(_ context.Context, r *HealthResult) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	s.results = append(s.results, r)
+
 	return nil
 }
 
@@ -204,11 +223,13 @@ func (s *fakeStore) ListResults(_ context.Context, _ string, _ id.ID, _ HistoryO
 func (s *fakeStore) GetLatestResult(_ context.Context, _ string, checkID id.ID) (*HealthResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	for i := len(s.results) - 1; i >= 0; i-- {
 		if s.results[i].CheckID == checkID {
 			return s.results[i], nil
 		}
 	}
+
 	return nil, ctrlplane.ErrNotFound
 }
 

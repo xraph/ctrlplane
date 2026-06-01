@@ -84,16 +84,9 @@ func replicaCountFor(req provider.ProvisionRequest) int32 {
 
 	for i := range req.Services {
 		if req.Services[i].Role == provider.RoleMain || req.Services[i].Role == "" {
-			n := req.Services[i].Resources.Replicas
-			if n < 1 {
-				n = 1
-			}
+			n := min(max(req.Services[i].Resources.Replicas, 1), maxInt32)
 
-			if n > maxInt32 {
-				n = maxInt32
-			}
-
-			return int32(n) //nolint:gosec // clamped above
+			return int32(n)
 		}
 	}
 

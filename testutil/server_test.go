@@ -16,12 +16,15 @@ func TestNewServer_constructsUsableCtrlPlane(t *testing.T) {
 	if ts.CP == nil {
 		t.Fatal("CP should be set")
 	}
+
 	if ts.Store == nil {
 		t.Fatal("Store should be set")
 	}
+
 	if ts.Auth == nil {
 		t.Fatal("Auth should be set (default NoopProvider)")
 	}
+
 	if ts.Server != nil {
 		t.Fatal("Server should be nil unless WithHTTPAPI()")
 	}
@@ -35,9 +38,11 @@ func TestSeedTenant_roundtrips(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
+
 	if got.ID.String() != tenant.ID.String() {
 		t.Fatalf("returned wrong tenant: want %s, got %s", tenant.ID, got.ID)
 	}
+
 	if got.Plan != "pro" {
 		t.Fatalf("plan: want pro, got %q", got.Plan)
 	}
@@ -45,6 +50,7 @@ func TestSeedTenant_roundtrips(t *testing.T) {
 
 func TestSeedTenant_emptyPlanDefaultsFree(t *testing.T) {
 	ts := testutil.NewServer(t)
+
 	tenant := ts.SeedTenant(t, "X", "org-x", "")
 	if tenant.Plan != "free" {
 		t.Fatalf("want free, got %q", tenant.Plan)
@@ -59,6 +65,7 @@ func TestSeedTenantWithQuota_appliesQuota(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get quota: %v", err)
 	}
+
 	if usage.Quota.MaxInstances != 42 {
 		t.Fatalf("want MaxInstances=42, got %d", usage.Quota.MaxInstances)
 	}
@@ -90,6 +97,7 @@ func TestUserContext_doesNotSatisfyIsSystemAdmin(t *testing.T) {
 func TestMustGetTenantByExternalID_returnsSeed(t *testing.T) {
 	ts := testutil.NewServer(t)
 	want := ts.SeedTenant(t, "A", "ext-a", "free")
+
 	got := ts.MustGetTenantByExternalID(t, "ext-a")
 	if got.ID.String() != want.ID.String() {
 		t.Fatalf("returned wrong tenant: want %s, got %s", want.ID, got.ID)

@@ -21,6 +21,7 @@ func TestCache_SweepCallsHealthCheckPerProvider(t *testing.T) {
 	registry := provider.NewRegistry()
 	a := &fakeProvider{name: "alpha", healthy: true, message: "alpha ok"}
 	b := &fakeProvider{name: "beta", healthy: false, message: "beta down"}
+
 	registry.Register("alpha", a)
 	registry.Register("beta", b)
 
@@ -30,6 +31,7 @@ func TestCache_SweepCallsHealthCheckPerProvider(t *testing.T) {
 	if got := a.calls.Load(); got != 1 {
 		t.Fatalf("alpha HealthCheck calls: want 1, got %d", got)
 	}
+
 	if got := b.calls.Load(); got != 1 {
 		t.Fatalf("beta HealthCheck calls: want 1, got %d", got)
 	}
@@ -37,6 +39,7 @@ func TestCache_SweepCallsHealthCheckPerProvider(t *testing.T) {
 	if status, ok := cache.Get("alpha"); !ok || !status.Healthy {
 		t.Fatalf("alpha cache entry: ok=%v healthy=%v", ok, status.Healthy)
 	}
+
 	if status, ok := cache.Get("beta"); !ok || status.Healthy {
 		t.Fatalf("beta cache entry: ok=%v healthy=%v message=%q", ok, status.Healthy, status.Message)
 	}
@@ -60,9 +63,11 @@ func TestCache_NonHealthCheckerProviderReportedAsUnknownButHealthy(t *testing.T)
 	if !ok {
 		t.Fatal("plain provider not in cache")
 	}
+
 	if !status.Healthy {
 		t.Fatalf("plain provider should default healthy: %+v", status)
 	}
+
 	if status.Message == "" {
 		t.Fatalf("plain provider should carry a clarifying message")
 	}
@@ -85,9 +90,11 @@ func TestCache_HealthCheckErrorRecordedAsUnhealthy(t *testing.T) {
 	if !ok {
 		t.Fatal("k8s provider not in cache")
 	}
+
 	if status.Healthy {
 		t.Fatal("k8s provider should be unhealthy after error")
 	}
+
 	if status.Message == "" {
 		t.Fatal("error message should be carried into Message")
 	}
@@ -112,7 +119,9 @@ func TestCache_SweepBoundedByDeadlineWhenProviderHangs(t *testing.T) {
 	cache := NewCache(registry, cfg)
 
 	start := time.Now()
+
 	cache.CheckNow(context.Background())
+
 	elapsed := time.Since(start)
 
 	if elapsed > 500*time.Millisecond {
@@ -145,6 +154,7 @@ func TestCache_RunStopsOnContextCancel(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
+
 	go func() {
 		cache.Run(ctx)
 		close(done)
@@ -172,9 +182,11 @@ type fakeProvider struct {
 
 func (f *fakeProvider) HealthCheck(_ context.Context) (*provider.HealthStatus, error) {
 	f.calls.Add(1)
+
 	if f.err != nil {
 		return nil, f.err
 	}
+
 	return &provider.HealthStatus{
 		Healthy:   f.healthy,
 		Message:   f.message,

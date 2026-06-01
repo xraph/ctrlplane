@@ -31,27 +31,34 @@ import (
 // "—" in the dashboard rather than perpetual errors.
 func fetchPodMetrics(ctx context.Context, client kubernetes.Interface, namespace string, instanceID id.ID) (*provider.ResourceUsage, error) {
 	selector := instanceSelector(instanceID)
+
 	pods, err := client.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: selector,
 	})
 	if err != nil {
 		return &provider.ResourceUsage{}, nil //nolint:nilerr // no pods = no sample, not a failure
 	}
+
 	if len(pods.Items) == 0 {
 		return &provider.ResourceUsage{}, nil
 	}
 
 	usage := &provider.ResourceUsage{}
+
 	for i := range pods.Items {
 		pod := &pods.Items[i]
+
 		pm, err := getPodMetrics(ctx, client, namespace, pod.Name)
 		if err != nil || pm == nil {
 			continue
 		}
 		// Resource quotas are reported per-container; sum across
 		// containers in the pod.
-		var cpuMillis int64
-		var memBytes int64
+		var (
+			cpuMillis int64
+			memBytes  int64
+		)
+
 		for _, c := range pm.Containers {
 			cpuMillis += parseCPUQuantity(c.Usage.CPU)
 			memBytes += parseMemoryQuantity(c.Usage.Memory)
@@ -61,6 +68,7 @@ func fetchPodMetrics(ctx context.Context, client kubernetes.Interface, namespace
 		// memory limits across the pod for a "MemoryLimitMB" value
 		// the dashboard can compare against.
 		var memLimitBytes int64
+
 		for _, c := range pod.Spec.Containers {
 			if q, ok := c.Resources.Limits["memory"]; ok {
 				memLimitBytes += q.Value()
@@ -101,14 +109,17 @@ type usageQuantity struct {
 func getPodMetrics(ctx context.Context, client kubernetes.Interface, namespace, podName string) (*podMetrics, error) {
 	rest := client.Discovery().RESTClient()
 	path := fmt.Sprintf("/apis/metrics.k8s.io/v1beta1/namespaces/%s/pods/%s", namespace, podName)
+
 	raw, err := rest.Get().AbsPath(path).DoRaw(ctx)
 	if err != nil {
 		return nil, err
 	}
+
 	var pm podMetrics
 	if err := json.Unmarshal(raw, &pm); err != nil {
 		return nil, err
 	}
+
 	return &pm, nil
 }
 
@@ -120,17 +131,20 @@ func parseCPUQuantity(s string) int64 {
 	if s == "" {
 		return 0
 	}
+
 	q, err := resource.ParseQuantity(s)
 	if err != nil {
 		// Fallback: strip a trailing 'n' (nanocpus, the most common
 		// raw shape from metrics-server) and parse as integer.
-		if strings.HasSuffix(s, "n") {
-			if n, perr := strconv.ParseInt(strings.TrimSuffix(s, "n"), 10, 64); perr == nil {
+		if before, ok := strings.CutSuffix(s, "n"); ok {
+			if n, perr := strconv.ParseInt(before, 10, 64); perr == nil {
 				return n / 1_000_000 // n → m
 			}
 		}
+
 		return 0
 	}
+
 	return q.MilliValue()
 }
 
@@ -139,9 +153,11 @@ func parseMemoryQuantity(s string) int64 {
 	if s == "" {
 		return 0
 	}
+
 	q, err := resource.ParseQuantity(s)
 	if err != nil {
 		return 0
 	}
+
 	return q.Value()
 }

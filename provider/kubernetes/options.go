@@ -60,9 +60,11 @@ func WithLocation(country, city string) Option {
 		if country != "" {
 			p.cfg.Country = country
 		}
+
 		if city != "" {
 			p.cfg.City = city
 		}
+
 		return nil
 	}
 }

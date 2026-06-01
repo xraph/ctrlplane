@@ -84,7 +84,9 @@ func (r *Reconciler) Run(ctx context.Context) error {
 
 	listCtx, listCancel := context.WithTimeout(ctx, gcStoreCallTimeout)
 	dcs, err := r.datacenters.ListDatacenters(listCtx, "", datacenter.ListOptions{Limit: 1000})
+
 	listCancel()
+
 	if err != nil {
 		return fmt.Errorf("reconciler: list datacenters: %w", err)
 	}
@@ -115,7 +117,9 @@ func (r *Reconciler) Run(ctx context.Context) error {
 		// driver pool the dispatch / GC loops use.
 		recCtx, recCancel := context.WithTimeout(dcCtx, gcStoreCallTimeout)
 		err := r.bootstraps.Reconcile(recCtx, info, dc.BootstrapServices)
+
 		recCancel()
+
 		if err != nil {
 			// Isolate per-datacenter failures so the rest of the
 			// tick still runs. The bootstrap service itself emits
