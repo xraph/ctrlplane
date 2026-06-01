@@ -65,7 +65,7 @@ func (s *service) Track(instanceID id.ID) {
 		s.rings[key] = newRingBuffer(s.cfg.RetentionCapacity)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(context.Background()) //nolint:gosec // cancel is retained in s.pollers and invoked by Untrack
 	s.pollers[key] = cancel
 	s.mu.Unlock()
 

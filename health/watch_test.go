@@ -2,6 +2,7 @@ package health
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -224,9 +225,9 @@ func (s *fakeStore) GetLatestResult(_ context.Context, _ string, checkID id.ID) 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	for i := len(s.results) - 1; i >= 0; i-- {
-		if s.results[i].CheckID == checkID {
-			return s.results[i], nil
+	for _, r := range slices.Backward(s.results) {
+		if r.CheckID == checkID {
+			return r, nil
 		}
 	}
 

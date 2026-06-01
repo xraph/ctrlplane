@@ -3,6 +3,7 @@ package memory
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	ctrlplane "github.com/xraph/ctrlplane"
 	"github.com/xraph/ctrlplane/health"
@@ -146,9 +147,9 @@ func (s *Store) GetLatestResult(_ context.Context, tenantID string, checkID id.I
 		return nil, fmt.Errorf("%w: no results for check %s", ctrlplane.ErrNotFound, key)
 	}
 
-	for i := len(results) - 1; i >= 0; i-- {
-		if results[i].TenantID == tenantID {
-			clone := results[i]
+	for _, r := range slices.Backward(results) {
+		if r.TenantID == tenantID {
+			clone := r
 
 			return &clone, nil
 		}

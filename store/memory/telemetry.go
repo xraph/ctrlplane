@@ -3,6 +3,7 @@ package memory
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	ctrlplane "github.com/xraph/ctrlplane"
 	"github.com/xraph/ctrlplane/id"
@@ -160,8 +161,7 @@ func (s *Store) GetLatestResourceSnapshot(_ context.Context, tenantID string, in
 
 	instKey := idStr(instanceID)
 
-	for i := len(s.resourceSnapshots) - 1; i >= 0; i-- {
-		snap := s.resourceSnapshots[i]
+	for _, snap := range slices.Backward(s.resourceSnapshots) {
 		if idStr(snap.InstanceID) == instKey && snap.TenantID == tenantID {
 			return &snap, nil
 		}
