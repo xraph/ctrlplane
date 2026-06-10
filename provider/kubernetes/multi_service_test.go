@@ -52,7 +52,7 @@ func TestBuildPodSpec_MultiService(t *testing.T) {
 		},
 	}
 
-	spec := buildPodSpec(req)
+	spec := buildPodSpec(req, nil)
 
 	// Init goes to initContainers[]; Main + Sidecar to containers[].
 	if len(spec.InitContainers) != 1 {
@@ -98,7 +98,7 @@ func TestBuildDeployment_ReplicasFromMain(t *testing.T) {
 		},
 	}
 
-	dep := buildDeployment(req, "default", map[string]string{})
+	dep := buildDeployment(req, "default", map[string]string{}, nil)
 
 	if dep.Spec.Replicas == nil {
 		t.Fatalf("expected replicas pointer, got nil")
@@ -131,7 +131,7 @@ func TestBuildStatefulSet_PVCTemplates(t *testing.T) {
 		},
 	}
 
-	ss := buildStatefulSet(req, "default", map[string]string{})
+	ss := buildStatefulSet(req, "default", map[string]string{}, nil)
 
 	if len(ss.Spec.VolumeClaimTemplates) != 1 {
 		t.Fatalf("volume claim templates: want 1, got %d", len(ss.Spec.VolumeClaimTemplates))
@@ -171,7 +171,7 @@ func TestBuildService_HeadlessForStatefulSet(t *testing.T) {
 		},
 	}
 
-	svc := buildService(req, "default", map[string]string{}, true)
+	svc := buildService(req, "default", map[string]string{}, true /*headless*/)
 	if svc == nil {
 		t.Fatalf("expected Service, got nil")
 	}
@@ -215,5 +215,116 @@ func TestBuildConfigMaps_PerService(t *testing.T) {
 	cms := buildConfigMaps(req, "default", map[string]string{})
 	if len(cms) != 2 {
 		t.Fatalf("config maps: want 2 (main + logger), got %d", len(cms))
+	}
+}
+
+// TestBuildPodSpec_ImagePullSecrets verifies that imagePullSecrets are
+// forwarded to the PodSpec so private registry images can be pulled.
+func TestBuildPodSpec_ImagePullSecrets(t *testing.T) {
+	t.Parallel()
+
+	req := provider.ProvisionRequest{
+		InstanceID: id.New(id.PrefixInstance),
+		TenantID:   "ten_test",
+		Services: []provider.ServiceSpec{
+			{
+				Name:  "main",
+				Image: "ghcr.io/private/app:1.0",
+				Role:  provider.RoleMain,
+			},
+		},
+	}
+
+	spec := buildPodSpec(req, []string{"ghcr-pull"})
+
+	if len(spec.ImagePullSecrets) != 1 {
+		t.Fatalf("imagePullSecrets: want 1, got %d", len(spec.ImagePullSecrets))
+	}
+
+	if spec.ImagePullSecrets[0].Name != "ghcr-pull" {
+		t.Fatalf("imagePullSecrets[0].Name: want ghcr-pull, got %q", spec.ImagePullSecrets[0].Name)
+	}
+}
+
+// TestBuildDeployment_ImagePullSecrets verifies that imagePullSecrets
+// propagate through buildDeployment into the pod template spec.
+func TestBuildDeployment_ImagePullSecrets(t *testing.T) {
+	t.Parallel()
+
+	req := provider.ProvisionRequest{
+		InstanceID: id.New(id.PrefixInstance),
+		TenantID:   "ten_test",
+		Kind:       provider.KindDeployment,
+		Services: []provider.ServiceSpec{
+			{
+				Name:  "main",
+				Image: "ghcr.io/private/app:1.0",
+				Role:  provider.RoleMain,
+				Ports: []provider.PortSpec{
+					{Container: 7903, Protocol: "TCP"},
+				},
+			},
+		},
+	}
+
+	dep := buildDeployment(req, "default", map[string]string{}, []string{"ghcr-pull"})
+
+	got := dep.Spec.Template.Spec.ImagePullSecrets
+	if len(got) != 1 {
+		t.Fatalf("deployment imagePullSecrets: want 1, got %d", len(got))
+	}
+
+	if got[0].Name != "ghcr-pull" {
+		t.Fatalf("deployment imagePullSecrets[0].Name: want ghcr-pull, got %q", got[0].Name)
+	}
+}
+
+// TestBuildEndpoints verifies that buildEndpoints produces the correct
+// in-cluster DNS URL for each service with ports.
+func TestBuildEndpoints(t *testing.T) {
+	t.Parallel()
+
+	req := provider.ProvisionRequest{
+		InstanceID: id.New(id.PrefixInstance),
+		TenantID:   "ten_test",
+		Services: []provider.ServiceSpec{
+			{
+				Name:  "main",
+				Image: "app:1",
+				Role:  provider.RoleMain,
+				Ports: []provider.PortSpec{
+					{Container: 7903, Protocol: "TCP"},
+				},
+			},
+			{
+				// No ports — should not produce an endpoint.
+				Name:  "init-db",
+				Image: "alpine:3",
+				Role:  provider.RoleInit,
+			},
+		},
+	}
+
+	endpoints := buildEndpoints(req, "staging")
+
+	if len(endpoints) != 1 {
+		t.Fatalf("endpoints: want 1 (main only), got %d", len(endpoints))
+	}
+
+	ep := endpoints[0]
+
+	if ep.ServiceName != "main" {
+		t.Fatalf("endpoint ServiceName: want main, got %q", ep.ServiceName)
+	}
+
+	if ep.Port != 7903 {
+		t.Fatalf("endpoint Port: want 7903, got %d", ep.Port)
+	}
+
+	svcName := serviceName(req.InstanceID)
+	wantURL := "http://" + svcName + ".staging.svc.cluster.local:7903"
+
+	if ep.URL != wantURL {
+		t.Fatalf("endpoint URL:\n  want %q\n   got %q", wantURL, ep.URL)
 	}
 }

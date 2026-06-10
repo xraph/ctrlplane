@@ -89,6 +89,17 @@ func WithInCluster() Option {
 	}
 }
 
+// WithImagePullSecrets sets the list of Kubernetes Secret names that
+// contain credentials for pulling private container images. Each name
+// is added to the pod spec's imagePullSecrets field verbatim.
+func WithImagePullSecrets(secrets ...string) Option {
+	return func(p *Provider) error {
+		p.cfg.ImagePullSecrets = secrets
+
+		return nil
+	}
+}
+
 // WithConfig applies all non-zero fields from a Config struct.
 // This is useful when loading configuration from files or environment variables.
 func WithConfig(cfg Config) Option {
@@ -123,6 +134,10 @@ func WithConfig(cfg Config) Option {
 
 		if cfg.Labels != nil {
 			p.cfg.Labels = cfg.Labels
+		}
+
+		if len(cfg.ImagePullSecrets) > 0 {
+			p.cfg.ImagePullSecrets = cfg.ImagePullSecrets
 		}
 
 		return nil

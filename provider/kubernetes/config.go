@@ -36,4 +36,10 @@ type Config struct {
 
 	// Labels are additional labels applied to all managed resources.
 	Labels map[string]string `json:"labels,omitempty"`
+
+	// ImagePullSecrets is the list of Secret names in the same namespace
+	// that contain credentials to pull private container images.
+	// Corresponds to the Kubernetes podSpec.imagePullSecrets field.
+	// Use CP_K8S_IMAGE_PULL_SECRETS (comma-separated) to configure via env.
+	ImagePullSecrets []string `env:"CP_K8S_IMAGE_PULL_SECRETS" json:"image_pull_secrets,omitempty"`
 }

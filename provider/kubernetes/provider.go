@@ -117,9 +117,11 @@ func (p *Provider) Provision(ctx context.Context, req provider.ProvisionRequest)
 		}
 	}
 
+	pullSecrets := p.cfg.ImagePullSecrets
+
 	switch req.Kind {
 	case provider.KindStatefulSet:
-		ss := buildStatefulSet(req, ns, labels)
+		ss := buildStatefulSet(req, ns, labels, pullSecrets)
 		if _, err := p.client.AppsV1().StatefulSets(ns).Create(ctx, ss, metav1.CreateOptions{}); err != nil {
 			return nil, fmt.Errorf("kubernetes: create statefulset: %w", err)
 		}
@@ -131,7 +133,7 @@ func (p *Provider) Provision(ctx context.Context, req provider.ProvisionRequest)
 			}
 		}
 	default: // KindDeployment (also covers empty-string for legacy paths)
-		dep := buildDeployment(req, ns, labels)
+		dep := buildDeployment(req, ns, labels, pullSecrets)
 		if _, err := p.client.AppsV1().Deployments(ns).Create(ctx, dep, metav1.CreateOptions{}); err != nil {
 			return nil, fmt.Errorf("kubernetes: create deployment: %w", err)
 		}
@@ -155,9 +157,16 @@ func (p *Provider) Provision(ctx context.Context, req provider.ProvisionRequest)
 		serviceRefs[req.Services[i].Name] = pref + "/" + req.Services[i].Name
 	}
 
+	// Populate Endpoints from the in-cluster Service DNS address for
+	// each service that declares ports. Consumers (e.g. twinos
+	// firstEndpoint / injectUpstreamEnv) read Endpoints[0].URL as the
+	// upstream base URL.
+	endpoints := buildEndpoints(req, ns)
+
 	return &provider.ProvisionResult{
 		ProviderRef: pref,
 		ServiceRefs: serviceRefs,
+		Endpoints:   endpoints,
 	}, nil
 }
 

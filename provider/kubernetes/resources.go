@@ -97,7 +97,10 @@ func replicaCountFor(req provider.ProvisionRequest) int32 {
 // Init services land in InitContainers (run-once before main start);
 // Main and Sidecar services land in Containers and run for the pod's
 // lifetime.
-func buildPodSpec(req provider.ProvisionRequest) corev1.PodSpec {
+//
+// imagePullSecrets is the list of Secret names in the same namespace
+// that hold registry credentials. Pass nil/empty for public images.
+func buildPodSpec(req provider.ProvisionRequest, imagePullSecrets []string) corev1.PodSpec {
 	var (
 		containers     []corev1.Container
 		initContainers []corev1.Container
@@ -137,10 +140,16 @@ func buildPodSpec(req provider.ProvisionRequest) corev1.PodSpec {
 		}
 	}
 
+	var pullSecretRefs []corev1.LocalObjectReference
+	for _, s := range imagePullSecrets {
+		pullSecretRefs = append(pullSecretRefs, corev1.LocalObjectReference{Name: s})
+	}
+
 	return corev1.PodSpec{
-		Containers:     containers,
-		InitContainers: initContainers,
-		Volumes:        podVolumes,
+		Containers:       containers,
+		InitContainers:   initContainers,
+		Volumes:          podVolumes,
+		ImagePullSecrets: pullSecretRefs,
 	}
 }
 
@@ -176,7 +185,7 @@ func buildContainer(instanceID id.ID, svc provider.ServiceSpec) corev1.Container
 
 // buildDeployment creates a Kubernetes Deployment for a stateless
 // workload (req.Kind == KindDeployment, the default).
-func buildDeployment(req provider.ProvisionRequest, namespace string, labels map[string]string) *appsv1.Deployment {
+func buildDeployment(req provider.ProvisionRequest, namespace string, labels map[string]string, imagePullSecrets []string) *appsv1.Deployment {
 	replicas := replicaCountFor(req)
 
 	return &appsv1.Deployment{
@@ -196,7 +205,7 @@ func buildDeployment(req provider.ProvisionRequest, namespace string, labels map
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: labels,
 				},
-				Spec: buildPodSpec(req),
+				Spec: buildPodSpec(req, imagePullSecrets),
 			},
 		},
 	}
@@ -206,9 +215,9 @@ func buildDeployment(req provider.ProvisionRequest, namespace string, labels map
 // stateful workload (req.Kind == KindStatefulSet). Persistent volumes
 // declared on services become volumeClaimTemplates so each replica
 // gets its own PVC.
-func buildStatefulSet(req provider.ProvisionRequest, namespace string, labels map[string]string) *appsv1.StatefulSet {
+func buildStatefulSet(req provider.ProvisionRequest, namespace string, labels map[string]string, imagePullSecrets []string) *appsv1.StatefulSet {
 	replicas := replicaCountFor(req)
-	podSpec := buildPodSpec(req)
+	podSpec := buildPodSpec(req, imagePullSecrets)
 
 	// Volume claims: take every unique named volume across services
 	// and emit a volumeClaimTemplate for it. The PodSpec volumes that
@@ -406,6 +415,41 @@ func buildVolumeMounts(volumes []provider.VolumeSpec) []corev1.VolumeMount {
 	}
 
 	return result
+}
+
+// buildEndpoints derives the in-cluster DNS endpoints for a provisioned
+// instance. One Endpoint is emitted per service that declares at least
+// one port. The URL has the form:
+//
+//	http://<serviceName>.<namespace>.svc.cluster.local:<firstPort>
+//
+// This is the stable address consumers (e.g. twinos injectUpstreamEnv)
+// should use to reach the workload from within the cluster. Non-HTTP
+// protocols are not distinguished here — callers that need TLS or gRPC
+// URLs should wrap the value themselves.
+func buildEndpoints(req provider.ProvisionRequest, namespace string) []provider.Endpoint {
+	svcName := serviceName(req.InstanceID)
+
+	var endpoints []provider.Endpoint
+
+	for i := range req.Services {
+		svc := req.Services[i]
+		if len(svc.Ports) == 0 {
+			continue
+		}
+
+		firstPort := svc.Ports[0].Container
+		url := fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", svcName, namespace, firstPort)
+
+		endpoints = append(endpoints, provider.Endpoint{
+			ServiceName: svc.Name,
+			URL:         url,
+			Port:        firstPort,
+			Protocol:    "TCP",
+		})
+	}
+
+	return endpoints
 }
 
 // toK8sProtocol maps a protocol string to a Kubernetes Protocol constant.
