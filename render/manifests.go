@@ -71,7 +71,7 @@ func splitYAMLDocs(data []byte) ([]string, error) {
 // the leading separator in each frame, so a separator-only frame is not
 // whitespace-empty and must be detected line by line.
 func isEmptyYAMLDoc(doc []byte) bool {
-	for _, line := range bytes.Split(doc, []byte("\n")) {
+	for line := range bytes.SplitSeq(doc, []byte("\n")) {
 		trimmed := bytes.TrimSpace(line)
 		if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("---")) {
 			continue

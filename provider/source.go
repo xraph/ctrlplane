@@ -40,8 +40,8 @@ type DeploymentSource struct {
 // templated with variables before install; secret values are supplied at
 // apply time and never persisted in a snapshot.
 type HelmSource struct {
-	Repo        string         `json:"repo,omitempty"`         // oci:// or https chart repo
-	Chart       string         `json:"chart"                   validate:"required"`
+	Repo        string         `json:"repo,omitempty"` // oci:// or https chart repo
+	Chart       string         `json:"chart"                  validate:"required"`
 	Version     string         `json:"version,omitempty"`
 	ReleaseName string         `json:"release_name,omitempty"` // defaulted from the instance
 	Namespace   string         `json:"namespace,omitempty"`
@@ -73,7 +73,7 @@ type ArgoCDSource struct {
 	DestServer     string         `json:"dest_server,omitempty"`
 	DestNamespace  string         `json:"dest_namespace,omitempty"`
 	Helm           *ArgoHelm      `json:"helm,omitempty"`
-	SyncPolicy     ArgoSyncPolicy `json:"sync_policy,omitempty"`
+	SyncPolicy     ArgoSyncPolicy `json:"sync_policy,omitzero"`
 }
 
 // ArgoHelm carries Helm-specific parameters for a Helm-typed Argo
