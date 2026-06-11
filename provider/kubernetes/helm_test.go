@@ -3,6 +3,7 @@ package kubernetes
 import (
 	"context"
 	"io"
+	"slices"
 	"strings"
 	"testing"
 
@@ -184,5 +185,12 @@ func TestHelmStatus(t *testing.T) {
 
 	if st.State != provider.StateRunning || !st.Ready {
 		t.Errorf("state=%s ready=%v, want running/ready", st.State, st.Ready)
+	}
+}
+
+func TestCapabilities_IncludesHelm(t *testing.T) {
+	caps := (&Provider{}).Capabilities()
+	if !slices.Contains(caps, provider.CapHelm) {
+		t.Errorf("capabilities missing CapHelm: %v", caps)
 	}
 }

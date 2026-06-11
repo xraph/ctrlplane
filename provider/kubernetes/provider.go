@@ -39,6 +39,7 @@ type Provider struct {
 	client     kubernetes.Interface
 	dynamic    dynamic.Interface
 	mapper     meta.RESTMapper
+	restConfig *rest.Config
 	helmConfig func(namespace string) (*action.Configuration, error)
 	loadChart  func(src provider.RenderedHelm) (*chart.Chart, error)
 }
@@ -85,12 +86,18 @@ func New(opts ...Option) (*Provider, error) {
 	}
 
 	p.dynamic = dyn
+	p.restConfig = restCfg
 
 	// Lazily resolve GVK→GVR via discovery; the mapper performs no network
 	// call until the first manifest apply needs a mapping.
 	p.mapper = restmapper.NewDeferredDiscoveryRESTMapper(
 		memory.NewMemCacheClient(client.Discovery()),
 	)
+
+	// Default helm seams talk to the real cluster and chart repos. Tests
+	// override these fields with in-memory equivalents.
+	p.helmConfig = p.defaultHelmConfig
+	p.loadChart = defaultLoadChart
 
 	return p, nil
 }
@@ -121,6 +128,7 @@ func (p *Provider) Capabilities() []provider.Capability {
 		provider.CapRolling,
 		provider.CapVolumes,
 		provider.CapManifests,
+		provider.CapHelm,
 	}
 }
 

@@ -168,6 +168,10 @@ func (p *Provider) HelmStatus(_ context.Context, instanceID id.ID) (*provider.In
 	}, nil
 }
 
+// Compile-time check that Provider implements the HelmEngine optional
+// interface.
+var _ provider.HelmEngine = (*Provider)(nil)
+
 // helmStateFor maps a Helm release status to a ctrlplane InstanceState.
 func helmStateFor(status release.Status) provider.InstanceState {
 	switch status {
