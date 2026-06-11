@@ -13,13 +13,11 @@ import (
 	"github.com/xraph/ctrlplane/provider"
 )
 
-// releaseName is the Helm release name for an instance — the chart's
-// explicit ReleaseName when set, otherwise derived from the instance id.
-func releaseName(instanceID id.ID, ch provider.RenderedHelm) string {
-	if ch.ReleaseName != "" {
-		return ch.ReleaseName
-	}
-
+// releaseName is the Helm release name for an instance. It is derived
+// solely from the instance id so uninstall and status — which receive only
+// the id — can reconstruct it deterministically. A chart's ReleaseName hint
+// is intentionally not used as the release identity.
+func releaseName(instanceID id.ID) string {
 	return deploymentName(instanceID)
 }
 
@@ -60,7 +58,7 @@ func (p *Provider) HelmInstall(_ context.Context, req provider.HelmInstallReques
 		return nil, fmt.Errorf("kubernetes: load chart: %w", err)
 	}
 
-	name := releaseName(req.InstanceID, req.Chart)
+	name := releaseName(req.InstanceID)
 
 	rel, err := runInstall(cfg, ch, name, ns, req.Chart.Values)
 	if err != nil {
@@ -100,7 +98,7 @@ func (p *Provider) HelmUpgrade(_ context.Context, req provider.HelmUpgradeReques
 		return nil, fmt.Errorf("kubernetes: load chart: %w", err)
 	}
 
-	name := releaseName(req.InstanceID, req.Chart)
+	name := releaseName(req.InstanceID)
 
 	rel, err := runUpgrade(cfg, ch, name, ns, req.Chart.Values)
 	if err != nil {
@@ -110,6 +108,63 @@ func (p *Provider) HelmUpgrade(_ context.Context, req provider.HelmUpgradeReques
 	return &provider.DeployResult{
 		ProviderRef: "helm:" + rel.Namespace + "/" + rel.Name,
 		Status:      string(rel.Info.Status),
+	}, nil
+}
+
+// runUninstall removes a release.
+func runUninstall(cfg *action.Configuration, name string) error {
+	if _, err := action.NewUninstall(cfg).Run(name); err != nil {
+		return fmt.Errorf("helm uninstall: %w", err)
+	}
+
+	return nil
+}
+
+// HelmUninstall removes the instance's release.
+func (p *Provider) HelmUninstall(_ context.Context, instanceID id.ID) error {
+	cfg, err := p.helmConfig(p.cfg.Namespace)
+	if err != nil {
+		return fmt.Errorf("kubernetes: helm config: %w", err)
+	}
+
+	name := releaseName(instanceID)
+	if err := runUninstall(cfg, name); err != nil {
+		return fmt.Errorf("kubernetes: helm uninstall %s: %w", name, err)
+	}
+
+	return nil
+}
+
+// runStatus fetches the current release.
+func runStatus(cfg *action.Configuration, name string) (*release.Release, error) {
+	rel, err := action.NewGet(cfg).Run(name)
+	if err != nil {
+		return nil, fmt.Errorf("helm get: %w", err)
+	}
+
+	return rel, nil
+}
+
+// HelmStatus reports the instance release's state.
+func (p *Provider) HelmStatus(_ context.Context, instanceID id.ID) (*provider.InstanceStatus, error) {
+	cfg, err := p.helmConfig(p.cfg.Namespace)
+	if err != nil {
+		return nil, fmt.Errorf("kubernetes: helm config: %w", err)
+	}
+
+	name := releaseName(instanceID)
+
+	rel, err := runStatus(cfg, name)
+	if err != nil {
+		return nil, fmt.Errorf("kubernetes: helm status %s: %w", name, err)
+	}
+
+	state := helmStateFor(rel.Info.Status)
+
+	return &provider.InstanceStatus{
+		State:   state,
+		Ready:   state == provider.StateRunning,
+		Message: rel.Info.Description,
 	}, nil
 }
 

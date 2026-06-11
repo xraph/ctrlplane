@@ -99,7 +99,7 @@ func TestHelmInstall(t *testing.T) {
 		t.Errorf("provider ref = %q, want helm: prefix", res.ProviderRef)
 	}
 
-	rel, err := cfg.Releases.Last(releaseName(instID, req.Chart))
+	rel, err := cfg.Releases.Last(releaseName(instID))
 	if err != nil {
 		t.Fatalf("read release: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestHelmUpgrade(t *testing.T) {
 		t.Error("expected a deploy status")
 	}
 
-	rel, err := cfg.Releases.Last(releaseName(instID, chartRef))
+	rel, err := cfg.Releases.Last(releaseName(instID))
 	if err != nil {
 		t.Fatalf("read release: %v", err)
 	}
@@ -147,5 +147,42 @@ func TestHelmUpgrade(t *testing.T) {
 
 	if !strings.Contains(rel.Manifest, "v2") {
 		t.Errorf("upgraded manifest missing new value:\n%s", rel.Manifest)
+	}
+}
+
+func TestHelmUninstall(t *testing.T) {
+	p, cfg := newHelmTestProvider()
+	ctx := context.Background()
+	instID := id.New(id.PrefixInstance)
+
+	if _, err := p.HelmInstall(ctx, provider.HelmInstallRequest{InstanceID: instID, Namespace: "default", Chart: provider.RenderedHelm{Chart: "test", Values: map[string]any{"k": "x"}}}); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+
+	if err := p.HelmUninstall(ctx, instID); err != nil {
+		t.Fatalf("uninstall: %v", err)
+	}
+
+	if _, err := cfg.Releases.Last(releaseName(instID)); err == nil {
+		t.Error("expected release to be gone after uninstall")
+	}
+}
+
+func TestHelmStatus(t *testing.T) {
+	p, _ := newHelmTestProvider()
+	ctx := context.Background()
+	instID := id.New(id.PrefixInstance)
+
+	if _, err := p.HelmInstall(ctx, provider.HelmInstallRequest{InstanceID: instID, Namespace: "default", Chart: provider.RenderedHelm{Chart: "test", Values: map[string]any{"k": "x"}}}); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+
+	st, err := p.HelmStatus(ctx, instID)
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+
+	if st.State != provider.StateRunning || !st.Ready {
+		t.Errorf("state=%s ready=%v, want running/ready", st.State, st.Ready)
 	}
 }
