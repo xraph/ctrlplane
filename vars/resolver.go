@@ -290,7 +290,7 @@ func evalExpression(expr string, scope Scope) (string, error) {
 	}
 
 	var sb strings.Builder
-	if err := tmpl.Execute(&sb, scope.root()); err != nil {
+	if err := tmpl.Execute(&sb, scope.Root()); err != nil {
 		return "", fmt.Errorf("eval expression: %w", err)
 	}
 

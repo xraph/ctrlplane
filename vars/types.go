@@ -59,9 +59,11 @@ type Scope struct {
 	Region   string
 }
 
-// root builds the case-sensitive template root so expressions use lowercase
+// Root builds the case-sensitive template root so expressions use lowercase
 // selectors: {{ .var.x }}, {{ .instance.id }}, {{ .tenant.id }}, {{ .region }}.
-func (s Scope) root() map[string]any {
+// It is exported so the render package can evaluate templates against the
+// same scope shape the resolver uses for computed expressions.
+func (s Scope) Root() map[string]any {
 	return map[string]any{
 		"var": s.Var,
 		"instance": map[string]any{
