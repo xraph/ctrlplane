@@ -48,4 +48,14 @@ var (
 	// this backend. Used by store backends that satisfy an interface
 	// for compilation but defer real persistence to a later phase.
 	ErrNotImplemented = errors.New("ctrlplane: not implemented")
+
+	// ErrInvalidSource indicates a deployment source is malformed — its
+	// Type does not match a single populated payload, or required fields
+	// for that source type are missing.
+	ErrInvalidSource = errors.New("ctrlplane: invalid deployment source")
+
+	// ErrUnsupportedSource indicates the selected provider cannot deploy
+	// the requested source type (e.g. a Helm source on a provider without
+	// the helm capability).
+	ErrUnsupportedSource = errors.New("ctrlplane: provider does not support deployment source")
 )
