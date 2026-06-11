@@ -11,6 +11,7 @@ import (
 	"github.com/xraph/ctrlplane/event"
 	"github.com/xraph/ctrlplane/id"
 	"github.com/xraph/ctrlplane/provider"
+	"github.com/xraph/ctrlplane/vars"
 )
 
 // service is the concrete Service implementation.
@@ -60,7 +61,28 @@ func (s *service) Create(ctx context.Context, req CreateRequest) (*Template, err
 		return nil, errors.New("create template: name is required")
 	}
 
-	if err := validateServices(req.Services); err != nil {
+	// Resolve the effective deployment source: an explicit Source, or
+	// legacy Services projected onto a services Source.
+	source := req.Source
+	if source.Type == "" && len(req.Services) > 0 {
+		source = provider.DeploymentSource{Type: provider.SourceServices, Services: req.Services}
+	}
+
+	if source.Type == "" {
+		return nil, errors.New("create template: a source or services is required")
+	}
+
+	if err := source.Validate(); err != nil {
+		return nil, fmt.Errorf("create template: %w", err)
+	}
+
+	if source.Type == provider.SourceServices {
+		if err := validateServices(source.Services); err != nil {
+			return nil, fmt.Errorf("create template: %w", err)
+		}
+	}
+
+	if err := vars.ValidateDefinitions(req.Variables); err != nil {
 		return nil, fmt.Errorf("create template: %w", err)
 	}
 
@@ -76,9 +98,11 @@ func (s *service) Create(ctx context.Context, req CreateRequest) (*Template, err
 		Description:     req.Description,
 		DefaultKind:     kind,
 		DefaultStrategy: req.DefaultStrategy,
-		Services:        req.Services,
+		Services:        source.Services,
 		Labels:          req.Labels,
 		Notes:           req.Notes,
+		Variables:       req.Variables,
+		Source:          source,
 	}
 
 	if err := s.store.InsertTemplate(ctx, tmpl); err != nil {
@@ -206,6 +230,34 @@ func (s *service) Update(ctx context.Context, templateID id.ID, req UpdateReques
 	if req.Notes != nil {
 		tmpl.Notes = *req.Notes
 	}
+
+	if req.Variables != nil {
+		if err := vars.ValidateDefinitions(req.Variables); err != nil {
+			return nil, fmt.Errorf("update template: %w", err)
+		}
+
+		tmpl.Variables = req.Variables
+	}
+
+	if req.Source != nil {
+		if err := req.Source.Validate(); err != nil {
+			return nil, fmt.Errorf("update template: %w", err)
+		}
+
+		if req.Source.Type == provider.SourceServices {
+			if err := validateServices(req.Source.Services); err != nil {
+				return nil, fmt.Errorf("update template: %w", err)
+			}
+		}
+
+		tmpl.Source = *req.Source
+		tmpl.Services = req.Source.Services
+	} else if req.Services != nil && tmpl.Source.Type == provider.SourceServices {
+		// Keep a services Source in sync with a legacy Services update.
+		tmpl.Source.Services = req.Services
+	}
+
+	tmpl.NormalizeSource()
 
 	if err := s.store.UpdateTemplate(ctx, tmpl); err != nil {
 		return nil, fmt.Errorf("update template %s: %w", templateID, err)

@@ -5,29 +5,38 @@ import (
 
 	"github.com/xraph/ctrlplane/id"
 	"github.com/xraph/ctrlplane/provider"
+	"github.com/xraph/ctrlplane/vars"
 )
 
 // CreateRequest holds the parameters for creating a workload template.
+//
+// A template describes what to deploy via Source. For backward
+// compatibility, callers may instead populate Services alone — Create
+// projects them onto a services Source.
 type CreateRequest struct {
-	Name            string                 `json:"name"                       validate:"required"`
-	Description     string                 `json:"description,omitempty"`
-	DefaultKind     provider.WorkloadKind  `json:"default_kind,omitempty"`
-	DefaultStrategy string                 `json:"default_strategy,omitempty"`
-	Services        []provider.ServiceSpec `json:"services"                   validate:"required,min=1"`
-	Labels          map[string]string      `json:"labels,omitempty"`
-	Notes           string                 `json:"notes,omitempty"`
+	Name            string                    `json:"name"                       validate:"required"`
+	Description     string                    `json:"description,omitempty"`
+	DefaultKind     provider.WorkloadKind     `json:"default_kind,omitempty"`
+	DefaultStrategy string                    `json:"default_strategy,omitempty"`
+	Services        []provider.ServiceSpec    `json:"services,omitempty"`
+	Labels          map[string]string         `json:"labels,omitempty"`
+	Notes           string                    `json:"notes,omitempty"`
+	Variables       []vars.Definition         `json:"variables,omitempty"`
+	Source          provider.DeploymentSource `json:"source,omitzero"`
 }
 
 // UpdateRequest holds the parameters for updating a workload template.
 // Pointer fields enable partial updates — only non-nil fields are applied.
 type UpdateRequest struct {
-	Name            *string                `json:"name,omitempty"`
-	Description     *string                `json:"description,omitempty"`
-	DefaultKind     *provider.WorkloadKind `json:"default_kind,omitempty"`
-	DefaultStrategy *string                `json:"default_strategy,omitempty"`
-	Services        []provider.ServiceSpec `json:"services,omitempty"`
-	Labels          map[string]string      `json:"labels,omitempty"`
-	Notes           *string                `json:"notes,omitempty"`
+	Name            *string                    `json:"name,omitempty"`
+	Description     *string                    `json:"description,omitempty"`
+	DefaultKind     *provider.WorkloadKind     `json:"default_kind,omitempty"`
+	DefaultStrategy *string                    `json:"default_strategy,omitempty"`
+	Services        []provider.ServiceSpec     `json:"services,omitempty"`
+	Labels          map[string]string          `json:"labels,omitempty"`
+	Notes           *string                    `json:"notes,omitempty"`
+	Variables       []vars.Definition          `json:"variables,omitempty"`
+	Source          *provider.DeploymentSource `json:"source,omitempty"`
 }
 
 // CreateFromWorkloadRequest forks a template from an existing workload's
