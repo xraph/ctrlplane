@@ -63,3 +63,38 @@ func TestRender_ManifestsInline_SkipsEmptyDocs(t *testing.T) {
 		t.Fatalf("docs = %d, want 1: %#v", len(out.Manifests.Docs), out.Manifests.Docs)
 	}
 }
+
+func TestRender_ManifestsKustomize(t *testing.T) {
+	files := map[string]string{
+		"/kustomization.yaml": "namePrefix: prod-\nresources:\n  - deployment.yaml\n",
+		"/deployment.yaml": "apiVersion: apps/v1\n" +
+			"kind: Deployment\n" +
+			"metadata:\n  name: app\n" +
+			"spec:\n  replicas: {{ .var.replicas }}\n",
+	}
+
+	src := provider.DeploymentSource{
+		Type: provider.SourceManifests,
+		Manifests: &provider.ManifestSource{
+			Kustomize: &provider.KustomizeSource{Files: files, Root: "/"},
+		},
+	}
+
+	out, err := Render(src, scopeWith(map[string]any{"replicas": 2}))
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+
+	if out.Manifests == nil || len(out.Manifests.Docs) != 1 {
+		t.Fatalf("docs = %#v, want 1", out.Manifests)
+	}
+
+	doc := out.Manifests.Docs[0]
+	if !strings.Contains(doc, "name: prod-app") {
+		t.Errorf("kustomize namePrefix not applied: %q", doc)
+	}
+
+	if !strings.Contains(doc, "replicas: 2") {
+		t.Errorf("variable not templated before build: %q", doc)
+	}
+}

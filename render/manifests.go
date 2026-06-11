@@ -17,6 +17,15 @@ import (
 // Inline YAML is templated then split; kustomize sources are templated then
 // built in memory (see renderKustomize).
 func renderManifests(src *provider.ManifestSource, scope vars.Scope) (*provider.RenderedManifests, error) {
+	if src.Kustomize != nil {
+		docs, err := renderKustomize(src.Kustomize, scope)
+		if err != nil {
+			return nil, err
+		}
+
+		return &provider.RenderedManifests{Docs: docs}, nil
+	}
+
 	rendered, err := tmplString(src.Inline, scope)
 	if err != nil {
 		return nil, fmt.Errorf("manifests inline: %w", err)
