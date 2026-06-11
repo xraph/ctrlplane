@@ -3,6 +3,7 @@ package template
 import (
 	ctrlplane "github.com/xraph/ctrlplane"
 	"github.com/xraph/ctrlplane/provider"
+	"github.com/xraph/ctrlplane/vars"
 )
 
 // SecretRef is an alias for provider.SecretRef. The canonical type lives
@@ -32,6 +33,27 @@ type Template struct {
 	Services        []provider.ServiceSpec `db:"services"         json:"services"`
 	Labels          map[string]string      `db:"labels"           json:"labels,omitempty"`
 	Notes           string                 `db:"notes"            json:"notes,omitempty"`
+
+	// Variables declares the typed template variables resolved at
+	// instantiation time and injected into the deployment source.
+	Variables []vars.Definition `db:"variables" json:"variables,omitempty"`
+
+	// Source describes what the template deploys (services | helm |
+	// manifests | argocd). Legacy templates carry only Services; call
+	// NormalizeSource to project them onto a services Source.
+	Source provider.DeploymentSource `db:"source" json:"source,omitzero"`
+}
+
+// NormalizeSource projects a legacy services-only template onto a typed
+// services Source when no Source.Type is set. Idempotent — an explicit
+// Source is left untouched.
+func (t *Template) NormalizeSource() {
+	if t.Source.Type == "" && len(t.Services) > 0 {
+		t.Source = provider.DeploymentSource{
+			Type:     provider.SourceServices,
+			Services: t.Services,
+		}
+	}
 }
 
 // MainService returns the template's Main service, or nil when none is
