@@ -197,3 +197,35 @@ func TestDeleteManifests(t *testing.T) {
 		t.Fatalf("second delete should be no-op, got %v", err)
 	}
 }
+
+func TestManifestStatus(t *testing.T) {
+	p := newManifestTestProvider()
+	ctx := context.Background()
+	instID := id.New(id.PrefixInstance)
+
+	if _, err := p.ApplyManifests(ctx, manifestReq(instID)); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	st, err := p.ManifestStatus(ctx, instID)
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+
+	if st.State != provider.StateRunning || !st.Ready {
+		t.Errorf("after apply: state=%s ready=%v, want running/ready", st.State, st.Ready)
+	}
+
+	if err := p.dynamic.Resource(depGVR).Namespace("default").Delete(ctx, "dep1", metav1.DeleteOptions{}); err != nil {
+		t.Fatalf("delete dep1: %v", err)
+	}
+
+	st2, err := p.ManifestStatus(ctx, instID)
+	if err != nil {
+		t.Fatalf("status after delete: %v", err)
+	}
+
+	if st2.State == provider.StateRunning {
+		t.Errorf("after deleting one object, state should not be running, got %s", st2.State)
+	}
+}

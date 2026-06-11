@@ -255,16 +255,20 @@ func (p *Provider) readTracking(ctx context.Context, instanceID id.ID) ([]object
 	return refs, nil
 }
 
-// deleteRef deletes one tracked object, treating NotFound as success.
-func (p *Provider) deleteRef(ctx context.Context, ref objectRef) error {
+// resourceForRef returns the dynamic resource interface addressing one
+// tracked object.
+func (p *Provider) resourceForRef(ref objectRef) dynamic.ResourceInterface {
 	gvr := schema.GroupVersionResource{Group: ref.Group, Version: ref.Version, Resource: ref.Resource}
-
-	var ri dynamic.ResourceInterface = p.dynamic.Resource(gvr)
 	if ref.Namespace != "" {
-		ri = p.dynamic.Resource(gvr).Namespace(ref.Namespace)
+		return p.dynamic.Resource(gvr).Namespace(ref.Namespace)
 	}
 
-	if err := ri.Delete(ctx, ref.Name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+	return p.dynamic.Resource(gvr)
+}
+
+// deleteRef deletes one tracked object, treating NotFound as success.
+func (p *Provider) deleteRef(ctx context.Context, ref objectRef) error {
+	if err := p.resourceForRef(ref).Delete(ctx, ref.Name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("kubernetes: delete %s %s: %w", ref.Resource, ref.Name, err)
 	}
 
@@ -297,4 +301,43 @@ func (p *Provider) DeleteManifests(ctx context.Context, instanceID id.ID) error 
 	}
 
 	return nil
+}
+
+// ManifestStatus reports the aggregate state of an instance's applied
+// objects. It is existence-based: all tracked objects present yields
+// Running; any missing yields Provisioning. Deep readiness of arbitrary
+// resources is out of scope for this iteration.
+func (p *Provider) ManifestStatus(ctx context.Context, instanceID id.ID) (*provider.InstanceStatus, error) {
+	refs, err := p.readTracking(ctx, instanceID)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(refs) == 0 {
+		return &provider.InstanceStatus{
+			State:   provider.StateProvisioning,
+			Ready:   false,
+			Message: "no manifests applied",
+		}, nil
+	}
+
+	for _, ref := range refs {
+		if _, err := p.resourceForRef(ref).Get(ctx, ref.Name, metav1.GetOptions{}); err != nil {
+			if apierrors.IsNotFound(err) {
+				return &provider.InstanceStatus{
+					State:   provider.StateProvisioning,
+					Ready:   false,
+					Message: fmt.Sprintf("%s %s not found", ref.Resource, ref.Name),
+				}, nil
+			}
+
+			return nil, fmt.Errorf("kubernetes: manifest status %s %s: %w", ref.Resource, ref.Name, err)
+		}
+	}
+
+	return &provider.InstanceStatus{
+		State:   provider.StateRunning,
+		Ready:   true,
+		Message: "all manifests applied",
+	}, nil
 }
