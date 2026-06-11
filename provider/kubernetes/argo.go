@@ -4,10 +4,13 @@ import (
 	"context"
 	"fmt"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
+	"github.com/xraph/ctrlplane/id"
 	"github.com/xraph/ctrlplane/provider"
 )
 
@@ -152,6 +155,42 @@ func (p *Provider) ArgoApply(ctx context.Context, req provider.ArgoApplyRequest)
 
 	return &provider.ProvisionResult{
 		ProviderRef: "argocd:" + ns + "/" + name,
+	}, nil
+}
+
+// ArgoDelete removes the instance's Application CR. A missing Application is
+// treated as success.
+func (p *Provider) ArgoDelete(ctx context.Context, instanceID id.ID) error {
+	ns := p.argoNamespace()
+	name := deploymentName(instanceID)
+
+	err := p.dynamic.Resource(argoGVR).Namespace(ns).Delete(ctx, name, metav1.DeleteOptions{})
+	if err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("kubernetes: delete argo application %s: %w", name, err)
+	}
+
+	return nil
+}
+
+// ArgoStatus reads the Application's sync and health status and maps them to
+// an InstanceState.
+func (p *Provider) ArgoStatus(ctx context.Context, instanceID id.ID) (*provider.InstanceStatus, error) {
+	ns := p.argoNamespace()
+	name := deploymentName(instanceID)
+
+	app, err := p.dynamic.Resource(argoGVR).Namespace(ns).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("kubernetes: get argo application %s: %w", name, err)
+	}
+
+	sync, _, _ := unstructured.NestedString(app.Object, "status", "sync", "status")
+	health, _, _ := unstructured.NestedString(app.Object, "status", "health", "status")
+	state := argoStateFor(sync, health)
+
+	return &provider.InstanceStatus{
+		State:   state,
+		Ready:   state == provider.StateRunning,
+		Message: fmt.Sprintf("sync=%s health=%s", sync, health),
 	}, nil
 }
 

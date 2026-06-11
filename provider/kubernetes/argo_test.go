@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -142,5 +143,57 @@ func TestBuildArgoApplication(t *testing.T) {
 
 	if selfHeal, _, _ := unstructured.NestedBool(u.Object, "spec", "syncPolicy", "automated", "selfHeal"); !selfHeal {
 		t.Errorf("selfHeal not set")
+	}
+}
+
+func TestArgoDelete(t *testing.T) {
+	p := newArgoTestProvider()
+	ctx := context.Background()
+	instID := id.New(id.PrefixInstance)
+
+	if _, err := p.ArgoApply(ctx, argoReq(instID)); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	if err := p.ArgoDelete(ctx, instID); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+
+	if _, err := p.dynamic.Resource(argoGVR).Namespace("argocd").Get(ctx, deploymentName(instID), metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Errorf("application should be gone, got %v", err)
+	}
+
+	if err := p.ArgoDelete(ctx, instID); err != nil {
+		t.Fatalf("second delete should be no-op, got %v", err)
+	}
+}
+
+func TestArgoStatus(t *testing.T) {
+	p := newArgoTestProvider()
+	ctx := context.Background()
+	instID := id.New(id.PrefixInstance)
+	name := deploymentName(instID)
+
+	app := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "argoproj.io/v1alpha1",
+		"kind":       "Application",
+		"metadata":   map[string]any{"name": name, "namespace": "argocd"},
+		"status": map[string]any{
+			"sync":   map[string]any{"status": "Synced"},
+			"health": map[string]any{"status": "Healthy"},
+		},
+	}}
+
+	if _, err := p.dynamic.Resource(argoGVR).Namespace("argocd").Create(ctx, app, metav1.CreateOptions{}); err != nil {
+		t.Fatalf("seed application: %v", err)
+	}
+
+	st, err := p.ArgoStatus(ctx, instID)
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+
+	if st.State != provider.StateRunning || !st.Ready {
+		t.Errorf("state=%s ready=%v, want running/ready", st.State, st.Ready)
 	}
 }
