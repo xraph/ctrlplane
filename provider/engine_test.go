@@ -42,3 +42,19 @@ func (stubHelmEngine) HelmStatus(context.Context, id.ID) (*InstanceStatus, error
 func TestHelmEngine_Interface(t *testing.T) {
 	var _ HelmEngine = stubHelmEngine{}
 }
+
+type stubArgoEngine struct{}
+
+func (stubArgoEngine) ArgoApply(context.Context, ArgoApplyRequest) (*ProvisionResult, error) {
+	return nil, nil
+}
+
+func (stubArgoEngine) ArgoDelete(context.Context, id.ID) error { return nil }
+
+func (stubArgoEngine) ArgoStatus(context.Context, id.ID) (*InstanceStatus, error) {
+	return nil, nil
+}
+
+func TestArgoEngine_Interface(t *testing.T) {
+	var _ ArgoEngine = stubArgoEngine{}
+}

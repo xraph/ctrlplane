@@ -68,3 +68,28 @@ type HelmUpgradeRequest struct {
 	Namespace  string       `json:"namespace,omitempty"`
 	Chart      RenderedHelm `json:"chart"`
 }
+
+// ArgoEngine is an optional provider interface for managing Argo CD
+// Application CRs. Providers that can drive Argo CD implement it and
+// advertise CapArgoCD; the workload dispatcher type-asserts for it when a
+// source is SourceArgoCD.
+type ArgoEngine interface {
+	// ArgoApply creates or updates the instance's Application resource.
+	ArgoApply(ctx context.Context, req ArgoApplyRequest) (*ProvisionResult, error)
+
+	// ArgoDelete removes the instance's Application resource.
+	ArgoDelete(ctx context.Context, instanceID id.ID) error
+
+	// ArgoStatus reports the Application's sync/health as an instance state.
+	ArgoStatus(ctx context.Context, instanceID id.ID) (*InstanceStatus, error)
+}
+
+// ArgoApplyRequest carries the rendered Argo source for one instance. The
+// Application CR is named from the instance id and lives in the provider's
+// configured Argo namespace.
+type ArgoApplyRequest struct {
+	InstanceID id.ID             `json:"instance_id"`
+	TenantID   string            `json:"tenant_id"`
+	App        ArgoCDSource      `json:"app"`
+	Labels     map[string]string `json:"labels,omitempty"`
+}
