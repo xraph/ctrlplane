@@ -1,8 +1,79 @@
 package kubernetes
 
 import (
+	"context"
 	"testing"
+
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	dynamicfake "k8s.io/client-go/dynamic/fake"
 )
+
+var cmGVR = schema.GroupVersionResource{Version: "v1", Resource: "configmaps"}
+
+// testMapper returns a RESTMapper that knows the resource kinds used in
+// these tests, standing in for discovery-backed mapping in production.
+func testMapper() meta.RESTMapper {
+	m := meta.NewDefaultRESTMapper([]schema.GroupVersion{{Version: "v1"}, {Group: "apps", Version: "v1"}})
+	m.Add(schema.GroupVersionKind{Version: "v1", Kind: "ConfigMap"}, meta.RESTScopeNamespace)
+	m.Add(schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "Deployment"}, meta.RESTScopeNamespace)
+
+	return m
+}
+
+// cmObject builds an unstructured ConfigMap in the default namespace.
+func cmObject(name string, data map[string]any) *unstructured.Unstructured {
+	return &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "v1",
+		"kind":       "ConfigMap",
+		"metadata":   map[string]any{"name": name, "namespace": "default"},
+		"data":       data,
+	}}
+}
+
+// newManifestTestProvider builds a Provider wired to a fake dynamic client
+// and the test RESTMapper.
+func newManifestTestProvider() *Provider {
+	return &Provider{
+		cfg:     Config{Namespace: "default"},
+		dynamic: dynamicfake.NewSimpleDynamicClient(runtime.NewScheme()),
+		mapper:  testMapper(),
+	}
+}
+
+func TestApplyObject_CreateThenUpdate(t *testing.T) {
+	p := newManifestTestProvider()
+	ctx := context.Background()
+
+	if err := p.applyObject(ctx, cmObject("cm1", map[string]any{"k": "v1"})); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	got, err := p.dynamic.Resource(cmGVR).Namespace("default").Get(ctx, "cm1", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get after create: %v", err)
+	}
+
+	if data, _, _ := unstructured.NestedString(got.Object, "data", "k"); data != "v1" {
+		t.Errorf("data.k = %q, want v1", data)
+	}
+
+	if err := p.applyObject(ctx, cmObject("cm1", map[string]any{"k": "v2"})); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+
+	got2, err := p.dynamic.Resource(cmGVR).Namespace("default").Get(ctx, "cm1", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get after update: %v", err)
+	}
+
+	if data, _, _ := unstructured.NestedString(got2.Object, "data", "k"); data != "v2" {
+		t.Errorf("data.k = %q, want v2", data)
+	}
+}
 
 func TestParseManifests(t *testing.T) {
 	docs := []string{
