@@ -2,7 +2,10 @@ package kubernetes
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"maps"
+	"strconv"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -10,10 +13,32 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/dynamic"
 	"sigs.k8s.io/yaml"
+
+	"github.com/xraph/ctrlplane/id"
+	"github.com/xraph/ctrlplane/provider"
 )
 
 // fieldManager identifies ctrlplane as the writer of applied objects.
 const fieldManager = "ctrlplane"
+
+// manifestTrackingSuffix is appended to the per-instance ConfigMap that
+// records which objects a manifests source applied.
+const manifestTrackingSuffix = "-manifests"
+
+// objectRef locates one applied object so it can be fetched or deleted
+// without re-parsing the source.
+type objectRef struct {
+	Group     string `json:"group"`
+	Version   string `json:"version"`
+	Resource  string `json:"resource"`
+	Namespace string `json:"namespace"`
+	Name      string `json:"name"`
+}
+
+// trackingName is the name of the per-instance manifest-tracking ConfigMap.
+func trackingName(instanceID id.ID) string {
+	return deploymentName(instanceID) + manifestTrackingSuffix
+}
 
 // parseManifests decodes rendered YAML documents into unstructured objects.
 // Empty documents are skipped; an object missing apiVersion or kind is an
@@ -98,4 +123,101 @@ func (p *Provider) applyObject(ctx context.Context, obj *unstructured.Unstructur
 	}
 
 	return nil
+}
+
+// objectRefFor builds the tracking ref for an object, resolving its GVR and
+// effective namespace via the RESTMapper.
+func (p *Provider) objectRefFor(obj *unstructured.Unstructured) (objectRef, error) {
+	gvk := obj.GroupVersionKind()
+
+	mapping, err := p.mapper.RESTMapping(gvk.GroupKind(), gvk.Version)
+	if err != nil {
+		return objectRef{}, fmt.Errorf("kubernetes: rest mapping for %s: %w", gvk, err)
+	}
+
+	ns := obj.GetNamespace()
+	if mapping.Scope.Name() == meta.RESTScopeNameNamespace && ns == "" {
+		ns = p.cfg.Namespace
+	}
+
+	return objectRef{
+		Group:     mapping.Resource.Group,
+		Version:   mapping.Resource.Version,
+		Resource:  mapping.Resource.Resource,
+		Namespace: ns,
+		Name:      obj.GetName(),
+	}, nil
+}
+
+// setLabels merges labels into an object's existing label set.
+func setLabels(obj *unstructured.Unstructured, labels map[string]string) {
+	existing := obj.GetLabels()
+	if existing == nil {
+		existing = make(map[string]string, len(labels))
+	}
+
+	maps.Copy(existing, labels)
+	obj.SetLabels(existing)
+}
+
+// ApplyManifests applies every rendered document for an instance, labels
+// each object, and records the applied refs in a per-instance tracking
+// ConfigMap so they can later be deleted or inspected.
+func (p *Provider) ApplyManifests(ctx context.Context, req provider.ManifestApplyRequest) (*provider.ProvisionResult, error) {
+	objs, err := parseManifests(req.Manifests.Docs)
+	if err != nil {
+		return nil, fmt.Errorf("kubernetes: %w", err)
+	}
+
+	extra := make(map[string]string, len(p.cfg.Labels)+len(req.Labels))
+	maps.Copy(extra, p.cfg.Labels)
+	maps.Copy(extra, req.Labels)
+	labels := instanceLabels(req.InstanceID, req.TenantID, extra)
+
+	refs := make([]objectRef, 0, len(objs))
+
+	for _, obj := range objs {
+		setLabels(obj, labels)
+
+		if err := p.applyObject(ctx, obj); err != nil {
+			return nil, err
+		}
+
+		ref, err := p.objectRefFor(obj)
+		if err != nil {
+			return nil, err
+		}
+
+		refs = append(refs, ref)
+	}
+
+	if err := p.writeTracking(ctx, req.InstanceID, labels, refs); err != nil {
+		return nil, err
+	}
+
+	return &provider.ProvisionResult{
+		ProviderRef: providerRef(p.cfg.Namespace, req.InstanceID),
+		Metadata:    map[string]string{"objects": strconv.Itoa(len(refs))},
+	}, nil
+}
+
+// writeTracking stores the applied object refs in a per-instance ConfigMap.
+func (p *Provider) writeTracking(ctx context.Context, instanceID id.ID, labels map[string]string, refs []objectRef) error {
+	data, err := json.Marshal(refs)
+	if err != nil {
+		return fmt.Errorf("kubernetes: marshal manifest tracking: %w", err)
+	}
+
+	cm := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "v1",
+		"kind":       "ConfigMap",
+		"metadata": map[string]any{
+			"name":      trackingName(instanceID),
+			"namespace": p.cfg.Namespace,
+		},
+		"data": map[string]any{"refs": string(data)},
+	}}
+	setLabels(cm, labels)
+
+	return p.applyObject(ctx, cm)
 }

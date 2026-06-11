@@ -2,6 +2,7 @@ package kubernetes
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -10,7 +11,24 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
+
+	"github.com/xraph/ctrlplane/id"
+	"github.com/xraph/ctrlplane/provider"
 )
+
+var depGVR = schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"}
+
+// manifestReq builds a two-document apply request for the given instance.
+func manifestReq(instanceID id.ID) provider.ManifestApplyRequest {
+	return provider.ManifestApplyRequest{
+		InstanceID: instanceID,
+		TenantID:   "ten_1",
+		Manifests: provider.RenderedManifests{Docs: []string{
+			"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cm1\ndata:\n  k: v\n",
+			"apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: dep1\n",
+		}},
+	}
+}
 
 var cmGVR = schema.GroupVersionResource{Version: "v1", Resource: "configmaps"}
 
@@ -102,5 +120,49 @@ func TestParseManifests(t *testing.T) {
 func TestParseManifests_MissingKind(t *testing.T) {
 	if _, err := parseManifests([]string{"apiVersion: v1\nmetadata:\n  name: x\n"}); err == nil {
 		t.Fatal("expected error for manifest without kind")
+	}
+}
+
+func TestApplyManifests(t *testing.T) {
+	p := newManifestTestProvider()
+	ctx := context.Background()
+	instID := id.New(id.PrefixInstance)
+
+	res, err := p.ApplyManifests(ctx, manifestReq(instID))
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	if res.ProviderRef == "" {
+		t.Error("expected a provider ref")
+	}
+
+	cm, err := p.dynamic.Resource(cmGVR).Namespace("default").Get(ctx, "cm1", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get cm1: %v", err)
+	}
+
+	if cm.GetLabels()[labelInstanceID] != instID.String() {
+		t.Errorf("cm1 missing instance label: %v", cm.GetLabels())
+	}
+
+	if _, err := p.dynamic.Resource(depGVR).Namespace("default").Get(ctx, "dep1", metav1.GetOptions{}); err != nil {
+		t.Fatalf("get dep1: %v", err)
+	}
+
+	track, err := p.dynamic.Resource(cmGVR).Namespace("default").Get(ctx, trackingName(instID), metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get tracking configmap: %v", err)
+	}
+
+	refsJSON, _, _ := unstructured.NestedString(track.Object, "data", "refs")
+
+	var refs []objectRef
+	if err := json.Unmarshal([]byte(refsJSON), &refs); err != nil {
+		t.Fatalf("unmarshal refs: %v", err)
+	}
+
+	if len(refs) != 2 {
+		t.Errorf("tracked refs = %d, want 2", len(refs))
 	}
 }
