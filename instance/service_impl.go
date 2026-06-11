@@ -10,9 +10,12 @@ import (
 
 	ctrlplane "github.com/xraph/ctrlplane"
 	"github.com/xraph/ctrlplane/auth"
+	"github.com/xraph/ctrlplane/dispatch"
 	"github.com/xraph/ctrlplane/event"
 	"github.com/xraph/ctrlplane/id"
 	"github.com/xraph/ctrlplane/provider"
+	"github.com/xraph/ctrlplane/render"
+	"github.com/xraph/ctrlplane/vars"
 )
 
 // service implements the Service interface.
@@ -67,8 +70,19 @@ func (s *service) Create(ctx context.Context, req CreateRequest) (*Instance, err
 		return nil, fmt.Errorf("create instance: resolve provider: %w", err)
 	}
 
-	if len(req.Services) == 0 {
-		return nil, errors.New("create instance: at least one service required")
+	// Resolve the effective deployment source: an explicit Source, or
+	// legacy Services projected onto a services Source.
+	source := req.Source
+	if source.Type == "" && len(req.Services) > 0 {
+		source = provider.DeploymentSource{Type: provider.SourceServices, Services: req.Services}
+	}
+
+	if source.Type == "" {
+		return nil, errors.New("create instance: a source or services is required")
+	}
+
+	if err := source.Validate(); err != nil {
+		return nil, fmt.Errorf("create instance: %w", err)
 	}
 
 	kind := req.Kind
@@ -87,7 +101,8 @@ func (s *service) Create(ctx context.Context, req CreateRequest) (*Instance, err
 		Region:       req.Region,
 		State:        provider.StateProvisioning,
 		Kind:         kind,
-		Services:     req.Services,
+		Services:     source.Services,
+		Source:       source,
 		Labels:       req.Labels,
 	}
 
@@ -95,14 +110,7 @@ func (s *service) Create(ctx context.Context, req CreateRequest) (*Instance, err
 		return nil, fmt.Errorf("create instance: insert: %w", err)
 	}
 
-	result, err := p.Provision(ctx, provider.ProvisionRequest{
-		InstanceID: inst.ID,
-		TenantID:   claims.TenantID,
-		Name:       req.Name,
-		Kind:       kind,
-		Services:   req.Services,
-		Labels:     req.Labels,
-	})
+	result, err := s.provisionSource(ctx, p, inst, source, req)
 	if err != nil {
 		// Mark the instance as failed if provisioning fails.
 		inst.State = provider.StateFailed
@@ -141,6 +149,44 @@ func (s *service) Create(ctx context.Context, req CreateRequest) (*Instance, err
 		WithActor(claims.SubjectID))
 
 	return inst, nil
+}
+
+// provisionSource resolves the instance's variables against its derived
+// context, renders the deployment source, and dispatches provisioning to the
+// appropriate provider engine. Services flow through the same path —
+// rendering is a no-op when no templates are present and dispatch falls
+// through to the core Provision.
+func (s *service) provisionSource(
+	ctx context.Context,
+	p provider.Provider,
+	inst *Instance,
+	source provider.DeploymentSource,
+	req CreateRequest,
+) (*provider.ProvisionResult, error) {
+	derived := vars.Scope{
+		Instance: vars.InstanceContext{ID: inst.ID.String(), Name: inst.Name},
+		Tenant:   vars.TenantContext{ID: inst.TenantID},
+		Region:   inst.Region,
+	}
+
+	scope, _, err := vars.NewResolver().Resolve(ctx, req.Variables, req.VariableValues, derived)
+	if err != nil {
+		return nil, fmt.Errorf("resolve variables: %w", err)
+	}
+
+	rendered, err := render.Render(source, scope)
+	if err != nil {
+		return nil, fmt.Errorf("render source: %w", err)
+	}
+
+	return dispatch.Provision(ctx, p, dispatch.Request{
+		InstanceID: inst.ID,
+		TenantID:   inst.TenantID,
+		Name:       inst.Name,
+		Kind:       inst.Kind,
+		Source:     rendered,
+		Labels:     inst.Labels,
+	})
 }
 
 // Get returns an instance by ID, scoped to the caller's tenant.
@@ -283,7 +329,7 @@ func (s *service) Delete(ctx context.Context, instanceID id.ID) error {
 			return nil
 		}
 
-		if err := p.Deprovision(ctx, inst.ID); err != nil {
+		if err := dispatch.Deprovision(ctx, p, inst.Source.Type, inst.ID); err != nil {
 			inst.State = provider.StateFailed
 			inst.UpdatedAt = time.Now().UTC()
 			_ = s.store.Update(ctx, inst)
