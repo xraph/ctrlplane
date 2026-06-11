@@ -3,6 +3,7 @@ package kubernetes
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"testing"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -30,7 +31,6 @@ func manifestReq(instanceID id.ID) provider.ManifestApplyRequest {
 		}},
 	}
 }
-
 
 // testMapper returns a RESTMapper that knows the resource kinds used in
 // these tests, standing in for discovery-backed mapping in production.
@@ -227,5 +227,12 @@ func TestManifestStatus(t *testing.T) {
 
 	if st2.State == provider.StateRunning {
 		t.Errorf("after deleting one object, state should not be running, got %s", st2.State)
+	}
+}
+
+func TestCapabilities_IncludesManifests(t *testing.T) {
+	caps := (&Provider{}).Capabilities()
+	if !slices.Contains(caps, provider.CapManifests) {
+		t.Errorf("capabilities missing CapManifests: %v", caps)
 	}
 }

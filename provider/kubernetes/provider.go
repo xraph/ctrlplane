@@ -9,9 +9,11 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/discovery/cached/memory"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/restmapper"
 	"k8s.io/client-go/tools/clientcmd"
 
 	ctrlplane "github.com/xraph/ctrlplane"
@@ -69,6 +71,19 @@ func New(opts ...Option) (*Provider, error) {
 
 	p.client = client
 
+	dyn, err := dynamic.NewForConfig(restCfg)
+	if err != nil {
+		return nil, fmt.Errorf("kubernetes: create dynamic client: %w", err)
+	}
+
+	p.dynamic = dyn
+
+	// Lazily resolve GVK→GVR via discovery; the mapper performs no network
+	// call until the first manifest apply needs a mapping.
+	p.mapper = restmapper.NewDeferredDiscoveryRESTMapper(
+		memory.NewMemCacheClient(client.Discovery()),
+	)
+
 	return p, nil
 }
 
@@ -97,6 +112,7 @@ func (p *Provider) Capabilities() []provider.Capability {
 		provider.CapExec,
 		provider.CapRolling,
 		provider.CapVolumes,
+		provider.CapManifests,
 	}
 }
 

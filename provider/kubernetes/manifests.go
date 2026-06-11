@@ -19,6 +19,10 @@ import (
 	"github.com/xraph/ctrlplane/provider"
 )
 
+// Compile-time check that Provider implements the ManifestEngine optional
+// interface.
+var _ provider.ManifestEngine = (*Provider)(nil)
+
 // fieldManager identifies ctrlplane as the writer of applied objects.
 const fieldManager = "ctrlplane"
 
