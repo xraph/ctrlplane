@@ -22,6 +22,13 @@ func Render(src provider.DeploymentSource, scope vars.Scope) (provider.RenderedS
 		}
 
 		return provider.RenderedSource{Type: provider.SourceServices, Services: services}, nil
+	case provider.SourceManifests:
+		manifests, err := renderManifests(src.Manifests, scope)
+		if err != nil {
+			return provider.RenderedSource{}, err
+		}
+
+		return provider.RenderedSource{Type: provider.SourceManifests, Manifests: manifests}, nil
 	default:
 		return provider.RenderedSource{}, fmt.Errorf("%w: %q", ctrlplane.ErrUnsupportedSource, src.Type)
 	}
