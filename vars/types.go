@@ -25,9 +25,9 @@ const (
 // Definition declares a single template variable. It is serialized into a
 // template's variables JSONB column, so only JSON tags are needed.
 type Definition struct {
-	Name        string              `json:"name"                 validate:"required"`
+	Name        string              `json:"name"                  validate:"required"`
 	Description string              `json:"description,omitempty"`
-	Type        Type                `json:"type"                 validate:"required"`
+	Type        Type                `json:"type"                  validate:"required"`
 	Required    bool                `json:"required,omitempty"`
 	Default     any                 `json:"default,omitempty"`
 	Enum        []string            `json:"enum,omitempty"`
