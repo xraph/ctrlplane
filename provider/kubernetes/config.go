@@ -42,4 +42,8 @@ type Config struct {
 	// Corresponds to the Kubernetes podSpec.imagePullSecrets field.
 	// Use CP_K8S_IMAGE_PULL_SECRETS (comma-separated) to configure via env.
 	ImagePullSecrets []string `env:"CP_K8S_IMAGE_PULL_SECRETS" json:"image_pull_secrets,omitempty"`
+
+	// ArgoNamespace is the namespace where ctrlplane creates Argo CD
+	// Application CRs (where Argo CD itself runs). Defaults to "argocd".
+	ArgoNamespace string `default:"argocd" env:"CP_K8S_ARGO_NAMESPACE" json:"argo_namespace,omitempty"`
 }

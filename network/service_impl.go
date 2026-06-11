@@ -187,6 +187,8 @@ func (s *service) AddRoute(ctx context.Context, req AddRouteRequest) (*Route, er
 		Port:        req.Port,
 		Protocol:    protocol,
 		Weight:      weight,
+		StripPrefix: req.StripPrefix,
+		Hostname:    req.Hostname,
 	}
 
 	if err := s.store.InsertRoute(ctx, route); err != nil {

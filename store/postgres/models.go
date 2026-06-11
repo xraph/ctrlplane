@@ -54,6 +54,7 @@ type instanceModel struct {
 	Config       []byte    `grove:"config,type:jsonb"`
 	Metadata     []byte    `grove:"metadata,type:jsonb"`
 	Endpoints    []byte    `grove:"endpoints,type:jsonb"`
+	Source       []byte    `grove:"source,type:jsonb"`
 	CreatedAt    time.Time `grove:"created_at,notnull"`
 	UpdatedAt    time.Time `grove:"updated_at,notnull"`
 }
@@ -277,6 +278,8 @@ type templateModel struct {
 	Services        []byte    `grove:"services,type:jsonb"`
 	Labels          []byte    `grove:"labels,type:jsonb"`
 	Notes           string    `grove:"notes"`
+	Variables       []byte    `grove:"variables,type:jsonb"`
+	Source          []byte    `grove:"source,type:jsonb"`
 	CreatedAt       time.Time `grove:"created_at,notnull"`
 	UpdatedAt       time.Time `grove:"updated_at,notnull"`
 }
@@ -298,6 +301,7 @@ func toInstanceModel(inst *instance.Instance) *instanceModel {
 		ServiceRefs:  marshalJSONB(inst.ServiceRefs),
 		Labels:       marshalJSONB(inst.Labels),
 		Endpoints:    marshalJSONB(inst.Endpoints),
+		Source:       marshalJSONB(inst.Source),
 		CreatedAt:    inst.CreatedAt,
 		UpdatedAt:    inst.UpdatedAt,
 	}
@@ -324,6 +328,7 @@ func fromInstanceModel(m *instanceModel) *instance.Instance {
 	unmarshalJSONB(m.ServiceRefs, &out.ServiceRefs)
 	unmarshalJSONB(m.Labels, &out.Labels)
 	unmarshalJSONB(m.Endpoints, &out.Endpoints)
+	unmarshalJSONB(m.Source, &out.Source)
 
 	return out
 }
@@ -574,6 +579,8 @@ func toTemplateModel(t *template.Template) *templateModel {
 		Services:        marshalJSONB(t.Services),
 		Labels:          marshalJSONB(t.Labels),
 		Notes:           t.Notes,
+		Variables:       marshalJSONB(t.Variables),
+		Source:          marshalJSONB(t.Source),
 		CreatedAt:       t.CreatedAt,
 		UpdatedAt:       t.UpdatedAt,
 	}
@@ -596,6 +603,12 @@ func fromTemplateModel(m *templateModel) *template.Template {
 
 	unmarshalJSONB(m.Services, &t.Services)
 	unmarshalJSONB(m.Labels, &t.Labels)
+	unmarshalJSONB(m.Variables, &t.Variables)
+	unmarshalJSONB(m.Source, &t.Source)
+
+	// Legacy rows predate the Source column — project their Services onto a
+	// services Source so callers always see a populated Source.
+	t.NormalizeSource()
 
 	return t
 }

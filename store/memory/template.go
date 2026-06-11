@@ -122,5 +122,9 @@ func cloneTemplate(t *template.Template) *template.Template {
 		clone.Services = slices.Clone(t.Services)
 	}
 
+	if t.Variables != nil {
+		clone.Variables = slices.Clone(t.Variables)
+	}
+
 	return &clone
 }

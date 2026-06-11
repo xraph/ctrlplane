@@ -58,6 +58,8 @@ type AddRouteRequest struct {
 	Port        int    `json:"port"                   validate:"required"`
 	Protocol    string `default:"http"                json:"protocol"`
 	Weight      int    `default:"100"                 json:"weight"`
+	StripPrefix bool   `json:"strip_prefix,omitempty"`
+	Hostname    string `json:"hostname,omitempty"`
 }
 
 // UpdateRouteRequest holds the parameters for modifying a route.

@@ -7,6 +7,7 @@ import (
 
 	"github.com/xraph/ctrlplane/id"
 	"github.com/xraph/ctrlplane/provider"
+	"github.com/xraph/ctrlplane/vars"
 )
 
 // Service manages instance lifecycle operations.
@@ -87,14 +88,28 @@ type DatacenterResolver interface {
 }
 
 // CreateRequest holds the parameters for creating a new instance.
+//
+// A non-services deployment is described via Source (helm | manifests |
+// argocd) plus optional Variables/VariableValues resolved at provision
+// time. For backward compatibility, callers may instead populate Services
+// alone — Create projects them onto a services Source.
 type CreateRequest struct {
 	Name         string                 `json:"name"                    validate:"required"`
 	DatacenterID id.ID                  `json:"datacenter_id,omitzero"`
 	ProviderName string                 `json:"provider_name,omitempty"`
 	Region       string                 `json:"region,omitempty"`
 	Kind         provider.WorkloadKind  `json:"kind,omitempty"`
-	Services     []provider.ServiceSpec `json:"services"                validate:"required,min=1"`
+	Services     []provider.ServiceSpec `json:"services,omitempty"`
 	Labels       map[string]string      `json:"labels,omitempty"`
+
+	// Source describes a non-services deployment. When empty, Services is
+	// projected onto a services Source.
+	Source provider.DeploymentSource `json:"source,omitzero"`
+
+	// Variables and VariableValues are resolved against derived instance
+	// context and injected into the rendered Source.
+	Variables      []vars.Definition `json:"variables,omitempty"`
+	VariableValues map[string]any    `json:"variable_values,omitempty"`
 }
 
 // UpdateRequest holds the parameters for updating an instance.

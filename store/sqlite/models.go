@@ -54,6 +54,7 @@ type instanceModel struct {
 	Endpoints    []byte    `grove:"endpoints"`
 	Config       []byte    `grove:"config"`
 	Metadata     []byte    `grove:"metadata"`
+	Source       []byte    `grove:"source"`
 	CreatedAt    time.Time `grove:"created_at,notnull"`
 	UpdatedAt    time.Time `grove:"updated_at,notnull"`
 }
@@ -277,6 +278,8 @@ type templateModel struct {
 	Services        []byte    `grove:"services"`
 	Labels          []byte    `grove:"labels"`
 	Notes           string    `grove:"notes"`
+	Variables       []byte    `grove:"variables"`
+	Source          []byte    `grove:"source"`
 	CreatedAt       time.Time `grove:"created_at,notnull"`
 	UpdatedAt       time.Time `grove:"updated_at,notnull"`
 }
@@ -298,6 +301,7 @@ func toInstanceModel(inst *instance.Instance) *instanceModel {
 		ServiceRefs:  marshalJSON(inst.ServiceRefs),
 		Labels:       marshalJSON(inst.Labels),
 		Endpoints:    marshalJSON(inst.Endpoints),
+		Source:       marshalJSON(inst.Source),
 		CreatedAt:    inst.CreatedAt,
 		UpdatedAt:    inst.UpdatedAt,
 	}
@@ -324,6 +328,7 @@ func fromInstanceModel(m *instanceModel) *instance.Instance {
 	unmarshalJSON(m.ServiceRefs, &out.ServiceRefs)
 	unmarshalJSON(m.Labels, &out.Labels)
 	unmarshalJSON(m.Endpoints, &out.Endpoints)
+	unmarshalJSON(m.Source, &out.Source)
 
 	return out
 }
@@ -624,6 +629,8 @@ func toTemplateModel(t *template.Template) *templateModel {
 		Services:        marshalJSON(t.Services),
 		Labels:          marshalJSON(t.Labels),
 		Notes:           t.Notes,
+		Variables:       marshalJSON(t.Variables),
+		Source:          marshalJSON(t.Source),
 		CreatedAt:       t.CreatedAt,
 		UpdatedAt:       t.UpdatedAt,
 	}
@@ -646,6 +653,12 @@ func fromTemplateModel(m *templateModel) *template.Template {
 
 	unmarshalJSON(m.Services, &t.Services)
 	unmarshalJSON(m.Labels, &t.Labels)
+	unmarshalJSON(m.Variables, &t.Variables)
+	unmarshalJSON(m.Source, &t.Source)
+
+	// Legacy rows predate the Source column — project Services onto a
+	// services Source so callers always see a populated Source.
+	t.NormalizeSource()
 
 	return t
 }

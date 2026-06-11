@@ -44,6 +44,11 @@ type Instance struct {
 	// to the new Release.
 	Services []provider.ServiceSpec `db:"services" json:"services"`
 
+	// Source records what was deployed (services | helm | manifests |
+	// argocd) so teardown and status route to the right provider engine.
+	// Empty on legacy instances, which are treated as services.
+	Source provider.DeploymentSource `db:"source" json:"source,omitzero"`
+
 	// Endpoints is the union of every service's accessible endpoints,
 	// each tagged with ServiceName.
 	Endpoints []provider.Endpoint `db:"endpoints" json:"endpoints,omitempty"`

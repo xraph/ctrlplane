@@ -16,6 +16,7 @@ import (
 	"github.com/xraph/ctrlplane/secrets"
 	"github.com/xraph/ctrlplane/telemetry"
 	"github.com/xraph/ctrlplane/template"
+	"github.com/xraph/ctrlplane/vars"
 
 	ctrlplane "github.com/xraph/ctrlplane"
 	"github.com/xraph/ctrlplane/provider"
@@ -68,21 +69,22 @@ func fromTenantModel(m *tenantModel) *admin.Tenant {
 type instanceModel struct {
 	grove.BaseModel `grove:"table:cp_instances"`
 
-	ID           string                 `bson:"_id"                    grove:"id,pk"`
-	TenantID     string                 `bson:"tenant_id"              grove:"tenant_id"`
-	Slug         string                 `bson:"slug"                   grove:"slug"`
-	Name         string                 `bson:"name"                   grove:"name"`
-	State        string                 `bson:"state"                  grove:"state"`
-	ProviderName string                 `bson:"provider_name"          grove:"provider_name"`
-	ProviderRef  string                 `bson:"provider_ref,omitempty" grove:"provider_ref"`
-	Region       string                 `bson:"region,omitempty"       grove:"region"`
-	Kind         string                 `bson:"kind,omitempty"         grove:"kind"`
-	Services     []provider.ServiceSpec `bson:"services,omitempty"     grove:"services"`
-	ServiceRefs  map[string]string      `bson:"service_refs,omitempty" grove:"service_refs"`
-	Endpoints    []endpointModel        `bson:"endpoints,omitempty"    grove:"endpoints"`
-	Labels       map[string]string      `bson:"labels,omitempty"       grove:"labels"`
-	CreatedAt    time.Time              `bson:"created_at"             grove:"created_at"`
-	UpdatedAt    time.Time              `bson:"updated_at"             grove:"updated_at"`
+	ID           string                    `bson:"_id"                    grove:"id,pk"`
+	TenantID     string                    `bson:"tenant_id"              grove:"tenant_id"`
+	Slug         string                    `bson:"slug"                   grove:"slug"`
+	Name         string                    `bson:"name"                   grove:"name"`
+	State        string                    `bson:"state"                  grove:"state"`
+	ProviderName string                    `bson:"provider_name"          grove:"provider_name"`
+	ProviderRef  string                    `bson:"provider_ref,omitempty" grove:"provider_ref"`
+	Region       string                    `bson:"region,omitempty"       grove:"region"`
+	Kind         string                    `bson:"kind,omitempty"         grove:"kind"`
+	Services     []provider.ServiceSpec    `bson:"services,omitempty"     grove:"services"`
+	ServiceRefs  map[string]string         `bson:"service_refs,omitempty" grove:"service_refs"`
+	Endpoints    []endpointModel           `bson:"endpoints,omitempty"    grove:"endpoints"`
+	Labels       map[string]string         `bson:"labels,omitempty"       grove:"labels"`
+	Source       provider.DeploymentSource `bson:"source,omitempty"`
+	CreatedAt    time.Time                 `bson:"created_at"             grove:"created_at"`
+	UpdatedAt    time.Time                 `bson:"updated_at"             grove:"updated_at"`
 }
 
 // endpointModel is the bson form of provider.Endpoint.
@@ -109,6 +111,7 @@ func toInstanceModel(inst *instance.Instance) *instanceModel {
 		ServiceRefs:  inst.ServiceRefs,
 		Endpoints:    toEndpointModels(inst.Endpoints),
 		Labels:       inst.Labels,
+		Source:       inst.Source,
 		CreatedAt:    inst.CreatedAt,
 		UpdatedAt:    inst.UpdatedAt,
 	}
@@ -133,6 +136,7 @@ func fromInstanceModel(m *instanceModel) *instance.Instance {
 		ServiceRefs:  m.ServiceRefs,
 		Endpoints:    fromEndpointModels(m.Endpoints),
 		Labels:       m.Labels,
+		Source:       m.Source,
 	}
 
 	return out
@@ -767,17 +771,19 @@ func fromAuditEntryModel(m *auditEntryModel) admin.AuditEntry {
 type templateModel struct {
 	grove.BaseModel `grove:"table:cp_templates"`
 
-	ID              string                 `bson:"_id"                        grove:"id,pk"`
-	TenantID        string                 `bson:"tenant_id"                  grove:"tenant_id"`
-	Name            string                 `bson:"name"                       grove:"name"`
-	Description     string                 `bson:"description,omitempty"      grove:"description"`
-	DefaultKind     string                 `bson:"default_kind,omitempty"     grove:"default_kind"`
-	DefaultStrategy string                 `bson:"default_strategy,omitempty" grove:"default_strategy"`
-	Services        []provider.ServiceSpec `bson:"services,omitempty"`
-	Labels          map[string]string      `bson:"labels,omitempty"`
-	Notes           string                 `bson:"notes,omitempty"            grove:"notes"`
-	CreatedAt       time.Time              `bson:"created_at"                 grove:"created_at"`
-	UpdatedAt       time.Time              `bson:"updated_at"                 grove:"updated_at"`
+	ID              string                    `bson:"_id"                        grove:"id,pk"`
+	TenantID        string                    `bson:"tenant_id"                  grove:"tenant_id"`
+	Name            string                    `bson:"name"                       grove:"name"`
+	Description     string                    `bson:"description,omitempty"      grove:"description"`
+	DefaultKind     string                    `bson:"default_kind,omitempty"     grove:"default_kind"`
+	DefaultStrategy string                    `bson:"default_strategy,omitempty" grove:"default_strategy"`
+	Services        []provider.ServiceSpec    `bson:"services,omitempty"`
+	Labels          map[string]string         `bson:"labels,omitempty"`
+	Notes           string                    `bson:"notes,omitempty"            grove:"notes"`
+	Variables       []vars.Definition         `bson:"variables,omitempty"`
+	Source          provider.DeploymentSource `bson:"source,omitempty"`
+	CreatedAt       time.Time                 `bson:"created_at"                 grove:"created_at"`
+	UpdatedAt       time.Time                 `bson:"updated_at"                 grove:"updated_at"`
 }
 
 func toTemplateModel(t *template.Template) *templateModel {
@@ -791,13 +797,15 @@ func toTemplateModel(t *template.Template) *templateModel {
 		Services:        t.Services,
 		Labels:          t.Labels,
 		Notes:           t.Notes,
+		Variables:       t.Variables,
+		Source:          t.Source,
 		CreatedAt:       t.CreatedAt,
 		UpdatedAt:       t.UpdatedAt,
 	}
 }
 
 func fromTemplateModel(m *templateModel) *template.Template {
-	return &template.Template{
+	t := &template.Template{
 		Entity: ctrlplane.Entity{
 			ID:        id.MustParse(m.ID),
 			CreatedAt: m.CreatedAt,
@@ -811,7 +819,15 @@ func fromTemplateModel(m *templateModel) *template.Template {
 		Services:        m.Services,
 		Labels:          m.Labels,
 		Notes:           m.Notes,
+		Variables:       m.Variables,
+		Source:          m.Source,
 	}
+
+	// Legacy documents predate Source — project Services onto a services
+	// Source so callers always see a populated Source.
+	t.NormalizeSource()
+
+	return t
 }
 
 // ── Datacenter ──────────────────────────────────────────────────────────────
