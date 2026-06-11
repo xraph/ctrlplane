@@ -36,6 +36,13 @@ func Render(src provider.DeploymentSource, scope vars.Scope) (provider.RenderedS
 		}
 
 		return provider.RenderedSource{Type: provider.SourceHelm, Helm: helm}, nil
+	case provider.SourceArgoCD:
+		argo, err := renderArgo(src.ArgoCD, scope)
+		if err != nil {
+			return provider.RenderedSource{}, err
+		}
+
+		return provider.RenderedSource{Type: provider.SourceArgoCD, ArgoCD: argo}, nil
 	default:
 		return provider.RenderedSource{}, fmt.Errorf("%w: %q", ctrlplane.ErrUnsupportedSource, src.Type)
 	}
