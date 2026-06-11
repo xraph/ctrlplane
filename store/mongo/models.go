@@ -16,6 +16,7 @@ import (
 	"github.com/xraph/ctrlplane/secrets"
 	"github.com/xraph/ctrlplane/telemetry"
 	"github.com/xraph/ctrlplane/template"
+	"github.com/xraph/ctrlplane/vars"
 
 	ctrlplane "github.com/xraph/ctrlplane"
 	"github.com/xraph/ctrlplane/provider"
@@ -767,17 +768,19 @@ func fromAuditEntryModel(m *auditEntryModel) admin.AuditEntry {
 type templateModel struct {
 	grove.BaseModel `grove:"table:cp_templates"`
 
-	ID              string                 `bson:"_id"                        grove:"id,pk"`
-	TenantID        string                 `bson:"tenant_id"                  grove:"tenant_id"`
-	Name            string                 `bson:"name"                       grove:"name"`
-	Description     string                 `bson:"description,omitempty"      grove:"description"`
-	DefaultKind     string                 `bson:"default_kind,omitempty"     grove:"default_kind"`
-	DefaultStrategy string                 `bson:"default_strategy,omitempty" grove:"default_strategy"`
-	Services        []provider.ServiceSpec `bson:"services,omitempty"`
-	Labels          map[string]string      `bson:"labels,omitempty"`
-	Notes           string                 `bson:"notes,omitempty"            grove:"notes"`
-	CreatedAt       time.Time              `bson:"created_at"                 grove:"created_at"`
-	UpdatedAt       time.Time              `bson:"updated_at"                 grove:"updated_at"`
+	ID              string                    `bson:"_id"                        grove:"id,pk"`
+	TenantID        string                    `bson:"tenant_id"                  grove:"tenant_id"`
+	Name            string                    `bson:"name"                       grove:"name"`
+	Description     string                    `bson:"description,omitempty"      grove:"description"`
+	DefaultKind     string                    `bson:"default_kind,omitempty"     grove:"default_kind"`
+	DefaultStrategy string                    `bson:"default_strategy,omitempty" grove:"default_strategy"`
+	Services        []provider.ServiceSpec    `bson:"services,omitempty"`
+	Labels          map[string]string         `bson:"labels,omitempty"`
+	Notes           string                    `bson:"notes,omitempty"            grove:"notes"`
+	Variables       []vars.Definition         `bson:"variables,omitempty"`
+	Source          provider.DeploymentSource `bson:"source,omitempty"`
+	CreatedAt       time.Time                 `bson:"created_at"                 grove:"created_at"`
+	UpdatedAt       time.Time                 `bson:"updated_at"                 grove:"updated_at"`
 }
 
 func toTemplateModel(t *template.Template) *templateModel {
@@ -791,13 +794,15 @@ func toTemplateModel(t *template.Template) *templateModel {
 		Services:        t.Services,
 		Labels:          t.Labels,
 		Notes:           t.Notes,
+		Variables:       t.Variables,
+		Source:          t.Source,
 		CreatedAt:       t.CreatedAt,
 		UpdatedAt:       t.UpdatedAt,
 	}
 }
 
 func fromTemplateModel(m *templateModel) *template.Template {
-	return &template.Template{
+	t := &template.Template{
 		Entity: ctrlplane.Entity{
 			ID:        id.MustParse(m.ID),
 			CreatedAt: m.CreatedAt,
@@ -811,7 +816,15 @@ func fromTemplateModel(m *templateModel) *template.Template {
 		Services:        m.Services,
 		Labels:          m.Labels,
 		Notes:           m.Notes,
+		Variables:       m.Variables,
+		Source:          m.Source,
 	}
+
+	// Legacy documents predate Source — project Services onto a services
+	// Source so callers always see a populated Source.
+	t.NormalizeSource()
+
+	return t
 }
 
 // ── Datacenter ──────────────────────────────────────────────────────────────

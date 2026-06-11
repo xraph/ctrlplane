@@ -277,6 +277,8 @@ type templateModel struct {
 	Services        []byte    `grove:"services"`
 	Labels          []byte    `grove:"labels"`
 	Notes           string    `grove:"notes"`
+	Variables       []byte    `grove:"variables"`
+	Source          []byte    `grove:"source"`
 	CreatedAt       time.Time `grove:"created_at,notnull"`
 	UpdatedAt       time.Time `grove:"updated_at,notnull"`
 }
@@ -624,6 +626,8 @@ func toTemplateModel(t *template.Template) *templateModel {
 		Services:        marshalJSON(t.Services),
 		Labels:          marshalJSON(t.Labels),
 		Notes:           t.Notes,
+		Variables:       marshalJSON(t.Variables),
+		Source:          marshalJSON(t.Source),
 		CreatedAt:       t.CreatedAt,
 		UpdatedAt:       t.UpdatedAt,
 	}
@@ -646,6 +650,12 @@ func fromTemplateModel(m *templateModel) *template.Template {
 
 	unmarshalJSON(m.Services, &t.Services)
 	unmarshalJSON(m.Labels, &t.Labels)
+	unmarshalJSON(m.Variables, &t.Variables)
+	unmarshalJSON(m.Source, &t.Source)
+
+	// Legacy rows predate the Source column — project Services onto a
+	// services Source so callers always see a populated Source.
+	t.NormalizeSource()
 
 	return t
 }

@@ -52,6 +52,10 @@ func (s *Store) GetTemplate(_ context.Context, tenantID string, templateID id.ID
 		return nil, err
 	}
 
+	// Legacy documents predate Source — normalize so callers always see a
+	// populated Source.
+	t.NormalizeSource()
+
 	return &t, nil
 }
 
@@ -104,6 +108,7 @@ func (s *Store) ListTemplates(_ context.Context, tenantID string, opts template.
 				return nil
 			}
 
+			t.NormalizeSource()
 			items = append(items, &t)
 
 			return nil
