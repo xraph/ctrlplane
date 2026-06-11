@@ -129,6 +129,7 @@ func (p *Provider) Capabilities() []provider.Capability {
 		provider.CapVolumes,
 		provider.CapManifests,
 		provider.CapHelm,
+		provider.CapArgoCD,
 	}
 }
 

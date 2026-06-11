@@ -2,6 +2,7 @@ package kubernetes
 
 import (
 	"context"
+	"slices"
 	"testing"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -195,5 +196,12 @@ func TestArgoStatus(t *testing.T) {
 
 	if st.State != provider.StateRunning || !st.Ready {
 		t.Errorf("state=%s ready=%v, want running/ready", st.State, st.Ready)
+	}
+}
+
+func TestCapabilities_IncludesArgoCD(t *testing.T) {
+	caps := (&Provider{}).Capabilities()
+	if !slices.Contains(caps, provider.CapArgoCD) {
+		t.Errorf("capabilities missing CapArgoCD: %v", caps)
 	}
 }

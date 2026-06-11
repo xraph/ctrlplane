@@ -14,6 +14,10 @@ import (
 	"github.com/xraph/ctrlplane/provider"
 )
 
+// Compile-time check that Provider implements the ArgoEngine optional
+// interface.
+var _ provider.ArgoEngine = (*Provider)(nil)
+
 // argoGVR addresses Argo CD Application custom resources.
 var argoGVR = schema.GroupVersionResource{Group: "argoproj.io", Version: "v1alpha1", Resource: "applications"}
 
