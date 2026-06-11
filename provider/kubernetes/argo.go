@@ -1,6 +1,7 @@
 package kubernetes
 
 import (
+	"context"
 	"fmt"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -124,6 +125,34 @@ func buildArgoApplication(req provider.ArgoApplyRequest, name, namespace string)
 	}
 
 	return &unstructured.Unstructured{Object: obj}, nil
+}
+
+// argoNamespace returns the namespace where Argo Application CRs live.
+func (p *Provider) argoNamespace() string {
+	if p.cfg.ArgoNamespace != "" {
+		return p.cfg.ArgoNamespace
+	}
+
+	return "argocd"
+}
+
+// ArgoApply creates or updates the instance's Argo CD Application CR.
+func (p *Provider) ArgoApply(ctx context.Context, req provider.ArgoApplyRequest) (*provider.ProvisionResult, error) {
+	ns := p.argoNamespace()
+	name := deploymentName(req.InstanceID)
+
+	app, err := buildArgoApplication(req, name, ns)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := applyVia(ctx, p.dynamic.Resource(argoGVR).Namespace(ns), app); err != nil {
+		return nil, err
+	}
+
+	return &provider.ProvisionResult{
+		ProviderRef: "argocd:" + ns + "/" + name,
+	}, nil
 }
 
 // argoStateFor maps an Argo CD Application's sync and health status to a

@@ -101,15 +101,11 @@ func (p *Provider) resourceFor(obj *unstructured.Unstructured) (dynamic.Resource
 	return p.dynamic.Resource(mapping.Resource), nil
 }
 
-// applyObject creates the object, or updates it in place when it already
-// exists (create-or-update). True server-side apply is deferred to a later
-// iteration; this form is deterministic against the fake dynamic client.
-func (p *Provider) applyObject(ctx context.Context, obj *unstructured.Unstructured) error {
-	ri, err := p.resourceFor(obj)
-	if err != nil {
-		return err
-	}
-
+// applyVia creates the object through ri, or updates it in place when it
+// already exists (create-or-update). True server-side apply is deferred to a
+// later iteration; this form is deterministic against the fake dynamic
+// client and is shared by the manifests and argo engines.
+func applyVia(ctx context.Context, ri dynamic.ResourceInterface, obj *unstructured.Unstructured) error {
 	name := obj.GetName()
 
 	existing, err := ri.Get(ctx, name, metav1.GetOptions{})
@@ -132,6 +128,17 @@ func (p *Provider) applyObject(ctx context.Context, obj *unstructured.Unstructur
 	}
 
 	return nil
+}
+
+// applyObject resolves the resource interface for an object via the
+// RESTMapper, then applies it create-or-update.
+func (p *Provider) applyObject(ctx context.Context, obj *unstructured.Unstructured) error {
+	ri, err := p.resourceFor(obj)
+	if err != nil {
+		return err
+	}
+
+	return applyVia(ctx, ri, obj)
 }
 
 // objectRefFor builds the tracking ref for an object, resolving its GVR and

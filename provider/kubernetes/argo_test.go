@@ -1,13 +1,72 @@
 package kubernetes
 
 import (
+	"context"
 	"testing"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	dynamicfake "k8s.io/client-go/dynamic/fake"
 
 	"github.com/xraph/ctrlplane/id"
 	"github.com/xraph/ctrlplane/provider"
 )
+
+// newArgoTestProvider builds a Provider wired to a fake dynamic client with
+// the argo namespace configured.
+func newArgoTestProvider() *Provider {
+	return &Provider{
+		cfg:     Config{Namespace: "default", ArgoNamespace: "argocd"},
+		dynamic: dynamicfake.NewSimpleDynamicClient(runtime.NewScheme()),
+	}
+}
+
+func argoReq(instanceID id.ID) provider.ArgoApplyRequest {
+	return provider.ArgoApplyRequest{
+		InstanceID: instanceID,
+		TenantID:   "ten_1",
+		App: provider.ArgoCDSource{
+			RepoURL:       "https://github.com/acme/repo.git",
+			Path:          "apps/web",
+			DestNamespace: "prod",
+		},
+		Labels: map[string]string{labelInstanceID: instanceID.String()},
+	}
+}
+
+func TestArgoApply(t *testing.T) {
+	p := newArgoTestProvider()
+	ctx := context.Background()
+	instID := id.New(id.PrefixInstance)
+
+	res, err := p.ArgoApply(ctx, argoReq(instID))
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	if res.ProviderRef == "" {
+		t.Error("expected a provider ref")
+	}
+
+	got, err := p.dynamic.Resource(argoGVR).Namespace("argocd").Get(ctx, deploymentName(instID), metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get application: %v", err)
+	}
+
+	if repo, _, _ := unstructured.NestedString(got.Object, "spec", "source", "repoURL"); repo != "https://github.com/acme/repo.git" {
+		t.Errorf("repoURL = %q", repo)
+	}
+
+	if got.GetLabels()[labelInstanceID] != instID.String() {
+		t.Errorf("missing instance label: %v", got.GetLabels())
+	}
+
+	// Re-apply updates in place.
+	if _, err := p.ArgoApply(ctx, argoReq(instID)); err != nil {
+		t.Fatalf("re-apply: %v", err)
+	}
+}
 
 func TestArgoStateFor(t *testing.T) {
 	tests := []struct {
