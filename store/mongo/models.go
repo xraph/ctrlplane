@@ -69,21 +69,22 @@ func fromTenantModel(m *tenantModel) *admin.Tenant {
 type instanceModel struct {
 	grove.BaseModel `grove:"table:cp_instances"`
 
-	ID           string                 `bson:"_id"                    grove:"id,pk"`
-	TenantID     string                 `bson:"tenant_id"              grove:"tenant_id"`
-	Slug         string                 `bson:"slug"                   grove:"slug"`
-	Name         string                 `bson:"name"                   grove:"name"`
-	State        string                 `bson:"state"                  grove:"state"`
-	ProviderName string                 `bson:"provider_name"          grove:"provider_name"`
-	ProviderRef  string                 `bson:"provider_ref,omitempty" grove:"provider_ref"`
-	Region       string                 `bson:"region,omitempty"       grove:"region"`
-	Kind         string                 `bson:"kind,omitempty"         grove:"kind"`
-	Services     []provider.ServiceSpec `bson:"services,omitempty"     grove:"services"`
-	ServiceRefs  map[string]string      `bson:"service_refs,omitempty" grove:"service_refs"`
-	Endpoints    []endpointModel        `bson:"endpoints,omitempty"    grove:"endpoints"`
-	Labels       map[string]string      `bson:"labels,omitempty"       grove:"labels"`
-	CreatedAt    time.Time              `bson:"created_at"             grove:"created_at"`
-	UpdatedAt    time.Time              `bson:"updated_at"             grove:"updated_at"`
+	ID           string                    `bson:"_id"                    grove:"id,pk"`
+	TenantID     string                    `bson:"tenant_id"              grove:"tenant_id"`
+	Slug         string                    `bson:"slug"                   grove:"slug"`
+	Name         string                    `bson:"name"                   grove:"name"`
+	State        string                    `bson:"state"                  grove:"state"`
+	ProviderName string                    `bson:"provider_name"          grove:"provider_name"`
+	ProviderRef  string                    `bson:"provider_ref,omitempty" grove:"provider_ref"`
+	Region       string                    `bson:"region,omitempty"       grove:"region"`
+	Kind         string                    `bson:"kind,omitempty"         grove:"kind"`
+	Services     []provider.ServiceSpec    `bson:"services,omitempty"     grove:"services"`
+	ServiceRefs  map[string]string         `bson:"service_refs,omitempty" grove:"service_refs"`
+	Endpoints    []endpointModel           `bson:"endpoints,omitempty"    grove:"endpoints"`
+	Labels       map[string]string         `bson:"labels,omitempty"       grove:"labels"`
+	Source       provider.DeploymentSource `bson:"source,omitempty"`
+	CreatedAt    time.Time                 `bson:"created_at"             grove:"created_at"`
+	UpdatedAt    time.Time                 `bson:"updated_at"             grove:"updated_at"`
 }
 
 // endpointModel is the bson form of provider.Endpoint.
@@ -110,6 +111,7 @@ func toInstanceModel(inst *instance.Instance) *instanceModel {
 		ServiceRefs:  inst.ServiceRefs,
 		Endpoints:    toEndpointModels(inst.Endpoints),
 		Labels:       inst.Labels,
+		Source:       inst.Source,
 		CreatedAt:    inst.CreatedAt,
 		UpdatedAt:    inst.UpdatedAt,
 	}
@@ -134,6 +136,7 @@ func fromInstanceModel(m *instanceModel) *instance.Instance {
 		ServiceRefs:  m.ServiceRefs,
 		Endpoints:    fromEndpointModels(m.Endpoints),
 		Labels:       m.Labels,
+		Source:       m.Source,
 	}
 
 	return out

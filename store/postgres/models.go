@@ -54,6 +54,7 @@ type instanceModel struct {
 	Config       []byte    `grove:"config,type:jsonb"`
 	Metadata     []byte    `grove:"metadata,type:jsonb"`
 	Endpoints    []byte    `grove:"endpoints,type:jsonb"`
+	Source       []byte    `grove:"source,type:jsonb"`
 	CreatedAt    time.Time `grove:"created_at,notnull"`
 	UpdatedAt    time.Time `grove:"updated_at,notnull"`
 }
@@ -300,6 +301,7 @@ func toInstanceModel(inst *instance.Instance) *instanceModel {
 		ServiceRefs:  marshalJSONB(inst.ServiceRefs),
 		Labels:       marshalJSONB(inst.Labels),
 		Endpoints:    marshalJSONB(inst.Endpoints),
+		Source:       marshalJSONB(inst.Source),
 		CreatedAt:    inst.CreatedAt,
 		UpdatedAt:    inst.UpdatedAt,
 	}
@@ -326,6 +328,7 @@ func fromInstanceModel(m *instanceModel) *instance.Instance {
 	unmarshalJSONB(m.ServiceRefs, &out.ServiceRefs)
 	unmarshalJSONB(m.Labels, &out.Labels)
 	unmarshalJSONB(m.Endpoints, &out.Endpoints)
+	unmarshalJSONB(m.Source, &out.Source)
 
 	return out
 }

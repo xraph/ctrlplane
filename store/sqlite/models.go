@@ -54,6 +54,7 @@ type instanceModel struct {
 	Endpoints    []byte    `grove:"endpoints"`
 	Config       []byte    `grove:"config"`
 	Metadata     []byte    `grove:"metadata"`
+	Source       []byte    `grove:"source"`
 	CreatedAt    time.Time `grove:"created_at,notnull"`
 	UpdatedAt    time.Time `grove:"updated_at,notnull"`
 }
@@ -300,6 +301,7 @@ func toInstanceModel(inst *instance.Instance) *instanceModel {
 		ServiceRefs:  marshalJSON(inst.ServiceRefs),
 		Labels:       marshalJSON(inst.Labels),
 		Endpoints:    marshalJSON(inst.Endpoints),
+		Source:       marshalJSON(inst.Source),
 		CreatedAt:    inst.CreatedAt,
 		UpdatedAt:    inst.UpdatedAt,
 	}
@@ -326,6 +328,7 @@ func fromInstanceModel(m *instanceModel) *instance.Instance {
 	unmarshalJSON(m.ServiceRefs, &out.ServiceRefs)
 	unmarshalJSON(m.Labels, &out.Labels)
 	unmarshalJSON(m.Endpoints, &out.Endpoints)
+	unmarshalJSON(m.Source, &out.Source)
 
 	return out
 }
