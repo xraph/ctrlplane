@@ -112,3 +112,40 @@ func TestHelmInstall(t *testing.T) {
 		t.Errorf("rendered manifest missing templated value:\n%s", rel.Manifest)
 	}
 }
+
+func TestHelmUpgrade(t *testing.T) {
+	p, cfg := newHelmTestProvider()
+	ctx := context.Background()
+	instID := id.New(id.PrefixInstance)
+	chartRef := provider.RenderedHelm{Chart: "test", Values: map[string]any{"k": "v1"}}
+
+	if _, err := p.HelmInstall(ctx, provider.HelmInstallRequest{InstanceID: instID, Namespace: "default", Chart: chartRef}); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+
+	dr, err := p.HelmUpgrade(ctx, provider.HelmUpgradeRequest{
+		InstanceID: instID,
+		Namespace:  "default",
+		Chart:      provider.RenderedHelm{Chart: "test", Values: map[string]any{"k": "v2"}},
+	})
+	if err != nil {
+		t.Fatalf("upgrade: %v", err)
+	}
+
+	if dr.Status == "" {
+		t.Error("expected a deploy status")
+	}
+
+	rel, err := cfg.Releases.Last(releaseName(instID, chartRef))
+	if err != nil {
+		t.Fatalf("read release: %v", err)
+	}
+
+	if rel.Version != 2 {
+		t.Errorf("revision = %d, want 2", rel.Version)
+	}
+
+	if !strings.Contains(rel.Manifest, "v2") {
+		t.Errorf("upgraded manifest missing new value:\n%s", rel.Manifest)
+	}
+}

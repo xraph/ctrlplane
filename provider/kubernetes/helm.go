@@ -73,6 +73,46 @@ func (p *Provider) HelmInstall(_ context.Context, req provider.HelmInstallReques
 	}, nil
 }
 
+// runUpgrade upgrades an existing release to a new chart/values revision.
+func runUpgrade(cfg *action.Configuration, ch *chart.Chart, name, namespace string, values map[string]any) (*release.Release, error) {
+	up := action.NewUpgrade(cfg)
+	up.Namespace = namespace
+
+	rel, err := up.Run(name, ch, values)
+	if err != nil {
+		return nil, fmt.Errorf("helm upgrade: %w", err)
+	}
+
+	return rel, nil
+}
+
+// HelmUpgrade upgrades the instance's existing release.
+func (p *Provider) HelmUpgrade(_ context.Context, req provider.HelmUpgradeRequest) (*provider.DeployResult, error) {
+	ns := p.helmNamespace(req.Namespace)
+
+	cfg, err := p.helmConfig(ns)
+	if err != nil {
+		return nil, fmt.Errorf("kubernetes: helm config: %w", err)
+	}
+
+	ch, err := p.loadChart(req.Chart)
+	if err != nil {
+		return nil, fmt.Errorf("kubernetes: load chart: %w", err)
+	}
+
+	name := releaseName(req.InstanceID, req.Chart)
+
+	rel, err := runUpgrade(cfg, ch, name, ns, req.Chart.Values)
+	if err != nil {
+		return nil, fmt.Errorf("kubernetes: helm upgrade %s: %w", name, err)
+	}
+
+	return &provider.DeployResult{
+		ProviderRef: "helm:" + rel.Namespace + "/" + rel.Name,
+		Status:      string(rel.Info.Status),
+	}, nil
+}
+
 // helmStateFor maps a Helm release status to a ctrlplane InstanceState.
 func helmStateFor(status release.Status) provider.InstanceState {
 	switch status {
