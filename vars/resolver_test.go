@@ -261,3 +261,25 @@ func TestResolve_ComputedCycle(t *testing.T) {
 		t.Fatalf("expected ErrCycle, got %v", err)
 	}
 }
+
+func TestValidateDefinitions(t *testing.T) {
+	if err := ValidateDefinitions([]Definition{
+		{Name: "a", Type: TypeString, Default: "x"},
+		{Name: "b", Type: TypeInt},
+	}); err != nil {
+		t.Errorf("valid definitions rejected: %v", err)
+	}
+
+	if err := ValidateDefinitions([]Definition{
+		{Name: "a", Type: TypeEnum},
+	}); !errors.Is(err, ErrInvalidDefinition) {
+		t.Errorf("expected ErrInvalidDefinition for enum without members, got %v", err)
+	}
+
+	if err := ValidateDefinitions([]Definition{
+		{Name: "a", Type: TypeString},
+		{Name: "a", Type: TypeString},
+	}); !errors.Is(err, ErrInvalidDefinition) {
+		t.Errorf("expected ErrInvalidDefinition for duplicate, got %v", err)
+	}
+}

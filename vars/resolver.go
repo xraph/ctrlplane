@@ -85,6 +85,27 @@ func (r *Resolver) Resolve(
 	return scope, bindings, nil
 }
 
+// ValidateDefinitions checks a set of variable definitions for structural
+// validity and duplicate names without resolving any values. Useful for
+// validating a template's variables at author time.
+func ValidateDefinitions(defs []Definition) error {
+	seen := make(map[string]struct{}, len(defs))
+
+	for _, def := range defs {
+		if err := validateDefinition(def); err != nil {
+			return err
+		}
+
+		if _, dup := seen[def.Name]; dup {
+			return fmt.Errorf("%w: duplicate variable %q", ErrInvalidDefinition, def.Name)
+		}
+
+		seen[def.Name] = struct{}{}
+	}
+
+	return nil
+}
+
 // validateDefinition enforces structural invariants independent of values.
 func validateDefinition(def Definition) error {
 	if strings.TrimSpace(def.Name) == "" {
