@@ -106,3 +106,38 @@ func TestHelmSource_JSONRoundTrip(t *testing.T) {
 		t.Errorf("round-trip mismatch: %+v", out.Helm)
 	}
 }
+
+func TestRenderedSource_JSONRoundTrip(t *testing.T) {
+	in := RenderedSource{
+		Type:      SourceManifests,
+		Manifests: &RenderedManifests{Docs: []string{"kind: Pod", "kind: Service"}},
+	}
+
+	data, err := json.Marshal(in)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	var out RenderedSource
+	if err := json.Unmarshal(data, &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if out.Type != SourceManifests || out.Manifests == nil || len(out.Manifests.Docs) != 2 {
+		t.Errorf("round-trip mismatch: %+v", out.Manifests)
+	}
+}
+
+func TestSourceCapabilities_Defined(t *testing.T) {
+	want := map[Capability]string{
+		CapHelm:      "source:helm",
+		CapManifests: "source:manifests",
+		CapArgoCD:    "source:argocd",
+	}
+
+	for capability, str := range want {
+		if string(capability) != str {
+			t.Errorf("capability = %q, want %q", capability, str)
+		}
+	}
+}

@@ -45,6 +45,15 @@ const (
 
 	// CapTLS indicates the provider supports TLS termination.
 	CapTLS Capability = "tls"
+
+	// CapHelm indicates the provider can deploy a Helm chart source.
+	CapHelm Capability = "source:helm"
+
+	// CapManifests indicates the provider can apply raw/kustomize manifests.
+	CapManifests Capability = "source:manifests"
+
+	// CapArgoCD indicates the provider can manage an Argo CD Application source.
+	CapArgoCD Capability = "source:argocd"
 )
 
 // HasCapability checks whether the provider supports a given capability.
