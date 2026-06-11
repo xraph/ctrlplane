@@ -11,6 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	"sigs.k8s.io/yaml"
 
@@ -24,6 +25,10 @@ const fieldManager = "ctrlplane"
 // manifestTrackingSuffix is appended to the per-instance ConfigMap that
 // records which objects a manifests source applied.
 const manifestTrackingSuffix = "-manifests"
+
+// configMapGVR is the GroupVersionResource for core ConfigMaps, used for
+// the per-instance manifest-tracking object.
+var configMapGVR = schema.GroupVersionResource{Version: "v1", Resource: "configmaps"}
 
 // objectRef locates one applied object so it can be fetched or deleted
 // without re-parsing the source.
@@ -220,4 +225,76 @@ func (p *Provider) writeTracking(ctx context.Context, instanceID id.ID, labels m
 	setLabels(cm, labels)
 
 	return p.applyObject(ctx, cm)
+}
+
+// readTracking returns the object refs recorded for an instance, or nil when
+// no tracking ConfigMap exists (nothing was applied, or it was deleted).
+func (p *Provider) readTracking(ctx context.Context, instanceID id.ID) ([]objectRef, error) {
+	cm, err := p.dynamic.Resource(configMapGVR).Namespace(p.cfg.Namespace).
+		Get(ctx, trackingName(instanceID), metav1.GetOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, nil
+		}
+
+		return nil, fmt.Errorf("kubernetes: read manifest tracking: %w", err)
+	}
+
+	refsJSON, _, err := unstructured.NestedString(cm.Object, "data", "refs")
+	if err != nil {
+		return nil, fmt.Errorf("kubernetes: manifest tracking data: %w", err)
+	}
+
+	var refs []objectRef
+	if refsJSON != "" {
+		if err := json.Unmarshal([]byte(refsJSON), &refs); err != nil {
+			return nil, fmt.Errorf("kubernetes: unmarshal manifest tracking: %w", err)
+		}
+	}
+
+	return refs, nil
+}
+
+// deleteRef deletes one tracked object, treating NotFound as success.
+func (p *Provider) deleteRef(ctx context.Context, ref objectRef) error {
+	gvr := schema.GroupVersionResource{Group: ref.Group, Version: ref.Version, Resource: ref.Resource}
+
+	var ri dynamic.ResourceInterface = p.dynamic.Resource(gvr)
+	if ref.Namespace != "" {
+		ri = p.dynamic.Resource(gvr).Namespace(ref.Namespace)
+	}
+
+	if err := ri.Delete(ctx, ref.Name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("kubernetes: delete %s %s: %w", ref.Resource, ref.Name, err)
+	}
+
+	return nil
+}
+
+// DeleteManifests removes every object previously applied for an instance,
+// then the tracking ConfigMap itself. A missing tracking object means there
+// is nothing to delete.
+func (p *Provider) DeleteManifests(ctx context.Context, instanceID id.ID) error {
+	refs, err := p.readTracking(ctx, instanceID)
+	if err != nil {
+		return err
+	}
+
+	if refs == nil {
+		return nil
+	}
+
+	for _, ref := range refs {
+		if err := p.deleteRef(ctx, ref); err != nil {
+			return err
+		}
+	}
+
+	err = p.dynamic.Resource(configMapGVR).Namespace(p.cfg.Namespace).
+		Delete(ctx, trackingName(instanceID), metav1.DeleteOptions{})
+	if err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("kubernetes: delete manifest tracking: %w", err)
+	}
+
+	return nil
 }

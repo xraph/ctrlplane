@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -30,7 +31,6 @@ func manifestReq(instanceID id.ID) provider.ManifestApplyRequest {
 	}
 }
 
-var cmGVR = schema.GroupVersionResource{Version: "v1", Resource: "configmaps"}
 
 // testMapper returns a RESTMapper that knows the resource kinds used in
 // these tests, standing in for discovery-backed mapping in production.
@@ -70,7 +70,7 @@ func TestApplyObject_CreateThenUpdate(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 
-	got, err := p.dynamic.Resource(cmGVR).Namespace("default").Get(ctx, "cm1", metav1.GetOptions{})
+	got, err := p.dynamic.Resource(configMapGVR).Namespace("default").Get(ctx, "cm1", metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("get after create: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestApplyObject_CreateThenUpdate(t *testing.T) {
 		t.Fatalf("update: %v", err)
 	}
 
-	got2, err := p.dynamic.Resource(cmGVR).Namespace("default").Get(ctx, "cm1", metav1.GetOptions{})
+	got2, err := p.dynamic.Resource(configMapGVR).Namespace("default").Get(ctx, "cm1", metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("get after update: %v", err)
 	}
@@ -137,7 +137,7 @@ func TestApplyManifests(t *testing.T) {
 		t.Error("expected a provider ref")
 	}
 
-	cm, err := p.dynamic.Resource(cmGVR).Namespace("default").Get(ctx, "cm1", metav1.GetOptions{})
+	cm, err := p.dynamic.Resource(configMapGVR).Namespace("default").Get(ctx, "cm1", metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("get cm1: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestApplyManifests(t *testing.T) {
 		t.Fatalf("get dep1: %v", err)
 	}
 
-	track, err := p.dynamic.Resource(cmGVR).Namespace("default").Get(ctx, trackingName(instID), metav1.GetOptions{})
+	track, err := p.dynamic.Resource(configMapGVR).Namespace("default").Get(ctx, trackingName(instID), metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("get tracking configmap: %v", err)
 	}
@@ -164,5 +164,36 @@ func TestApplyManifests(t *testing.T) {
 
 	if len(refs) != 2 {
 		t.Errorf("tracked refs = %d, want 2", len(refs))
+	}
+}
+
+func TestDeleteManifests(t *testing.T) {
+	p := newManifestTestProvider()
+	ctx := context.Background()
+	instID := id.New(id.PrefixInstance)
+
+	if _, err := p.ApplyManifests(ctx, manifestReq(instID)); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	if err := p.DeleteManifests(ctx, instID); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+
+	if _, err := p.dynamic.Resource(configMapGVR).Namespace("default").Get(ctx, "cm1", metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Errorf("cm1 should be gone, got err=%v", err)
+	}
+
+	if _, err := p.dynamic.Resource(depGVR).Namespace("default").Get(ctx, "dep1", metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Errorf("dep1 should be gone, got err=%v", err)
+	}
+
+	if _, err := p.dynamic.Resource(configMapGVR).Namespace("default").Get(ctx, trackingName(instID), metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Errorf("tracking configmap should be gone, got err=%v", err)
+	}
+
+	// Deleting again with no tracking is a no-op.
+	if err := p.DeleteManifests(ctx, instID); err != nil {
+		t.Fatalf("second delete should be no-op, got %v", err)
 	}
 }
