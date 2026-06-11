@@ -19,7 +19,7 @@ type fakeProvider struct {
 	called string
 }
 
-func (f *fakeProvider) Info() provider.ProviderInfo      { return provider.ProviderInfo{Name: "fake"} }
+func (f *fakeProvider) Info() provider.ProviderInfo         { return provider.ProviderInfo{Name: "fake"} }
 func (f *fakeProvider) Capabilities() []provider.Capability { return f.caps }
 
 func (f *fakeProvider) Provision(context.Context, provider.ProvisionRequest) (*provider.ProvisionResult, error) {
@@ -28,10 +28,14 @@ func (f *fakeProvider) Provision(context.Context, provider.ProvisionRequest) (*p
 	return &provider.ProvisionResult{ProviderRef: "fake"}, nil
 }
 
-func (f *fakeProvider) Deprovision(context.Context, id.ID) error { f.called = "Deprovision"; return nil }
-func (f *fakeProvider) Start(context.Context, id.ID) error       { return nil }
-func (f *fakeProvider) Stop(context.Context, id.ID) error        { return nil }
-func (f *fakeProvider) Restart(context.Context, id.ID) error     { return nil }
+func (f *fakeProvider) Deprovision(context.Context, id.ID) error {
+	f.called = "Deprovision"
+
+	return nil
+}
+func (f *fakeProvider) Start(context.Context, id.ID) error   { return nil }
+func (f *fakeProvider) Stop(context.Context, id.ID) error    { return nil }
+func (f *fakeProvider) Restart(context.Context, id.ID) error { return nil }
 
 func (f *fakeProvider) Status(context.Context, id.ID) (*provider.InstanceStatus, error) {
 	f.called = "Status"
@@ -42,7 +46,7 @@ func (f *fakeProvider) Status(context.Context, id.ID) (*provider.InstanceStatus,
 func (f *fakeProvider) Deploy(context.Context, provider.DeployRequest) (*provider.DeployResult, error) {
 	return &provider.DeployResult{}, nil
 }
-func (f *fakeProvider) Rollback(context.Context, id.ID, id.ID) error            { return nil }
+func (f *fakeProvider) Rollback(context.Context, id.ID, id.ID) error              { return nil }
 func (f *fakeProvider) Scale(context.Context, id.ID, provider.ResourceSpec) error { return nil }
 
 func (f *fakeProvider) Resources(context.Context, id.ID) (*provider.ResourceUsage, error) {
@@ -62,7 +66,11 @@ func (f *fakeProvider) ApplyManifests(context.Context, provider.ManifestApplyReq
 
 	return &provider.ProvisionResult{ProviderRef: "fake"}, nil
 }
-func (f *fakeProvider) DeleteManifests(context.Context, id.ID) error { f.called = "DeleteManifests"; return nil }
+func (f *fakeProvider) DeleteManifests(context.Context, id.ID) error {
+	f.called = "DeleteManifests"
+
+	return nil
+}
 
 func (f *fakeProvider) ManifestStatus(context.Context, id.ID) (*provider.InstanceStatus, error) {
 	f.called = "ManifestStatus"
@@ -79,7 +87,11 @@ func (f *fakeProvider) HelmInstall(context.Context, provider.HelmInstallRequest)
 func (f *fakeProvider) HelmUpgrade(context.Context, provider.HelmUpgradeRequest) (*provider.DeployResult, error) {
 	return &provider.DeployResult{}, nil
 }
-func (f *fakeProvider) HelmUninstall(context.Context, id.ID) error { f.called = "HelmUninstall"; return nil }
+func (f *fakeProvider) HelmUninstall(context.Context, id.ID) error {
+	f.called = "HelmUninstall"
+
+	return nil
+}
 
 func (f *fakeProvider) HelmStatus(context.Context, id.ID) (*provider.InstanceStatus, error) {
 	f.called = "HelmStatus"
@@ -92,7 +104,11 @@ func (f *fakeProvider) ArgoApply(context.Context, provider.ArgoApplyRequest) (*p
 
 	return &provider.ProvisionResult{ProviderRef: "fake"}, nil
 }
-func (f *fakeProvider) ArgoDelete(context.Context, id.ID) error { f.called = "ArgoDelete"; return nil }
+func (f *fakeProvider) ArgoDelete(context.Context, id.ID) error {
+	f.called = "ArgoDelete"
+
+	return nil
+}
 
 func (f *fakeProvider) ArgoStatus(context.Context, id.ID) (*provider.InstanceStatus, error) {
 	f.called = "ArgoStatus"
@@ -139,6 +155,70 @@ func TestProvision_MissingCapability(t *testing.T) {
 		InstanceID: id.New(id.PrefixInstance),
 		Source:     provider.RenderedSource{Type: provider.SourceHelm, Helm: &provider.RenderedHelm{Chart: "redis"}},
 	})
+	if !errors.Is(err, ctrlplane.ErrUnsupportedSource) {
+		t.Fatalf("expected ErrUnsupportedSource, got %v", err)
+	}
+}
+
+func TestDeprovision_RoutesByType(t *testing.T) {
+	tests := []struct {
+		name string
+		st   provider.SourceType
+		want string
+	}{
+		{"services", provider.SourceServices, "Deprovision"},
+		{"empty-legacy", "", "Deprovision"},
+		{"manifests", provider.SourceManifests, "DeleteManifests"},
+		{"helm", provider.SourceHelm, "HelmUninstall"},
+		{"argocd", provider.SourceArgoCD, "ArgoDelete"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := &fakeProvider{caps: allCaps()}
+
+			if err := Deprovision(context.Background(), p, tt.st, id.New(id.PrefixInstance)); err != nil {
+				t.Fatalf("deprovision: %v", err)
+			}
+
+			if p.called != tt.want {
+				t.Errorf("called %q, want %q", p.called, tt.want)
+			}
+		})
+	}
+}
+
+func TestStatus_RoutesByType(t *testing.T) {
+	tests := []struct {
+		name string
+		st   provider.SourceType
+		want string
+	}{
+		{"services", provider.SourceServices, "Status"},
+		{"manifests", provider.SourceManifests, "ManifestStatus"},
+		{"helm", provider.SourceHelm, "HelmStatus"},
+		{"argocd", provider.SourceArgoCD, "ArgoStatus"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := &fakeProvider{caps: allCaps()}
+
+			if _, err := Status(context.Background(), p, tt.st, id.New(id.PrefixInstance)); err != nil {
+				t.Fatalf("status: %v", err)
+			}
+
+			if p.called != tt.want {
+				t.Errorf("called %q, want %q", p.called, tt.want)
+			}
+		})
+	}
+}
+
+func TestDeprovision_MissingCapability(t *testing.T) {
+	p := &fakeProvider{caps: []provider.Capability{provider.CapProvision}}
+
+	err := Deprovision(context.Background(), p, provider.SourceArgoCD, id.New(id.PrefixInstance))
 	if !errors.Is(err, ctrlplane.ErrUnsupportedSource) {
 		t.Fatalf("expected ErrUnsupportedSource, got %v", err)
 	}

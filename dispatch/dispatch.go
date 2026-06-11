@@ -98,6 +98,70 @@ func Provision(ctx context.Context, p provider.Provider, req Request) (*provider
 	}
 }
 
+// Deprovision routes teardown by source type. An empty sourceType (legacy
+// instances that predate Source) is treated as services.
+func Deprovision(ctx context.Context, p provider.Provider, sourceType provider.SourceType, instanceID id.ID) error {
+	switch sourceType {
+	case provider.SourceServices, "":
+		return p.Deprovision(ctx, instanceID)
+	case provider.SourceManifests:
+		eng, ok := manifestEngine(p)
+		if !ok {
+			return unsupported(sourceType)
+		}
+
+		return eng.DeleteManifests(ctx, instanceID)
+	case provider.SourceHelm:
+		eng, ok := helmEngine(p)
+		if !ok {
+			return unsupported(sourceType)
+		}
+
+		return eng.HelmUninstall(ctx, instanceID)
+	case provider.SourceArgoCD:
+		eng, ok := argoEngine(p)
+		if !ok {
+			return unsupported(sourceType)
+		}
+
+		return eng.ArgoDelete(ctx, instanceID)
+	default:
+		return fmt.Errorf("%w: %q", ctrlplane.ErrInvalidSource, sourceType)
+	}
+}
+
+// Status routes a status read by source type. An empty sourceType is treated
+// as services.
+func Status(ctx context.Context, p provider.Provider, sourceType provider.SourceType, instanceID id.ID) (*provider.InstanceStatus, error) {
+	switch sourceType {
+	case provider.SourceServices, "":
+		return p.Status(ctx, instanceID)
+	case provider.SourceManifests:
+		eng, ok := manifestEngine(p)
+		if !ok {
+			return nil, unsupported(sourceType)
+		}
+
+		return eng.ManifestStatus(ctx, instanceID)
+	case provider.SourceHelm:
+		eng, ok := helmEngine(p)
+		if !ok {
+			return nil, unsupported(sourceType)
+		}
+
+		return eng.HelmStatus(ctx, instanceID)
+	case provider.SourceArgoCD:
+		eng, ok := argoEngine(p)
+		if !ok {
+			return nil, unsupported(sourceType)
+		}
+
+		return eng.ArgoStatus(ctx, instanceID)
+	default:
+		return nil, fmt.Errorf("%w: %q", ctrlplane.ErrInvalidSource, sourceType)
+	}
+}
+
 // unsupported builds the capability-gated error.
 func unsupported(t provider.SourceType) error {
 	return fmt.Errorf("%w: %q", ctrlplane.ErrUnsupportedSource, t)
