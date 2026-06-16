@@ -39,12 +39,15 @@ func (s *Store) GetTenant(ctx context.Context, tenantID string) (*admin.Tenant, 
 			CreatedAt: model.CreatedAt,
 			UpdatedAt: model.UpdatedAt,
 		},
-		ExternalID: model.ExternalID,
-		Slug:       model.Slug,
-		Name:       model.Name,
-		Status:     admin.TenantStatus(model.Status),
+		ExternalID:  model.ExternalID,
+		Slug:        model.Slug,
+		Name:        model.Name,
+		Status:      admin.TenantStatus(model.Status),
+		Plan:        model.Plan,
+		SuspendedAt: model.SuspendedAt,
 	}
 	unmarshalJSONB(model.Metadata, &tenant.Metadata)
+	unmarshalJSONB(model.Quota, &tenant.Quota)
 
 	return tenant, nil
 }
@@ -73,12 +76,15 @@ func (s *Store) GetTenantByExternalID(ctx context.Context, externalID string) (*
 			CreatedAt: model.CreatedAt,
 			UpdatedAt: model.UpdatedAt,
 		},
-		ExternalID: model.ExternalID,
-		Slug:       model.Slug,
-		Name:       model.Name,
-		Status:     admin.TenantStatus(model.Status),
+		ExternalID:  model.ExternalID,
+		Slug:        model.Slug,
+		Name:        model.Name,
+		Status:      admin.TenantStatus(model.Status),
+		Plan:        model.Plan,
+		SuspendedAt: model.SuspendedAt,
 	}
 	unmarshalJSONB(model.Metadata, &tenant.Metadata)
+	unmarshalJSONB(model.Quota, &tenant.Quota)
 
 	return tenant, nil
 }
@@ -103,12 +109,15 @@ func (s *Store) GetTenantBySlug(ctx context.Context, slug string) (*admin.Tenant
 			CreatedAt: model.CreatedAt,
 			UpdatedAt: model.UpdatedAt,
 		},
-		ExternalID: model.ExternalID,
-		Slug:       model.Slug,
-		Name:       model.Name,
-		Status:     admin.TenantStatus(model.Status),
+		ExternalID:  model.ExternalID,
+		Slug:        model.Slug,
+		Name:        model.Name,
+		Status:      admin.TenantStatus(model.Status),
+		Plan:        model.Plan,
+		SuspendedAt: model.SuspendedAt,
 	}
 	unmarshalJSONB(model.Metadata, &tenant.Metadata)
+	unmarshalJSONB(model.Quota, &tenant.Quota)
 
 	return tenant, nil
 }
@@ -159,12 +168,15 @@ func (s *Store) ListTenants(ctx context.Context, opts admin.ListTenantsOptions) 
 				CreatedAt: model.CreatedAt,
 				UpdatedAt: model.UpdatedAt,
 			},
-			ExternalID: model.ExternalID,
-			Slug:       model.Slug,
-			Name:       model.Name,
-			Status:     admin.TenantStatus(model.Status),
+			ExternalID:  model.ExternalID,
+			Slug:        model.Slug,
+			Name:        model.Name,
+			Status:      admin.TenantStatus(model.Status),
+			Plan:        model.Plan,
+			SuspendedAt: model.SuspendedAt,
 		}
 		unmarshalJSONB(model.Metadata, &tenant.Metadata)
+		unmarshalJSONB(model.Quota, &tenant.Quota)
 		items = append(items, tenant)
 	}
 

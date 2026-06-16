@@ -764,5 +764,87 @@ CREATE INDEX IF NOT EXISTS idx_cp_bootstrap_workloads_state ON cp_bootstrap_work
 				return nil
 			},
 		},
+		// cp_tenants stored only id/slug/name/status/metadata — the tenant's
+		// plan, quota limits, and suspended_at were never given columns, so
+		// toTenantModel dropped them and SetQuota's UpdateTenant was a silent
+		// no-op (GetQuota then read MaxInstances=0, breaking quota enforcement).
+		// Add the columns so plan/quota/suspended_at round-trip.
+		&migrate.Migration{
+			Name:    "add_plan_quota_to_cp_tenants",
+			Version: "20240101000024",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				stmts := []string{
+					`ALTER TABLE cp_tenants ADD COLUMN IF NOT EXISTS plan TEXT NOT NULL DEFAULT ''`,
+					`ALTER TABLE cp_tenants ADD COLUMN IF NOT EXISTS quota JSONB`,
+					`ALTER TABLE cp_tenants ADD COLUMN IF NOT EXISTS suspended_at TIMESTAMPTZ`,
+				}
+				for _, stmt := range stmts {
+					if _, err := exec.Exec(ctx, stmt); err != nil {
+						return err
+					}
+				}
+
+				return nil
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				stmts := []string{
+					`ALTER TABLE cp_tenants DROP COLUMN IF EXISTS plan`,
+					`ALTER TABLE cp_tenants DROP COLUMN IF EXISTS quota`,
+					`ALTER TABLE cp_tenants DROP COLUMN IF EXISTS suspended_at`,
+				}
+				for _, stmt := range stmts {
+					if _, err := exec.Exec(ctx, stmt); err != nil {
+						return err
+					}
+				}
+
+				return nil
+			},
+		},
+		// The Postgres workload store was a stub ("use mongo backend"), so
+		// workspace provisioning's compute step (stackStep → Workloads.Create)
+		// failed on the prod-default Postgres backend. Create the table the
+		// implemented store/postgres/workload.go writes to. services/labels are
+		// JSONB; the optional datacenter/template/release id columns are plain
+		// TEXT (no FK) so an empty value stores '' rather than tripping a key.
+		&migrate.Migration{
+			Name:    "create_cp_workloads",
+			Version: "20240101000025",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `
+CREATE TABLE IF NOT EXISTS cp_workloads (
+    id                  TEXT PRIMARY KEY,
+    tenant_id           TEXT NOT NULL,
+    name                TEXT NOT NULL,
+    slug                TEXT NOT NULL,
+    datacenter_id       TEXT NOT NULL DEFAULT '',
+    provider_name       TEXT NOT NULL DEFAULT '',
+    region              TEXT NOT NULL DEFAULT '',
+    kind                TEXT NOT NULL DEFAULT '',
+    services            JSONB,
+    labels              JSONB,
+    template_id         TEXT NOT NULL DEFAULT '',
+    current_release_id  TEXT NOT NULL DEFAULT '',
+    replica_count       INT NOT NULL DEFAULT 0,
+    previous_replicas   INT NOT NULL DEFAULT 0,
+    state               TEXT NOT NULL DEFAULT '',
+    paused_at           TIMESTAMPTZ,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_cp_workloads_tenant ON cp_workloads (tenant_id);
+CREATE INDEX IF NOT EXISTS idx_cp_workloads_tenant_slug ON cp_workloads (tenant_id, slug);
+CREATE INDEX IF NOT EXISTS idx_cp_workloads_state ON cp_workloads (state);
+`)
+
+				return err
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `DROP TABLE IF EXISTS cp_workloads`)
+
+				return err
+			},
+		},
 	)
 }

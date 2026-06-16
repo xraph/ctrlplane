@@ -19,20 +19,24 @@ import (
 	"github.com/xraph/ctrlplane/secrets"
 	"github.com/xraph/ctrlplane/telemetry"
 	"github.com/xraph/ctrlplane/template"
+	"github.com/xraph/ctrlplane/workload"
 )
 
 // tenantModel is the database model for admin.Tenant.
 type tenantModel struct {
 	grove.BaseModel `grove:"table:cp_tenants"`
 
-	ID         id.ID     `grove:"id,pk"`
-	ExternalID string    `grove:"external_id"`
-	Slug       string    `grove:"slug,unique,notnull"`
-	Name       string    `grove:"name,notnull"`
-	Status     string    `grove:"status,notnull"`
-	Metadata   []byte    `grove:"metadata,type:jsonb"`
-	CreatedAt  time.Time `grove:"created_at,notnull"`
-	UpdatedAt  time.Time `grove:"updated_at,notnull"`
+	ID          id.ID      `grove:"id,pk"`
+	ExternalID  string     `grove:"external_id"`
+	Slug        string     `grove:"slug,unique,notnull"`
+	Name        string     `grove:"name,notnull"`
+	Status      string     `grove:"status,notnull"`
+	Plan        string     `grove:"plan"`
+	Quota       []byte     `grove:"quota,type:jsonb"`
+	SuspendedAt *time.Time `grove:"suspended_at"`
+	Metadata    []byte     `grove:"metadata,type:jsonb"`
+	CreatedAt   time.Time  `grove:"created_at,notnull"`
+	UpdatedAt   time.Time  `grove:"updated_at,notnull"`
 }
 
 // instanceModel is the database model for instance.Instance.
@@ -550,14 +554,17 @@ func toSecretModel(secret *secrets.Secret) *secretModel {
 
 func toTenantModel(tenant *admin.Tenant) *tenantModel {
 	return &tenantModel{
-		ID:         tenant.ID,
-		ExternalID: tenant.ExternalID,
-		Slug:       tenant.Slug,
-		Name:       tenant.Name,
-		Status:     string(tenant.Status),
-		Metadata:   marshalJSONB(tenant.Metadata),
-		CreatedAt:  tenant.CreatedAt,
-		UpdatedAt:  tenant.UpdatedAt,
+		ID:          tenant.ID,
+		ExternalID:  tenant.ExternalID,
+		Slug:        tenant.Slug,
+		Name:        tenant.Name,
+		Status:      string(tenant.Status),
+		Plan:        tenant.Plan,
+		Quota:       marshalJSONB(tenant.Quota),
+		SuspendedAt: tenant.SuspendedAt,
+		Metadata:    marshalJSONB(tenant.Metadata),
+		CreatedAt:   tenant.CreatedAt,
+		UpdatedAt:   tenant.UpdatedAt,
 	}
 }
 
@@ -834,4 +841,94 @@ func fromBootstrapModel(m *bootstrapModel) *bootstrap.BootstrapWorkload {
 		Attempts:     m.Attempts,
 		Labels:       labels,
 	}
+}
+
+// ──────────────────────────────────────────────────
+// workloadModel
+// ──────────────────────────────────────────────────
+
+// workloadModel is the Postgres model for workload.Workload. Mirrors the
+// mongo model; services/labels are JSONB ([]byte) here since pg has no native
+// document encoding. Optional ID columns (datacenter/template/release) are
+// plain TEXT with no FK so an empty value stores ” rather than tripping a
+// constraint.
+type workloadModel struct {
+	grove.BaseModel `grove:"table:cp_workloads"`
+
+	ID               string     `grove:"id,pk"`
+	TenantID         string     `grove:"tenant_id,notnull"`
+	Name             string     `grove:"name,notnull"`
+	Slug             string     `grove:"slug,notnull"`
+	DatacenterID     string     `grove:"datacenter_id"`
+	ProviderName     string     `grove:"provider_name"`
+	Region           string     `grove:"region"`
+	Kind             string     `grove:"kind"`
+	Services         []byte     `grove:"services,type:jsonb"`
+	Labels           []byte     `grove:"labels,type:jsonb"`
+	TemplateID       string     `grove:"template_id"`
+	CurrentReleaseID string     `grove:"current_release_id"`
+	ReplicaCount     int        `grove:"replica_count,notnull"`
+	PreviousReplicas int        `grove:"previous_replicas"`
+	State            string     `grove:"state,notnull"`
+	PausedAt         *time.Time `grove:"paused_at"`
+	CreatedAt        time.Time  `grove:"created_at,notnull"`
+	UpdatedAt        time.Time  `grove:"updated_at,notnull"`
+}
+
+func toWorkloadModel(w *workload.Workload) *workloadModel {
+	return &workloadModel{
+		ID:               w.ID.String(),
+		TenantID:         w.TenantID,
+		Name:             w.Name,
+		Slug:             w.Slug,
+		DatacenterID:     w.DatacenterID.String(),
+		ProviderName:     w.ProviderName,
+		Region:           w.Region,
+		Kind:             string(w.Kind),
+		Services:         marshalJSONB(w.Services),
+		Labels:           marshalJSONB(w.Labels),
+		TemplateID:       w.TemplateID.String(),
+		CurrentReleaseID: w.CurrentReleaseID.String(),
+		ReplicaCount:     w.ReplicaCount,
+		PreviousReplicas: w.PreviousReplicas,
+		State:            string(w.State),
+		PausedAt:         w.PausedAt,
+		CreatedAt:        w.CreatedAt,
+		UpdatedAt:        w.UpdatedAt,
+	}
+}
+
+func fromWorkloadModel(m *workloadModel) *workload.Workload {
+	w := &workload.Workload{
+		Entity: ctrlplane.Entity{
+			ID:        id.MustParse(m.ID),
+			CreatedAt: m.CreatedAt,
+			UpdatedAt: m.UpdatedAt,
+		},
+		TenantID:         m.TenantID,
+		Name:             m.Name,
+		Slug:             m.Slug,
+		ProviderName:     m.ProviderName,
+		Region:           m.Region,
+		Kind:             provider.WorkloadKind(m.Kind),
+		ReplicaCount:     m.ReplicaCount,
+		PreviousReplicas: m.PreviousReplicas,
+		State:            workload.State(m.State),
+		PausedAt:         m.PausedAt,
+	}
+
+	unmarshalJSONB(m.Services, &w.Services)
+	unmarshalJSONB(m.Labels, &w.Labels)
+
+	if m.DatacenterID != "" {
+		w.DatacenterID = id.MustParse(m.DatacenterID)
+	}
+	if m.CurrentReleaseID != "" {
+		w.CurrentReleaseID = id.MustParse(m.CurrentReleaseID)
+	}
+	if m.TemplateID != "" {
+		w.TemplateID = id.MustParse(m.TemplateID)
+	}
+
+	return w
 }
