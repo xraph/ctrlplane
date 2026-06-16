@@ -72,13 +72,14 @@ func (s *Store) ListChecks(ctx context.Context, tenantID string, instanceID id.I
 				CreatedAt: model.CreatedAt,
 				UpdatedAt: model.UpdatedAt,
 			},
-			TenantID:   model.TenantID,
-			InstanceID: id.MustParse(model.InstanceID),
-			Name:       model.Name,
-			Type:       health.CheckType(model.Type),
-			Enabled:    model.Enabled,
-			Interval:   time.Duration(model.Interval),
-			Timeout:    time.Duration(model.Timeout),
+			TenantID:    model.TenantID,
+			InstanceID:  id.MustParse(model.InstanceID),
+			ServiceName: model.ServiceName,
+			Name:        model.Name,
+			Type:        health.CheckType(model.Type),
+			Enabled:     model.Enabled,
+			Interval:    time.Duration(model.Interval),
+			Timeout:     time.Duration(model.Timeout),
 		}
 		items = append(items, check)
 	}
@@ -130,7 +131,13 @@ func (s *Store) DeleteCheck(ctx context.Context, tenantID string, checkID id.ID)
 func (s *Store) InsertResult(ctx context.Context, result *health.HealthResult) error {
 	model := toHealthResultModel(result)
 
-	_, err := s.pg.NewInsert(model).Exec(ctx)
+	// cp_health_results.id is BIGSERIAL, but healthResultModel.ID is a plain
+	// int64 pk (no autoincrement tag), so the default insert binds id = 0 on
+	// every row and the second insert collides on the primary key. List only
+	// the data columns and let Postgres assign the serial id.
+	_, err := s.pg.NewInsert(model).
+		Column("check_id", "instance_id", "tenant_id", "status", "latency", "message", "status_code", "checked_at").
+		Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("postgres: insert health result failed: %w", err)
 	}

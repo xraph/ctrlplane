@@ -2,8 +2,6 @@ package postgres
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"fmt"
 
 	ctrlplane "github.com/xraph/ctrlplane"
@@ -163,18 +161,17 @@ func (s *Store) ListReleases(ctx context.Context, tenantID string, instanceID id
 }
 
 func (s *Store) NextReleaseVersion(ctx context.Context, tenantID string, instanceID id.ID) (int, error) {
+	// Scalar aggregate: grove's SelectQuery.Scan only fills struct dests
+	// (passing &int errors "dest must be a pointer to a struct" and leaks the
+	// connection). Use a raw single-row query and COALESCE(MAX,0) so the
+	// no-rows case naturally yields 0 → first version 1, with no sentinel
+	// handling and no leaked connection.
 	var maxVersion int
 
-	err := s.pg.NewSelect((*releaseModel)(nil)).
-		Column("version").
-		Where("tenant_id = $1 AND instance_id = $2", tenantID, instanceID.String()).
-		OrderExpr("version DESC").
-		Limit(1).
-		Scan(ctx, &maxVersion)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 1, nil
-	}
-
+	err := s.pg.QueryRow(ctx,
+		`SELECT COALESCE(MAX(version), 0) FROM cp_releases WHERE tenant_id = $1 AND instance_id = $2`,
+		tenantID, instanceID.String(),
+	).Scan(&maxVersion)
 	if err != nil {
 		return 0, fmt.Errorf("postgres: next release version failed: %w", err)
 	}

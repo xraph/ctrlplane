@@ -677,5 +677,92 @@ CREATE INDEX IF NOT EXISTS idx_cp_bootstrap_workloads_state ON cp_bootstrap_work
 				return err
 			},
 		},
+		// cp_health_checks was created without a service_name column even
+		// though healthCheckModel/health.HealthCheck both carry the field
+		// (it targets a specific service inside a multi-service instance).
+		// Inserting the full model failed with "column service_name does
+		// not exist", so the store worked around it with a column whitelist
+		// that silently dropped ServiceName. Add the column so it round-trips;
+		// NULL is impossible because legacy rows default to ''.
+		&migrate.Migration{
+			Name:    "add_service_name_to_cp_health_checks",
+			Version: "20240101000022",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `ALTER TABLE cp_health_checks ADD COLUMN IF NOT EXISTS service_name TEXT NOT NULL DEFAULT ''`)
+
+				return err
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `ALTER TABLE cp_health_checks DROP COLUMN IF EXISTS service_name`)
+
+				return err
+			},
+		},
+		// The multi-service refactor changed the deployment/release/template/
+		// instance models to JSONB `services` (and friends) but the migrations
+		// only dropped the legacy single-image columns — the replacement columns
+		// were never added, so InsertDeployment/InsertRelease/InsertTemplate and
+		// the instance writes failed with "column ... does not exist" (42703) on
+		// a freshly-migrated DB. Add every column the current models expect.
+		// All ADD COLUMN IF NOT EXISTS, so this is a safe no-op where a column
+		// was already present.
+		&migrate.Migration{
+			Name:    "reconcile_multi_service_columns",
+			Version: "20240101000023",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				stmts := []string{
+					`ALTER TABLE cp_deployments ADD COLUMN IF NOT EXISTS services JSONB`,
+					`ALTER TABLE cp_deployments ADD COLUMN IF NOT EXISTS service_progress JSONB`,
+					`ALTER TABLE cp_releases ADD COLUMN IF NOT EXISTS services JSONB`,
+					`ALTER TABLE cp_releases ADD COLUMN IF NOT EXISTS config JSONB`,
+					`ALTER TABLE cp_releases ADD COLUMN IF NOT EXISTS metadata JSONB`,
+					`ALTER TABLE cp_templates ADD COLUMN IF NOT EXISTS default_kind TEXT`,
+					`ALTER TABLE cp_templates ADD COLUMN IF NOT EXISTS default_strategy TEXT`,
+					`ALTER TABLE cp_templates ADD COLUMN IF NOT EXISTS services JSONB`,
+					`ALTER TABLE cp_templates ADD COLUMN IF NOT EXISTS labels JSONB`,
+					`ALTER TABLE cp_templates ADD COLUMN IF NOT EXISTS variables JSONB`,
+					`ALTER TABLE cp_templates ADD COLUMN IF NOT EXISTS source JSONB`,
+					`ALTER TABLE cp_instances ADD COLUMN IF NOT EXISTS kind TEXT`,
+					`ALTER TABLE cp_instances ADD COLUMN IF NOT EXISTS services JSONB`,
+					`ALTER TABLE cp_instances ADD COLUMN IF NOT EXISTS service_refs JSONB`,
+					`ALTER TABLE cp_instances ADD COLUMN IF NOT EXISTS labels JSONB`,
+					`ALTER TABLE cp_instances ADD COLUMN IF NOT EXISTS source JSONB`,
+				}
+				for _, stmt := range stmts {
+					if _, err := exec.Exec(ctx, stmt); err != nil {
+						return err
+					}
+				}
+
+				return nil
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				stmts := []string{
+					`ALTER TABLE cp_deployments DROP COLUMN IF EXISTS services`,
+					`ALTER TABLE cp_deployments DROP COLUMN IF EXISTS service_progress`,
+					`ALTER TABLE cp_releases DROP COLUMN IF EXISTS services`,
+					`ALTER TABLE cp_releases DROP COLUMN IF EXISTS config`,
+					`ALTER TABLE cp_releases DROP COLUMN IF EXISTS metadata`,
+					`ALTER TABLE cp_templates DROP COLUMN IF EXISTS default_kind`,
+					`ALTER TABLE cp_templates DROP COLUMN IF EXISTS default_strategy`,
+					`ALTER TABLE cp_templates DROP COLUMN IF EXISTS services`,
+					`ALTER TABLE cp_templates DROP COLUMN IF EXISTS labels`,
+					`ALTER TABLE cp_templates DROP COLUMN IF EXISTS variables`,
+					`ALTER TABLE cp_templates DROP COLUMN IF EXISTS source`,
+					`ALTER TABLE cp_instances DROP COLUMN IF EXISTS kind`,
+					`ALTER TABLE cp_instances DROP COLUMN IF EXISTS services`,
+					`ALTER TABLE cp_instances DROP COLUMN IF EXISTS service_refs`,
+					`ALTER TABLE cp_instances DROP COLUMN IF EXISTS labels`,
+					`ALTER TABLE cp_instances DROP COLUMN IF EXISTS source`,
+				}
+				for _, stmt := range stmts {
+					if _, err := exec.Exec(ctx, stmt); err != nil {
+						return err
+					}
+				}
+
+				return nil
+			},
+		},
 	)
 }

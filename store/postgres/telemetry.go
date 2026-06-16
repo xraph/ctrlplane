@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -20,7 +21,13 @@ func (s *Store) InsertMetrics(ctx context.Context, metrics []telemetry.Metric) e
 		models = append(models, *toMetricModel(&metrics[i]))
 	}
 
-	_, err := s.pg.NewInsert(&models).Exec(ctx)
+	// The id column is BIGSERIAL, but the model tag is `id,pk` without
+	// `autoincrement`, so grove binds the int64 zero value instead of letting
+	// the DB sequence assign it. Every row would write id=0 and the second
+	// collide on the PK. Naming the non-id columns excludes id from the insert.
+	_, err := s.pg.NewInsert(&models).
+		Column("tenant_id", "instance_id", "name", "type", "value", "labels", "timestamp").
+		Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("postgres: insert metrics failed: %w", err)
 	}
@@ -74,6 +81,13 @@ func (s *Store) QueryMetrics(ctx context.Context, q telemetry.MetricQuery) ([]te
 			Value:      model.Value,
 			Timestamp:  model.Timestamp,
 		}
+		// Decode the jsonb labels column back into the domain map. A NULL or
+		// empty column leaves Labels nil rather than failing the query.
+		if len(model.Labels) > 0 {
+			if err := json.Unmarshal(model.Labels, &m.Labels); err != nil {
+				return nil, fmt.Errorf("postgres: decode metric labels: %w", err)
+			}
+		}
 		items = append(items, m)
 	}
 
@@ -90,7 +104,12 @@ func (s *Store) InsertLogs(ctx context.Context, logs []telemetry.LogEntry) error
 		models = append(models, *toLogEntryModel(&logs[i]))
 	}
 
-	_, err := s.pg.NewInsert(&models).Exec(ctx)
+	// id is BIGSERIAL with a plain `id,pk` tag (no `autoincrement`), so grove
+	// binds the zero value and bulk inserts collide on the PK. Naming the
+	// non-id columns lets the sequence assign id.
+	_, err := s.pg.NewInsert(&models).
+		Column("tenant_id", "instance_id", "level", "message", "source", "attributes", "timestamp").
+		Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("postgres: insert logs failed: %w", err)
 	}
@@ -144,6 +163,13 @@ func (s *Store) QueryLogs(ctx context.Context, q telemetry.LogQuery) ([]telemetr
 			Source:     model.Source,
 			Timestamp:  model.Timestamp,
 		}
+		// The structured fields live in the jsonb attributes column. Decode them
+		// back into LogEntry.Fields; a NULL/empty column leaves Fields nil.
+		if len(model.Attributes) > 0 {
+			if err := json.Unmarshal(model.Attributes, &entry.Fields); err != nil {
+				return nil, fmt.Errorf("postgres: decode log fields: %w", err)
+			}
+		}
 		items = append(items, entry)
 	}
 
@@ -160,7 +186,12 @@ func (s *Store) InsertTraces(ctx context.Context, traces []telemetry.Trace) erro
 		models = append(models, *toTraceModel(&traces[i]))
 	}
 
-	_, err := s.pg.NewInsert(&models).Exec(ctx)
+	// id is BIGSERIAL with a plain `id,pk` tag (no `autoincrement`), so grove
+	// binds the zero value and bulk inserts collide on the PK. Naming the
+	// non-id columns lets the sequence assign id.
+	_, err := s.pg.NewInsert(&models).
+		Column("tenant_id", "instance_id", "trace_id", "span_id", "parent_id", "operation", "duration", "status", "attributes", "timestamp").
+		Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("postgres: insert traces failed: %w", err)
 	}
@@ -222,6 +253,13 @@ func (s *Store) QueryTraces(ctx context.Context, q telemetry.TraceQuery) ([]tele
 			Status:     model.Status,
 			Timestamp:  model.Timestamp,
 		}
+		// Decode the jsonb attributes column back into the domain map. A
+		// NULL/empty column leaves Attributes nil rather than failing the query.
+		if len(model.Attributes) > 0 {
+			if err := json.Unmarshal(model.Attributes, &trace.Attributes); err != nil {
+				return nil, fmt.Errorf("postgres: decode trace attributes: %w", err)
+			}
+		}
 		items = append(items, trace)
 	}
 
@@ -231,7 +269,12 @@ func (s *Store) QueryTraces(ctx context.Context, q telemetry.TraceQuery) ([]tele
 func (s *Store) InsertResourceSnapshot(ctx context.Context, snap *telemetry.ResourceSnapshot) error {
 	model := toResourceSnapshotModel(snap)
 
-	_, err := s.pg.NewInsert(model).Exec(ctx)
+	// id is BIGSERIAL with a plain `id,pk` tag (no `autoincrement`), so grove
+	// binds the zero value; successive inserts would collide on the PK. Naming
+	// the non-id columns lets the sequence assign id.
+	_, err := s.pg.NewInsert(model).
+		Column("tenant_id", "instance_id", "cpu_percent", "memory_used_mb", "memory_limit_mb", "disk_used_mb", "network_in_mb", "network_out_mb", "timestamp").
+		Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("postgres: insert resource snapshot failed: %w", err)
 	}

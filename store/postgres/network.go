@@ -231,8 +231,15 @@ func (s *Store) GetCertificate(ctx context.Context, tenantID string, certID id.I
 func (s *Store) ListCertificates(ctx context.Context, tenantID string, instanceID id.ID) ([]network.Certificate, error) {
 	var models []certificateModel
 
+	// cp_certificates has no instance_id column — certificates link to an
+	// instance only transitively through their domain (cp_domains.instance_id).
+	// Filtering on a non-existent instance_id column errors out with
+	// "column instance_id does not exist", so resolve the instance's domains
+	// via a subquery and match certificates by domain_id. The `?` placeholders
+	// are renumbered to $1,$2,$3 by grove's appendWheres.
 	err := s.pg.NewSelect(&models).
-		Where("tenant_id = $1 AND instance_id = $2", tenantID, instanceID.String()).
+		Where("tenant_id = ? AND domain_id IN (SELECT id FROM cp_domains WHERE tenant_id = ? AND instance_id = ?)",
+			tenantID, tenantID, instanceID.String()).
 		Scan(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("postgres: list certificates failed: %w", err)

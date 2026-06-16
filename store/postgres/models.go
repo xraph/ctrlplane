@@ -447,6 +447,7 @@ func toMetricModel(m *telemetry.Metric) *metricModel {
 		Name:       m.Name,
 		Type:       string(m.Type),
 		Value:      m.Value,
+		Labels:     marshalJSONB(m.Labels),
 		Timestamp:  m.Timestamp,
 	}
 }
@@ -458,6 +459,7 @@ func toLogEntryModel(log *telemetry.LogEntry) *logEntryModel {
 		Level:      log.Level,
 		Message:    log.Message,
 		Source:     log.Source,
+		Attributes: marshalJSONB(log.Fields),
 		Timestamp:  log.Timestamp,
 	}
 }
@@ -472,6 +474,7 @@ func toTraceModel(trace *telemetry.Trace) *traceModel {
 		Operation:  trace.Operation,
 		Duration:   int64(trace.Duration),
 		Status:     trace.Status,
+		Attributes: marshalJSONB(trace.Attributes),
 		Timestamp:  trace.Timestamp,
 	}
 }
@@ -552,6 +555,7 @@ func toTenantModel(tenant *admin.Tenant) *tenantModel {
 		Slug:       tenant.Slug,
 		Name:       tenant.Name,
 		Status:     string(tenant.Status),
+		Metadata:   marshalJSONB(tenant.Metadata),
 		CreatedAt:  tenant.CreatedAt,
 		UpdatedAt:  tenant.UpdatedAt,
 	}
@@ -564,6 +568,7 @@ func toAuditEntryModel(entry *admin.AuditEntry) *auditEntryModel {
 		Action:     entry.Action,
 		Resource:   entry.Resource,
 		ResourceID: entry.ResourceID,
+		Details:    marshalJSONB(entry.Details),
 		CreatedAt:  entry.CreatedAt,
 	}
 }

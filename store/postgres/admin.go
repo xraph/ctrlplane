@@ -44,6 +44,7 @@ func (s *Store) GetTenant(ctx context.Context, tenantID string) (*admin.Tenant, 
 		Name:       model.Name,
 		Status:     admin.TenantStatus(model.Status),
 	}
+	unmarshalJSONB(model.Metadata, &tenant.Metadata)
 
 	return tenant, nil
 }
@@ -77,6 +78,7 @@ func (s *Store) GetTenantByExternalID(ctx context.Context, externalID string) (*
 		Name:       model.Name,
 		Status:     admin.TenantStatus(model.Status),
 	}
+	unmarshalJSONB(model.Metadata, &tenant.Metadata)
 
 	return tenant, nil
 }
@@ -106,6 +108,7 @@ func (s *Store) GetTenantBySlug(ctx context.Context, slug string) (*admin.Tenant
 		Name:       model.Name,
 		Status:     admin.TenantStatus(model.Status),
 	}
+	unmarshalJSONB(model.Metadata, &tenant.Metadata)
 
 	return tenant, nil
 }
@@ -161,6 +164,7 @@ func (s *Store) ListTenants(ctx context.Context, opts admin.ListTenantsOptions) 
 			Name:       model.Name,
 			Status:     admin.TenantStatus(model.Status),
 		}
+		unmarshalJSONB(model.Metadata, &tenant.Metadata)
 		items = append(items, tenant)
 	}
 
@@ -234,7 +238,14 @@ func (s *Store) CountTenantsByStatus(ctx context.Context, status admin.TenantSta
 func (s *Store) InsertAuditEntry(ctx context.Context, entry *admin.AuditEntry) error {
 	model := toAuditEntryModel(entry)
 
-	_, err := s.pg.NewInsert(model).Exec(ctx)
+	// The id column is BIGSERIAL, but the model tag is `id,pk` without
+	// `autoincrement`, so grove would otherwise bind the zero value and emit
+	// `id = 0` on every insert — the first row takes pk 0 and every subsequent
+	// insert collides ("duplicate key value violates unique constraint"). Pin
+	// the insert to the non-id columns so Postgres generates the sequence value.
+	_, err := s.pg.NewInsert(model).
+		Column("tenant_id", "actor_id", "action", "resource", "resource_id", "details", "created_at").
+		Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("postgres: insert audit entry failed: %w", err)
 	}
@@ -303,6 +314,7 @@ func (s *Store) QueryAuditLog(ctx context.Context, opts admin.AuditQuery) (*admi
 			Resource:   model.Resource,
 			ResourceID: model.ResourceID,
 		}
+		unmarshalJSONB(model.Details, &entry.Details)
 		items = append(items, entry)
 	}
 

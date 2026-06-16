@@ -74,18 +74,30 @@ func (s *Store) GetDatacenterBySlug(ctx context.Context, tenantID string, slug s
 func (s *Store) ListDatacenters(ctx context.Context, tenantID string, opts datacenter.ListOptions) (*datacenter.ListResult, error) {
 	var models []datacenterModel
 
-	q := s.pg.NewSelect(&models).Where("tenant_id = $1 OR tenant_id = ''", tenantID)
+	// The OR must be parenthesized: chained Where clauses are AND-joined, and
+	// without the parens SQL precedence reads it as
+	// `tenant_id = $1 OR (tenant_id = '' AND <filters>)`, which leaks every
+	// tenant row past the status/provider/region filters.
+	q := s.pg.NewSelect(&models).Where("(tenant_id = $1 OR tenant_id = '')", tenantID)
 
+	// Each chained Where shares the query's positional placeholder space, so
+	// the conditional filters must continue numbering from $2 — not restart at
+	// $1, which bound 4 args to a single placeholder ("expected 1 arguments,
+	// got 4"). Mirrors the argIdx pattern in instance.go List.
+	argIdx := 1
 	if opts.Status != "" {
-		q = q.Where("status = $1", opts.Status)
+		argIdx++
+		q = q.Where(fmt.Sprintf("status = $%d", argIdx), opts.Status)
 	}
 
 	if opts.Provider != "" {
-		q = q.Where("provider_name = $1", opts.Provider)
+		argIdx++
+		q = q.Where(fmt.Sprintf("provider_name = $%d", argIdx), opts.Provider)
 	}
 
 	if opts.Region != "" {
-		q = q.Where("region = $1", opts.Region)
+		argIdx++
+		q = q.Where(fmt.Sprintf("region = $%d", argIdx), opts.Region)
 	}
 
 	q = q.OrderExpr("created_at DESC")
