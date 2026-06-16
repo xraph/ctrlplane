@@ -88,6 +88,7 @@ func (s *Store) QueryMetrics(ctx context.Context, q telemetry.MetricQuery) ([]te
 				return nil, fmt.Errorf("postgres: decode metric labels: %w", err)
 			}
 		}
+
 		items = append(items, m)
 	}
 
@@ -170,6 +171,7 @@ func (s *Store) QueryLogs(ctx context.Context, q telemetry.LogQuery) ([]telemetr
 				return nil, fmt.Errorf("postgres: decode log fields: %w", err)
 			}
 		}
+
 		items = append(items, entry)
 	}
 
@@ -260,6 +262,7 @@ func (s *Store) QueryTraces(ctx context.Context, q telemetry.TraceQuery) ([]tele
 				return nil, fmt.Errorf("postgres: decode trace attributes: %w", err)
 			}
 		}
+
 		items = append(items, trace)
 	}
 
