@@ -135,6 +135,7 @@ linters:
     gosec:
       excludes:
         - G704 # Health check target URLs are stored config, not user-tainted input.
+        - G118 # Cancel funcs are intentionally retained (e.g. metrics pollers) and invoked later; govet's lostcancel covers genuinely lost cancels.
 
   exclusions:
     generated: lax
