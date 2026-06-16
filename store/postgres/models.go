@@ -923,9 +923,11 @@ func fromWorkloadModel(m *workloadModel) *workload.Workload {
 	if m.DatacenterID != "" {
 		w.DatacenterID = id.MustParse(m.DatacenterID)
 	}
+
 	if m.CurrentReleaseID != "" {
 		w.CurrentReleaseID = id.MustParse(m.CurrentReleaseID)
 	}
+
 	if m.TemplateID != "" {
 		w.TemplateID = id.MustParse(m.TemplateID)
 	}

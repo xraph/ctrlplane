@@ -74,14 +74,17 @@ func (s *Store) ListWorkloads(ctx context.Context, tenantID string, opts workloa
 		argIdx++
 		q = q.Where(fmt.Sprintf("tenant_id = $%d", argIdx), tenantID)
 	}
+
 	if opts.State != "" {
 		argIdx++
 		q = q.Where(fmt.Sprintf("state = $%d", argIdx), string(opts.State))
 	}
+
 	if opts.ProviderName != "" {
 		argIdx++
 		q = q.Where(fmt.Sprintf("provider_name = $%d", argIdx), opts.ProviderName)
 	}
+
 	if opts.Region != "" {
 		argIdx++
 		q = q.Where(fmt.Sprintf("region = $%d", argIdx), opts.Region)
