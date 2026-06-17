@@ -57,15 +57,19 @@ func providerRef(namespace string, instanceID id.ID) string {
 	return fmt.Sprintf("k8s:%s/%s", namespace, deploymentName(instanceID))
 }
 
-// instanceLabels builds the standard label set for a ctrlplane-managed resource.
+// instanceLabels builds the standard label set for a ctrlplane-managed
+// resource. Caller-supplied extra labels are layered in first; the
+// reserved ctrlplane.io/* keys are set last so they're authoritative and
+// a caller's labels can never clobber instance identity/management (the
+// selector depends on labelInstanceID).
 func instanceLabels(instanceID id.ID, tenantID string, extra map[string]string) map[string]string {
-	labels := map[string]string{
-		labelInstanceID: instanceID.String(),
-		labelTenantID:   tenantID,
-		labelManagedBy:  labelManagedByValue,
-	}
+	labels := make(map[string]string, len(extra)+3)
 
 	maps.Copy(labels, extra)
+
+	labels[labelInstanceID] = instanceID.String()
+	labels[labelTenantID] = tenantID
+	labels[labelManagedBy] = labelManagedByValue
 
 	return labels
 }

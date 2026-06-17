@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
 
 	"helm.sh/helm/v3/pkg/action"
 	"helm.sh/helm/v3/pkg/chart"
@@ -143,7 +144,16 @@ func (p *Provider) Capabilities() []provider.Capability {
 // (ClusterIP=None) + volumeClaimTemplates per persistent volume + per-
 // service ConfigMaps. Each replica gets its own PVC by name.
 func (p *Provider) Provision(ctx context.Context, req provider.ProvisionRequest) (*provider.ProvisionResult, error) {
-	labels := instanceLabels(req.InstanceID, req.TenantID, p.cfg.Labels)
+	// Per-instance labels (req.Labels — e.g. a caller's workspace/component
+	// tags) are layered onto the provider's static cfg labels so the pods
+	// are identifiable and queryable by the caller's own scheme, not just
+	// the opaque instance ID. cfg labels are the base; req labels win on
+	// collision; the reserved ctrlplane.io/* keys are set last by
+	// instanceLabels and always survive.
+	extra := make(map[string]string, len(p.cfg.Labels)+len(req.Labels))
+	maps.Copy(extra, p.cfg.Labels)
+	maps.Copy(extra, req.Labels)
+	labels := instanceLabels(req.InstanceID, req.TenantID, extra)
 	ns := p.cfg.Namespace
 
 	// Create per-service ConfigMaps before the controller object so the
@@ -413,13 +423,67 @@ func (p *Provider) Rollback(_ context.Context, _ id.ID, _ id.ID) error {
 	return nil
 }
 
-// Scale adjusts the instance's resource allocation.
+// Scale adjusts the instance's resource allocation. A ScaleRequest may
+// carry CPU/memory changes, a replica change, or both: resource changes
+// patch the pod template's container resources (rolling the pods),
+// replica changes patch the scale subresource.
 func (p *Provider) Scale(ctx context.Context, instanceID id.ID, spec provider.ResourceSpec) error {
+	if spec.CPUMillis > 0 || spec.MemoryMB > 0 {
+		if err := p.applyResources(ctx, instanceID, spec); err != nil {
+			return err
+		}
+	}
+
 	if spec.Replicas > 0 {
 		return p.scaleReplicas(ctx, instanceID, int32(min(spec.Replicas, int(^int32(0))))) //nolint:gosec // clamped to int32 range via min
 	}
 
 	return nil
+}
+
+// applyResources patches the pod template's container resource
+// requests+limits to spec, rolling the pods. Mirrors instance.Service's
+// Scale contract: it targets the workload's app container(s); a
+// multi-service workload gets every app container set to the same spec
+// (per-service resourcing is a future API). Init containers are left
+// untouched. The Deployment path is tried first, then StatefulSet —
+// same dispatch as Deploy.
+func (p *Provider) applyResources(ctx context.Context, instanceID id.ID, spec provider.ResourceSpec) error {
+	ns := p.cfg.Namespace
+	name := deploymentName(instanceID)
+
+	dep, depErr := p.client.AppsV1().Deployments(ns).Get(ctx, name, metav1.GetOptions{})
+	if depErr == nil {
+		setContainerResources(dep.Spec.Template.Spec.Containers, spec)
+
+		if _, err := p.client.AppsV1().Deployments(ns).Update(ctx, dep, metav1.UpdateOptions{}); err != nil {
+			return fmt.Errorf("kubernetes: patch deployment resources: %w", err)
+		}
+
+		return nil
+	}
+
+	ss, ssErr := p.client.AppsV1().StatefulSets(ns).Get(ctx, name, metav1.GetOptions{})
+	if ssErr != nil {
+		return fmt.Errorf("kubernetes: get workload for resize: deployment: %w; statefulset: %w", depErr, ssErr)
+	}
+
+	setContainerResources(ss.Spec.Template.Spec.Containers, spec)
+
+	if _, err := p.client.AppsV1().StatefulSets(ns).Update(ctx, ss, metav1.UpdateOptions{}); err != nil {
+		return fmt.Errorf("kubernetes: patch statefulset resources: %w", err)
+	}
+
+	return nil
+}
+
+// setContainerResources sets every container's requests+limits to spec.
+// Separate ResourceLists per field avoid map aliasing between the two.
+func setContainerResources(containers []corev1.Container, spec provider.ResourceSpec) {
+	for i := range containers {
+		containers[i].Resources.Requests = buildResourceList(spec)
+		containers[i].Resources.Limits = buildResourceList(spec)
+	}
 }
 
 // Resources returns a one-shot point-in-time sample of the
