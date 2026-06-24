@@ -687,5 +687,44 @@ CREATE TABLE IF NOT EXISTS cp_bootstrap_workloads (
 				return err
 			},
 		},
+		// VirtualGateway proxy-mode fields on routes. Mirrors postgres
+		// migration 20240101000026. SQLite allows only ONE column per
+		// ALTER, so each ADD/DROP is its own statement. Booleans are
+		// INTEGER; tls_verify defaults 1 (TRUE). DROP COLUMN needs SQLite
+		// 3.35+ (Mar 2021), same as migration 20240101000017's Down.
+		&migrate.Migration{
+			Name:    "add_proxy_fields_to_cp_routes",
+			Version: "20240101000020",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				for _, stmt := range []string{
+					`ALTER TABLE cp_routes ADD COLUMN path_mode TEXT NOT NULL DEFAULT ''`,
+					`ALTER TABLE cp_routes ADD COLUMN rewrite_redirects INTEGER NOT NULL DEFAULT 0`,
+					`ALTER TABLE cp_routes ADD COLUMN rewrite_cookie_path INTEGER NOT NULL DEFAULT 0`,
+					`ALTER TABLE cp_routes ADD COLUMN upstream_origin TEXT NOT NULL DEFAULT ''`,
+					`ALTER TABLE cp_routes ADD COLUMN tls_verify INTEGER NOT NULL DEFAULT 1`,
+				} {
+					if _, err := exec.Exec(ctx, stmt); err != nil {
+						return err
+					}
+				}
+
+				return nil
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				for _, stmt := range []string{
+					`ALTER TABLE cp_routes DROP COLUMN path_mode`,
+					`ALTER TABLE cp_routes DROP COLUMN rewrite_redirects`,
+					`ALTER TABLE cp_routes DROP COLUMN rewrite_cookie_path`,
+					`ALTER TABLE cp_routes DROP COLUMN upstream_origin`,
+					`ALTER TABLE cp_routes DROP COLUMN tls_verify`,
+				} {
+					if _, err := exec.Exec(ctx, stmt); err != nil {
+						return err
+					}
+				}
+
+				return nil
+			},
+		},
 	)
 }

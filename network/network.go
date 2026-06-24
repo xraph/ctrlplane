@@ -36,7 +36,12 @@ type Route struct {
 	Port        int    `db:"port"         json:"port"`
 	Protocol    string `db:"protocol"     json:"protocol"`
 	Weight      int    `db:"weight"       json:"weight"`
-	StripPrefix bool   `db:"strip_prefix" json:"strip_prefix"`
+	StripPrefix       bool   `db:"strip_prefix"        json:"strip_prefix"`
+	PathMode          string `db:"path_mode"           json:"path_mode,omitempty"`
+	RewriteRedirects  bool   `db:"rewrite_redirects"   json:"rewrite_redirects,omitempty"`
+	RewriteCookiePath bool   `db:"rewrite_cookie_path" json:"rewrite_cookie_path,omitempty"`
+	UpstreamOrigin    string `db:"upstream_origin"     json:"upstream_origin,omitempty"`
+	TLSVerify         bool   `db:"tls_verify"          json:"tls_verify"`
 	// Hostname, when set, scopes the route to a single host (the
 	// workspace's API hostname). The OctopusRouter uses it as the
 	// Gateway API HTTPRoute's `hostnames` entry so per-workspace path

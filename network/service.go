@@ -58,8 +58,13 @@ type AddRouteRequest struct {
 	Port        int    `json:"port"                   validate:"required"`
 	Protocol    string `default:"http"                json:"protocol"`
 	Weight      int    `default:"100"                 json:"weight"`
-	StripPrefix bool   `json:"strip_prefix,omitempty"`
-	Hostname    string `json:"hostname,omitempty"`
+	StripPrefix       bool   `json:"strip_prefix,omitempty"`
+	PathMode          string `json:"path_mode,omitempty"`
+	RewriteRedirects  bool   `json:"rewrite_redirects,omitempty"`
+	RewriteCookiePath bool   `json:"rewrite_cookie_path,omitempty"`
+	UpstreamOrigin    string `json:"upstream_origin,omitempty"`
+	TLSVerify         *bool  `json:"tls_verify,omitempty"`
+	Hostname          string `json:"hostname,omitempty"`
 }
 
 // UpdateRouteRequest holds the parameters for modifying a route.
