@@ -846,5 +846,25 @@ CREATE INDEX IF NOT EXISTS idx_cp_workloads_state ON cp_workloads (state);
 				return err
 			},
 		},
+		// VirtualGateway proxy-mode fields on routes. Octopus reads these
+		// to decide redirect/cookie rewriting, the upstream origin, and
+		// whether to verify upstream TLS. Additive — existing routes get
+		// safe defaults (empty/false; tls_verify defaults TRUE).
+		// Single comma-separated ALTER so grove's `;`-split executor runs
+		// it as one statement.
+		&migrate.Migration{
+			Name:    "add_proxy_fields_to_cp_routes",
+			Version: "20240101000026",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `ALTER TABLE cp_routes ADD COLUMN IF NOT EXISTS path_mode TEXT NOT NULL DEFAULT '', ADD COLUMN IF NOT EXISTS rewrite_redirects BOOLEAN NOT NULL DEFAULT FALSE, ADD COLUMN IF NOT EXISTS rewrite_cookie_path BOOLEAN NOT NULL DEFAULT FALSE, ADD COLUMN IF NOT EXISTS upstream_origin TEXT NOT NULL DEFAULT '', ADD COLUMN IF NOT EXISTS tls_verify BOOLEAN NOT NULL DEFAULT TRUE`)
+
+				return err
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `ALTER TABLE cp_routes DROP COLUMN IF EXISTS path_mode, DROP COLUMN IF EXISTS rewrite_redirects, DROP COLUMN IF EXISTS rewrite_cookie_path, DROP COLUMN IF EXISTS upstream_origin, DROP COLUMN IF EXISTS tls_verify`)
+
+				return err
+			},
+		},
 	)
 }
