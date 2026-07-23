@@ -3,6 +3,7 @@ package kubernetes
 import (
 	"fmt"
 	"maps"
+	"strconv"
 	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -30,6 +31,16 @@ const (
 
 	// annotationReleaseID is the annotation key for the current release ID.
 	annotationReleaseID = "ctrlplane.io/release-id"
+
+	// annotationAutomountToken is the well-known service annotation
+	// carrying "true"/"false" for the pod's
+	// automountServiceAccountToken field.
+	annotationAutomountToken = "ctrlplane.io/automount-service-account-token" //nolint:gosec // annotation key, not a credential
+
+	// annotationNodeSelector is the well-known service annotation
+	// carrying the pod's nodeSelector as a comma-joined "k=v" list
+	// (kubectl label-selector syntax), e.g. "kubernetes.io/arch=amd64".
+	annotationNodeSelector = "ctrlplane.io/node-selector"
 
 	// configMapSuffix is appended to per-service ConfigMap names.
 	configMapSuffix = "-env"
@@ -149,12 +160,74 @@ func buildPodSpec(req provider.ProvisionRequest, imagePullSecrets []string) core
 		pullSecretRefs = append(pullSecretRefs, corev1.LocalObjectReference{Name: s})
 	}
 
+	automount, nodeSelector := podSchedulingFromAnnotations(req.Services)
+
 	return corev1.PodSpec{
-		Containers:       containers,
-		InitContainers:   initContainers,
-		Volumes:          podVolumes,
-		ImagePullSecrets: pullSecretRefs,
+		Containers:                   containers,
+		InitContainers:               initContainers,
+		Volumes:                      podVolumes,
+		ImagePullSecrets:             pullSecretRefs,
+		AutomountServiceAccountToken: automount,
+		NodeSelector:                 nodeSelector,
 	}
+}
+
+// podSchedulingFromAnnotations extracts the pod-level knobs carried on
+// well-known service annotations (ServiceSpec has no first-class fields
+// for them). Values are unioned across all services in the request:
+// nodeSelector maps merge, and for automount an explicit "false" on any
+// service wins over "true" — the most restrictive setting takes effect.
+// Malformed values are skipped rather than failing the deploy.
+func podSchedulingFromAnnotations(services []provider.ServiceSpec) (*bool, map[string]string) {
+	var (
+		automount    *bool
+		nodeSelector map[string]string
+	)
+
+	for i := range services {
+		ann := services[i].Annotations
+
+		if v, ok := ann[annotationAutomountToken]; ok {
+			if b, err := strconv.ParseBool(v); err == nil && (automount == nil || !b) {
+				automount = &b
+			}
+		}
+
+		for k, v := range parseNodeSelector(ann[annotationNodeSelector]) {
+			if nodeSelector == nil {
+				nodeSelector = make(map[string]string)
+			}
+
+			nodeSelector[k] = v
+		}
+	}
+
+	return automount, nodeSelector
+}
+
+// parseNodeSelector parses the "k=v,k2=v2" annotation syntax into a
+// label map. Entries without an '=' or with an empty key are skipped.
+func parseNodeSelector(s string) map[string]string {
+	if s == "" {
+		return nil
+	}
+
+	var sel map[string]string
+
+	for pair := range strings.SplitSeq(s, ",") {
+		key, value, ok := strings.Cut(strings.TrimSpace(pair), "=")
+		if !ok || key == "" {
+			continue
+		}
+
+		if sel == nil {
+			sel = make(map[string]string)
+		}
+
+		sel[strings.TrimSpace(key)] = strings.TrimSpace(value)
+	}
+
+	return sel
 }
 
 // buildContainer translates one ServiceSpec into a Kubernetes Container.
