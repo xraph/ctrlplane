@@ -36,7 +36,7 @@ const (
 	// carrying "true"/"false" for the pod's
 	// automountServiceAccountToken field.
 	// #nosec G101 -- an annotation key, not a credential.
-	annotationAutomountToken = "ctrlplane.io/automount-service-account-token" //nolint:gosec // annotation key, not a credential
+	annotationAutomountToken = "ctrlplane.io/automount-service-account-token"
 
 	// annotationNodeSelector is the well-known service annotation
 	// carrying the pod's nodeSelector as a comma-joined "k=v" list
