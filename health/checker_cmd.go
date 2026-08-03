@@ -35,6 +35,7 @@ func (c *CommandChecker) Check(ctx context.Context, check *HealthCheck) (*Health
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
+	// #nosec G204 -- check.Target is operator-configured, not user input.
 	cmd := exec.CommandContext(ctx, "sh", "-c", check.Target) //nolint:gosec // target is operator-configured
 
 	output, err := cmd.CombinedOutput()

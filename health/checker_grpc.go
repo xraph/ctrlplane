@@ -61,7 +61,8 @@ func (c *GRPCChecker) Check(ctx context.Context, check *HealthCheck) (*HealthRes
 		return result, nil
 	}
 
-	conn.Close()
+	// The probe already succeeded; a close error tells us nothing useful.
+	_ = conn.Close()
 
 	result.Status = StatusHealthy
 
