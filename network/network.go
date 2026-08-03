@@ -29,13 +29,13 @@ type Domain struct {
 type Route struct {
 	ctrlplane.Entity
 
-	TenantID    string `db:"tenant_id"    json:"tenant_id"`
-	InstanceID  id.ID  `db:"instance_id"  json:"instance_id"`
-	ServiceName string `db:"service_name" json:"service_name,omitempty"`
-	Path        string `db:"path"         json:"path"`
-	Port        int    `db:"port"         json:"port"`
-	Protocol    string `db:"protocol"     json:"protocol"`
-	Weight      int    `db:"weight"       json:"weight"`
+	TenantID          string `db:"tenant_id"           json:"tenant_id"`
+	InstanceID        id.ID  `db:"instance_id"         json:"instance_id"`
+	ServiceName       string `db:"service_name"        json:"service_name,omitempty"`
+	Path              string `db:"path"                json:"path"`
+	Port              int    `db:"port"                json:"port"`
+	Protocol          string `db:"protocol"            json:"protocol"`
+	Weight            int    `db:"weight"              json:"weight"`
 	StripPrefix       bool   `db:"strip_prefix"        json:"strip_prefix"`
 	PathMode          string `db:"path_mode"           json:"path_mode,omitempty"`
 	RewriteRedirects  bool   `db:"rewrite_redirects"   json:"rewrite_redirects,omitempty"`

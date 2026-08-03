@@ -619,8 +619,8 @@ type routeModel struct {
 	UpstreamOrigin    string `bson:"upstream_origin"     grove:"upstream_origin"`
 	TLSVerify         bool   `bson:"tls_verify"          grove:"tls_verify"`
 
-	CreatedAt time.Time `bson:"created_at"         grove:"created_at"`
-	UpdatedAt time.Time `bson:"updated_at"         grove:"updated_at"`
+	CreatedAt time.Time `bson:"created_at" grove:"created_at"`
+	UpdatedAt time.Time `bson:"updated_at" grove:"updated_at"`
 }
 
 func toRouteModel(r *network.Route) *routeModel {

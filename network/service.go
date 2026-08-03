@@ -52,12 +52,12 @@ type AddDomainRequest struct {
 // multi-service instance — leave empty to route to the instance's
 // Main service (the default for single-service workloads).
 type AddRouteRequest struct {
-	InstanceID  id.ID  `json:"instance_id"            validate:"required"`
-	ServiceName string `json:"service_name,omitempty"`
-	Path        string `json:"path"                   validate:"required"`
-	Port        int    `json:"port"                   validate:"required"`
-	Protocol    string `default:"http"                json:"protocol"`
-	Weight      int    `default:"100"                 json:"weight"`
+	InstanceID        id.ID  `json:"instance_id"                   validate:"required"`
+	ServiceName       string `json:"service_name,omitempty"`
+	Path              string `json:"path"                          validate:"required"`
+	Port              int    `json:"port"                          validate:"required"`
+	Protocol          string `default:"http"                       json:"protocol"`
+	Weight            int    `default:"100"                        json:"weight"`
 	StripPrefix       bool   `json:"strip_prefix,omitempty"`
 	PathMode          string `json:"path_mode,omitempty"`
 	RewriteRedirects  bool   `json:"rewrite_redirects,omitempty"`

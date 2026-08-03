@@ -42,15 +42,19 @@ func TestRouteModel_ProxyFieldsRoundTrip(t *testing.T) {
 	if out.PathMode != in.PathMode {
 		t.Fatalf("PathMode round-trip: got %q want %q", out.PathMode, in.PathMode)
 	}
+
 	if out.RewriteRedirects != in.RewriteRedirects {
 		t.Fatalf("RewriteRedirects round-trip: got %v want %v", out.RewriteRedirects, in.RewriteRedirects)
 	}
+
 	if out.RewriteCookiePath != in.RewriteCookiePath {
 		t.Fatalf("RewriteCookiePath round-trip: got %v want %v", out.RewriteCookiePath, in.RewriteCookiePath)
 	}
+
 	if out.UpstreamOrigin != in.UpstreamOrigin {
 		t.Fatalf("UpstreamOrigin round-trip: got %q want %q", out.UpstreamOrigin, in.UpstreamOrigin)
 	}
+
 	if out.TLSVerify != in.TLSVerify {
 		t.Fatalf("TLSVerify round-trip: got %v want %v", out.TLSVerify, in.TLSVerify)
 	}

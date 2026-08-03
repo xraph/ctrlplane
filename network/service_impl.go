@@ -179,14 +179,14 @@ func (s *service) AddRoute(ctx context.Context, req AddRouteRequest) (*Route, er
 	}
 
 	route := &Route{
-		Entity:      ctrlplane.NewEntity(id.PrefixRoute),
-		TenantID:    claims.TenantID,
-		InstanceID:  req.InstanceID,
-		ServiceName: req.ServiceName,
-		Path:        req.Path,
-		Port:        req.Port,
-		Protocol:    protocol,
-		Weight:      weight,
+		Entity:            ctrlplane.NewEntity(id.PrefixRoute),
+		TenantID:          claims.TenantID,
+		InstanceID:        req.InstanceID,
+		ServiceName:       req.ServiceName,
+		Path:              req.Path,
+		Port:              req.Port,
+		Protocol:          protocol,
+		Weight:            weight,
 		StripPrefix:       req.StripPrefix,
 		PathMode:          req.PathMode,
 		RewriteRedirects:  req.RewriteRedirects,
