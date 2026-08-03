@@ -58,7 +58,8 @@ func (c *TCPChecker) Check(ctx context.Context, check *HealthCheck) (*HealthResu
 		return result, nil
 	}
 
-	conn.Close()
+	// The probe already succeeded; a close error tells us nothing useful.
+	_ = conn.Close()
 
 	result.Status = StatusHealthy
 
