@@ -23,7 +23,7 @@ jobs:
   ci:
     uses: xraph/workflows/.github/workflows/go-ci.yml@v1
     with:
-      go-versions: '["1.25"]'
+      go-versions: '["1.26"]'
       os: '["ubuntu-latest"]'
       # GO-2026-5932 in golang.org/x/crypto has no published fix ("Fixed in:
       # N/A"), so a blocking govulncheck would keep CI red indefinitely.

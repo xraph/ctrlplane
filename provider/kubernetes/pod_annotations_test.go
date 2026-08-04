@@ -40,7 +40,7 @@ func TestBuildPodSpec_AutomountAnnotation(t *testing.T) {
 					},
 				},
 			},
-			want: boolPtr(false),
+			want: new(false),
 		},
 		{
 			name: "true enables automount explicitly",
@@ -54,7 +54,7 @@ func TestBuildPodSpec_AutomountAnnotation(t *testing.T) {
 					},
 				},
 			},
-			want: boolPtr(true),
+			want: new(true),
 		},
 		{
 			name: "absent annotation leaves field unset",
@@ -97,7 +97,7 @@ func TestBuildPodSpec_AutomountAnnotation(t *testing.T) {
 					},
 				},
 			},
-			want: boolPtr(false),
+			want: new(false),
 		},
 	}
 
@@ -278,5 +278,3 @@ func TestBuildDeployment_PodAnnotationsPropagate(t *testing.T) {
 		t.Fatalf("nodeSelector: want arch=amd64, got %v", podSpec.NodeSelector)
 	}
 }
-
-func boolPtr(b bool) *bool { return &b }

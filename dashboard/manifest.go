@@ -12,7 +12,7 @@ func NewManifest() *contributor.Manifest {
 		Icon:        "cloud",
 		Version:     "0.1.0",
 		Layout:      "extension",
-		ShowSidebar: boolPtr(true),
+		ShowSidebar: new(true),
 		Nav:         buildNav(),
 		Widgets:     buildWidgets(),
 		Settings:    buildSettings(),
