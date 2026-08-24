@@ -8,13 +8,13 @@ require (
 	github.com/dgraph-io/badger/v4 v4.9.1
 	github.com/docker/docker v28.5.2+incompatible
 	github.com/docker/go-connections v0.6.0
-	github.com/xraph/forge v1.9.2
+	github.com/xraph/forge v1.9.10
 	github.com/xraph/forgeui v1.4.1
 	github.com/xraph/go-utils v1.1.6
-	github.com/xraph/grove v1.6.0
-	github.com/xraph/grove/drivers/mongodriver v1.6.0
-	github.com/xraph/grove/drivers/pgdriver v1.6.0
-	github.com/xraph/grove/drivers/sqlitedriver v1.6.0
+	github.com/xraph/grove v1.6.2
+	github.com/xraph/grove/drivers/mongodriver v1.6.2
+	github.com/xraph/grove/drivers/pgdriver v1.6.2
+	github.com/xraph/grove/drivers/sqlitedriver v1.6.2
 	github.com/xraph/vessel v1.0.4
 	go.jetify.com/typeid/v2 v2.0.0-alpha.3
 	go.mongodb.org/mongo-driver/v2 v2.5.0
@@ -111,7 +111,7 @@ require (
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
-	github.com/jackc/pgx/v5 v5.8.0 // indirect
+	github.com/jackc/pgx/v5 v5.10.0 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/jmoiron/sqlx v1.4.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
