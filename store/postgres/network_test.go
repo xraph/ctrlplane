@@ -12,6 +12,10 @@ import (
 // proxy-mode fields through the model⇄domain mapping. Before they were
 // wired into toRouteModel/fromRouteModel, octopus would read zero values
 // (no redirect rewrite, tls_verify implicitly off) after a store reload.
+//
+// StripPrefix is asserted alongside them because it is the field the
+// annotation emitter reads to pick octopus's path mode; a route that
+// loses it reloads as passthrough.
 func TestRouteModel_ProxyFieldsRoundTrip(t *testing.T) {
 	t.Parallel()
 
@@ -25,7 +29,6 @@ func TestRouteModel_ProxyFieldsRoundTrip(t *testing.T) {
 		Weight:      1,
 		StripPrefix: true,
 
-		PathMode:          "strip",
 		RewriteRedirects:  true,
 		RewriteCookiePath: true,
 		UpstreamOrigin:    "https://x:443",
@@ -33,14 +36,14 @@ func TestRouteModel_ProxyFieldsRoundTrip(t *testing.T) {
 	}
 
 	m := toRouteModel(in)
-	if m.PathMode != "strip" || !m.RewriteRedirects || !m.RewriteCookiePath ||
+	if !m.StripPrefix || !m.RewriteRedirects || !m.RewriteCookiePath ||
 		m.UpstreamOrigin != "https://x:443" || m.TLSVerify {
 		t.Fatalf("toRouteModel dropped a proxy field: %+v", m)
 	}
 
 	out := fromRouteModel(m)
-	if out.PathMode != in.PathMode {
-		t.Fatalf("PathMode round-trip: got %q want %q", out.PathMode, in.PathMode)
+	if out.StripPrefix != in.StripPrefix {
+		t.Fatalf("StripPrefix round-trip: got %v want %v", out.StripPrefix, in.StripPrefix)
 	}
 
 	if out.RewriteRedirects != in.RewriteRedirects {

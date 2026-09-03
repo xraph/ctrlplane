@@ -29,19 +29,41 @@ type Domain struct {
 type Route struct {
 	ctrlplane.Entity
 
-	TenantID          string `db:"tenant_id"           json:"tenant_id"`
-	InstanceID        id.ID  `db:"instance_id"         json:"instance_id"`
-	ServiceName       string `db:"service_name"        json:"service_name,omitempty"`
-	Path              string `db:"path"                json:"path"`
-	Port              int    `db:"port"                json:"port"`
-	Protocol          string `db:"protocol"            json:"protocol"`
-	Weight            int    `db:"weight"              json:"weight"`
-	StripPrefix       bool   `db:"strip_prefix"        json:"strip_prefix"`
-	PathMode          string `db:"path_mode"           json:"path_mode,omitempty"`
-	RewriteRedirects  bool   `db:"rewrite_redirects"   json:"rewrite_redirects,omitempty"`
-	RewriteCookiePath bool   `db:"rewrite_cookie_path" json:"rewrite_cookie_path,omitempty"`
-	UpstreamOrigin    string `db:"upstream_origin"     json:"upstream_origin,omitempty"`
-	TLSVerify         bool   `db:"tls_verify"          json:"tls_verify"`
+	TenantID    string `db:"tenant_id"    json:"tenant_id"`
+	InstanceID  id.ID  `db:"instance_id"  json:"instance_id"`
+	ServiceName string `db:"service_name" json:"service_name,omitempty"`
+	Path        string `db:"path"         json:"path"`
+	Port        int    `db:"port"         json:"port"`
+	Protocol    string `db:"protocol"     json:"protocol"`
+	Weight      int    `db:"weight"       json:"weight"`
+	// StripPrefix drops the route's Path prefix before the request
+	// reaches the backend. It doubles as the route's path mode for
+	// proxying: the annotation emitter maps true to octopus's "strip"
+	// and false to "passthrough". Keeping one field here means the two
+	// can never disagree.
+	StripPrefix bool `db:"strip_prefix" json:"strip_prefix"`
+
+	// Proxy-mode fields. Octopus reads these off the emitted HTTPRoute
+	// to decide how far it rewrites a proxied response. They only take
+	// effect once the route is in proxy mode, which the emitter decides;
+	// a route with all of them at their zero value proxies as before.
+	//
+	// RewriteRedirects re-adds a stripped prefix to Location headers so
+	// a backend mounted at "/" doesn't send browsers outside the
+	// gateway prefix. RewriteCookiePath does the same for Set-Cookie
+	// Path attributes.
+	RewriteRedirects  bool `db:"rewrite_redirects"   json:"rewrite_redirects,omitempty"`
+	RewriteCookiePath bool `db:"rewrite_cookie_path" json:"rewrite_cookie_path,omitempty"`
+
+	// UpstreamOrigin overrides the backend address with an absolute
+	// scheme://host[:port], for routes that proxy somewhere outside the
+	// cluster. TLSVerify controls certificate verification against that
+	// origin and is meaningless without it. TLSVerify defaults to true;
+	// AddRoute treats an unset AddRouteRequest.TLSVerify as true so a
+	// caller can never silently disable verification by omission.
+	UpstreamOrigin string `db:"upstream_origin" json:"upstream_origin,omitempty"`
+	TLSVerify      bool   `db:"tls_verify"      json:"tls_verify"`
+
 	// Hostname, when set, scopes the route to a single host (the
 	// workspace's API hostname). The OctopusRouter uses it as the
 	// Gateway API HTTPRoute's `hostnames` entry so per-workspace path

@@ -221,7 +221,6 @@ type routeModel struct {
 	Weight      int    `grove:"weight"`
 	StripPrefix bool   `grove:"strip_prefix"`
 
-	PathMode          string `grove:"path_mode"`
 	RewriteRedirects  bool   `grove:"rewrite_redirects"`
 	RewriteCookiePath bool   `grove:"rewrite_cookie_path"`
 	UpstreamOrigin    string `grove:"upstream_origin"`
@@ -542,7 +541,6 @@ func toRouteModel(route *network.Route) *routeModel {
 		Weight:      route.Weight,
 		StripPrefix: route.StripPrefix,
 
-		PathMode:          route.PathMode,
 		RewriteRedirects:  route.RewriteRedirects,
 		RewriteCookiePath: route.RewriteCookiePath,
 		UpstreamOrigin:    route.UpstreamOrigin,
@@ -568,7 +566,6 @@ func fromRouteModel(m *routeModel) *network.Route {
 		Weight:      m.Weight,
 		StripPrefix: m.StripPrefix,
 
-		PathMode:          m.PathMode,
 		RewriteRedirects:  m.RewriteRedirects,
 		RewriteCookiePath: m.RewriteCookiePath,
 		UpstreamOrigin:    m.UpstreamOrigin,

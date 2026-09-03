@@ -697,7 +697,6 @@ CREATE TABLE IF NOT EXISTS cp_bootstrap_workloads (
 			Version: "20240101000020",
 			Up: func(ctx context.Context, exec migrate.Executor) error {
 				for _, stmt := range []string{
-					`ALTER TABLE cp_routes ADD COLUMN path_mode TEXT NOT NULL DEFAULT ''`,
 					`ALTER TABLE cp_routes ADD COLUMN rewrite_redirects INTEGER NOT NULL DEFAULT 0`,
 					`ALTER TABLE cp_routes ADD COLUMN rewrite_cookie_path INTEGER NOT NULL DEFAULT 0`,
 					`ALTER TABLE cp_routes ADD COLUMN upstream_origin TEXT NOT NULL DEFAULT ''`,
@@ -712,7 +711,6 @@ CREATE TABLE IF NOT EXISTS cp_bootstrap_workloads (
 			},
 			Down: func(ctx context.Context, exec migrate.Executor) error {
 				for _, stmt := range []string{
-					`ALTER TABLE cp_routes DROP COLUMN path_mode`,
 					`ALTER TABLE cp_routes DROP COLUMN rewrite_redirects`,
 					`ALTER TABLE cp_routes DROP COLUMN rewrite_cookie_path`,
 					`ALTER TABLE cp_routes DROP COLUMN upstream_origin`,

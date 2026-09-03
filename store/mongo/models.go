@@ -613,7 +613,6 @@ type routeModel struct {
 	Weight      int    `bson:"weight"             grove:"weight"`
 	StripPrefix bool   `bson:"strip_prefix"       grove:"strip_prefix"`
 
-	PathMode          string `bson:"path_mode"           grove:"path_mode"`
 	RewriteRedirects  bool   `bson:"rewrite_redirects"   grove:"rewrite_redirects"`
 	RewriteCookiePath bool   `bson:"rewrite_cookie_path" grove:"rewrite_cookie_path"`
 	UpstreamOrigin    string `bson:"upstream_origin"     grove:"upstream_origin"`
@@ -634,7 +633,6 @@ func toRouteModel(r *network.Route) *routeModel {
 		Weight:      r.Weight,
 		StripPrefix: r.StripPrefix,
 
-		PathMode:          r.PathMode,
 		RewriteRedirects:  r.RewriteRedirects,
 		RewriteCookiePath: r.RewriteCookiePath,
 		UpstreamOrigin:    r.UpstreamOrigin,
@@ -660,7 +658,6 @@ func fromRouteModel(m *routeModel) *network.Route {
 		Weight:      m.Weight,
 		StripPrefix: m.StripPrefix,
 
-		PathMode:          m.PathMode,
 		RewriteRedirects:  m.RewriteRedirects,
 		RewriteCookiePath: m.RewriteCookiePath,
 		UpstreamOrigin:    m.UpstreamOrigin,

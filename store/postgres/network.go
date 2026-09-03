@@ -358,7 +358,6 @@ func fromRouteModel(m *routeModel) *network.Route {
 		Weight:      m.Weight,
 		StripPrefix: m.StripPrefix,
 
-		PathMode:          m.PathMode,
 		RewriteRedirects:  m.RewriteRedirects,
 		RewriteCookiePath: m.RewriteCookiePath,
 		UpstreamOrigin:    m.UpstreamOrigin,

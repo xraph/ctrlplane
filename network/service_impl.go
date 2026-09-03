@@ -188,7 +188,6 @@ func (s *service) AddRoute(ctx context.Context, req AddRouteRequest) (*Route, er
 		Protocol:          protocol,
 		Weight:            weight,
 		StripPrefix:       req.StripPrefix,
-		PathMode:          req.PathMode,
 		RewriteRedirects:  req.RewriteRedirects,
 		RewriteCookiePath: req.RewriteCookiePath,
 		UpstreamOrigin:    req.UpstreamOrigin,
