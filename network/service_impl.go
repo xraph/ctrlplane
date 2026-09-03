@@ -247,6 +247,32 @@ func (s *service) UpdateRoute(ctx context.Context, routeID id.ID, req UpdateRout
 		route.ServiceName = *req.ServiceName
 	}
 
+	if req.RewriteRedirects != nil {
+		route.RewriteRedirects = *req.RewriteRedirects
+	}
+
+	if req.RewriteCookiePath != nil {
+		route.RewriteCookiePath = *req.RewriteCookiePath
+	}
+
+	if req.TLSVerify != nil {
+		route.TLSVerify = *req.TLSVerify
+	}
+
+	// Applied after TLSVerify so the reset below wins over an explicit
+	// tls_verify=false sent in the same request.
+	if req.UpstreamOrigin != nil {
+		route.UpstreamOrigin = *req.UpstreamOrigin
+
+		// Octopus only consults tls_verify when an origin is set, so a
+		// route left unverified with no origin is dead state: invisible
+		// until someone points it at a new origin and silently inherits
+		// unverified TLS. Clearing the origin clears that with it.
+		if route.UpstreamOrigin == "" {
+			route.TLSVerify = true
+		}
+	}
+
 	route.UpdatedAt = time.Now().UTC()
 
 	if err := s.store.UpdateRoute(ctx, route); err != nil {

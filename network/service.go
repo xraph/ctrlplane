@@ -66,10 +66,24 @@ type AddRouteRequest struct {
 	Hostname          string `json:"hostname,omitempty"`
 }
 
-// UpdateRouteRequest holds the parameters for modifying a route.
+// UpdateRouteRequest holds the parameters for modifying a route. Every
+// field is a pointer so an omitted key leaves the stored value alone.
+//
+// The proxy fields mirror AddRouteRequest. UpstreamOrigin is a *string
+// rather than a string so a caller can tell "leave it" (nil) apart from
+// "clear it and go back to the in-cluster backend" (pointer to "").
+//
+// Clearing the origin also resets TLSVerify to true, even against an
+// explicit tls_verify=false in the same request. Verification can be
+// turned off again once a new origin is set.
 type UpdateRouteRequest struct {
 	ServiceName *string `json:"service_name,omitempty"`
 	Path        *string `json:"path,omitempty"`
 	Weight      *int    `json:"weight,omitempty"`
 	StripPrefix *bool   `json:"strip_prefix,omitempty"`
+
+	RewriteRedirects  *bool   `json:"rewrite_redirects,omitempty"`
+	RewriteCookiePath *bool   `json:"rewrite_cookie_path,omitempty"`
+	UpstreamOrigin    *string `json:"upstream_origin,omitempty"`
+	TLSVerify         *bool   `json:"tls_verify,omitempty"`
 }

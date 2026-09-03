@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	ctrlplane "github.com/xraph/ctrlplane"
 	"github.com/xraph/ctrlplane/auth"
 	"github.com/xraph/ctrlplane/event"
 	"github.com/xraph/ctrlplane/id"
@@ -15,11 +16,29 @@ import (
 type captureStore struct {
 	Store
 
+	seeded   *Route
 	inserted []*Route
+	updated  []*Route
 }
 
 func (s *captureStore) InsertRoute(_ context.Context, route *Route) error {
 	s.inserted = append(s.inserted, route)
+
+	return nil
+}
+
+// GetRoute hands back the seeded route. UpdateRoute mutates it in place,
+// so `seeded` doubles as the persisted copy the assertions read back.
+func (s *captureStore) GetRoute(_ context.Context, _ string, _ id.ID) (*Route, error) {
+	if s.seeded == nil {
+		return nil, ctrlplane.ErrNotFound
+	}
+
+	return s.seeded, nil
+}
+
+func (s *captureStore) UpdateRoute(_ context.Context, route *Route) error {
+	s.updated = append(s.updated, route)
 
 	return nil
 }

@@ -61,6 +61,9 @@ type Route struct {
 	// origin and is meaningless without it. TLSVerify defaults to true;
 	// AddRoute treats an unset AddRouteRequest.TLSVerify as true so a
 	// caller can never silently disable verification by omission.
+	// UpdateRoute holds the matching invariant from the other side: an
+	// empty UpstreamOrigin always implies TLSVerify, because clearing
+	// the origin resets verification.
 	UpstreamOrigin string `db:"upstream_origin" json:"upstream_origin,omitempty"`
 	TLSVerify      bool   `db:"tls_verify"      json:"tls_verify"`
 
