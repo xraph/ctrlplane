@@ -190,11 +190,23 @@ type RemoveDomainRequest struct {
 // Body fields are replicated because network.AddRouteRequest has a conflicting
 // InstanceID json tag.
 type AddRouteAPIRequest struct {
-	InstanceID id.ID  `description:"Instance identifier"    path:"instanceId"`
-	Path       string `description:"Route path pattern"     json:"path"`
-	Port       int    `description:"Target port"            json:"port"`
-	Protocol   string `description:"Protocol (http, grpc)"  json:"protocol"`
-	Weight     int    `description:"Traffic weight (0-100)" json:"weight"`
+	InstanceID        id.ID  `description:"Instance identifier"                        path:"instanceId"`
+	ServiceName       string `description:"Target service in a multi-service instance" json:"service_name"`
+	Hostname          string `description:"Host the route is scoped to"                json:"hostname"`
+	Path              string `description:"Route path pattern"                         json:"path"`
+	Port              int    `description:"Target port"                                json:"port"`
+	Protocol          string `description:"Protocol (http, grpc)"                      json:"protocol"`
+	Weight            int    `description:"Traffic weight (0-100)"                     json:"weight"`
+	StripPrefix       bool   `description:"Strip path prefix"                          json:"strip_prefix"`
+	RewriteRedirects  bool   `description:"Rewrite Location headers onto the prefix"   json:"rewrite_redirects"`
+	RewriteCookiePath bool   `description:"Rewrite Set-Cookie paths onto the prefix"   json:"rewrite_cookie_path"`
+	UpstreamOrigin    string `description:"Absolute upstream origin (scheme://host)"   json:"upstream_origin"`
+
+	// TLSVerify stays a pointer all the way through the API layer: the
+	// zero value of the flag is true, so collapsing it to a bool here
+	// would turn an omitted key into an explicit "false" and silently
+	// disable certificate verification. AddRoute reads nil as true.
+	TLSVerify *bool `description:"Verify upstream TLS (defaults to true)" json:"tls_verify"`
 }
 
 // ListRoutesRequest binds the path for GET /v1/instances/:instanceId/routes.
@@ -204,10 +216,16 @@ type ListRoutesRequest struct {
 
 // UpdateRouteAPIRequest binds path + body for PATCH /v1/routes/:routeId.
 type UpdateRouteAPIRequest struct {
-	RouteID     id.ID   `description:"Route identifier"   path:"routeId"`
-	Path        *string `description:"Route path pattern" json:"path,omitempty"`
-	Weight      *int    `description:"Traffic weight"     json:"weight,omitempty"`
-	StripPrefix *bool   `description:"Strip path prefix"  json:"strip_prefix,omitempty"`
+	RouteID           id.ID   `description:"Route identifier"                              path:"routeId"`
+	ServiceName       *string `description:"Target service in a multi-service instance"    json:"service_name,omitempty"`
+	Hostname          *string `description:"Host the route is scoped to (empty clears it)" json:"hostname,omitempty"`
+	Path              *string `description:"Route path pattern"                            json:"path,omitempty"`
+	Weight            *int    `description:"Traffic weight"                                json:"weight,omitempty"`
+	StripPrefix       *bool   `description:"Strip path prefix"                             json:"strip_prefix,omitempty"`
+	RewriteRedirects  *bool   `description:"Rewrite Location headers onto the prefix"      json:"rewrite_redirects,omitempty"`
+	RewriteCookiePath *bool   `description:"Rewrite Set-Cookie paths onto the prefix"      json:"rewrite_cookie_path,omitempty"`
+	UpstreamOrigin    *string `description:"Absolute upstream origin (empty clears it)"    json:"upstream_origin,omitempty"`
+	TLSVerify         *bool   `description:"Verify upstream TLS"                           json:"tls_verify,omitempty"`
 }
 
 // RemoveRouteRequest binds the path for DELETE /v1/routes/:routeId.
