@@ -604,14 +604,16 @@ func fromDomainModel(m *domainModel) *network.Domain {
 type routeModel struct {
 	grove.BaseModel `grove:"table:cp_routes"`
 
-	ID          string `bson:"_id"                grove:"id,pk"`
-	TenantID    string `bson:"tenant_id"          grove:"tenant_id"`
-	InstanceID  string `bson:"instance_id"        grove:"instance_id"`
-	Path        string `bson:"path"               grove:"path"`
-	Port        int    `bson:"port"               grove:"port"`
-	Protocol    string `bson:"protocol,omitempty" grove:"protocol"`
-	Weight      int    `bson:"weight"             grove:"weight"`
-	StripPrefix bool   `bson:"strip_prefix"       grove:"strip_prefix"`
+	ID          string `bson:"_id"                    grove:"id,pk"`
+	TenantID    string `bson:"tenant_id"              grove:"tenant_id"`
+	InstanceID  string `bson:"instance_id"            grove:"instance_id"`
+	ServiceName string `bson:"service_name,omitempty" grove:"service_name"`
+	Hostname    string `bson:"hostname,omitempty"     grove:"hostname"`
+	Path        string `bson:"path"                   grove:"path"`
+	Port        int    `bson:"port"                   grove:"port"`
+	Protocol    string `bson:"protocol,omitempty"     grove:"protocol"`
+	Weight      int    `bson:"weight"                 grove:"weight"`
+	StripPrefix bool   `bson:"strip_prefix"           grove:"strip_prefix"`
 
 	RewriteRedirects  bool   `bson:"rewrite_redirects"   grove:"rewrite_redirects"`
 	RewriteCookiePath bool   `bson:"rewrite_cookie_path" grove:"rewrite_cookie_path"`
@@ -627,6 +629,8 @@ func toRouteModel(r *network.Route) *routeModel {
 		ID:          idStr(r.ID),
 		TenantID:    r.TenantID,
 		InstanceID:  idStr(r.InstanceID),
+		ServiceName: r.ServiceName,
+		Hostname:    r.Hostname,
 		Path:        r.Path,
 		Port:        r.Port,
 		Protocol:    r.Protocol,
@@ -652,6 +656,8 @@ func fromRouteModel(m *routeModel) *network.Route {
 		},
 		TenantID:    m.TenantID,
 		InstanceID:  id.MustParse(m.InstanceID),
+		ServiceName: m.ServiceName,
+		Hostname:    m.Hostname,
 		Path:        m.Path,
 		Port:        m.Port,
 		Protocol:    m.Protocol,

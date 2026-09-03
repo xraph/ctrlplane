@@ -71,9 +71,8 @@ type Route struct {
 	// workspace's API hostname). The OctopusRouter uses it as the
 	// Gateway API HTTPRoute's `hostnames` entry so per-workspace path
 	// routes don't collide on the shared *.api wildcard listener.
-	// Transient: carried from AddRouteRequest to the router at create
-	// time; not persisted (stores map via their own models).
-	Hostname string `json:"hostname,omitempty"`
+	// Empty means the route answers on every host the listener serves.
+	Hostname string `db:"hostname" json:"hostname,omitempty"`
 }
 
 // Certificate holds TLS certificate state.

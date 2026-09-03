@@ -866,5 +866,26 @@ CREATE INDEX IF NOT EXISTS idx_cp_workloads_state ON cp_workloads (state);
 				return err
 			},
 		},
+		// Routing targets on routes. service_name picks the service
+		// inside a multi-service instance; hostname scopes the route to
+		// a single host so per-workspace path routes don't collide on
+		// the shared wildcard listener. Both already existed on
+		// network.Route but had no column, so they were dropped on every
+		// write. Additive — existing routes default to empty, which is
+		// the pre-existing behaviour (Main service, every host).
+		&migrate.Migration{
+			Name:    "add_routing_targets_to_cp_routes",
+			Version: "20240101000027",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `ALTER TABLE cp_routes ADD COLUMN IF NOT EXISTS service_name TEXT NOT NULL DEFAULT '', ADD COLUMN IF NOT EXISTS hostname TEXT NOT NULL DEFAULT ''`)
+
+				return err
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `ALTER TABLE cp_routes DROP COLUMN IF EXISTS service_name, DROP COLUMN IF EXISTS hostname`)
+
+				return err
+			},
+		},
 	)
 }

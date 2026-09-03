@@ -62,3 +62,48 @@ func TestRouteModel_ProxyFieldsRoundTrip(t *testing.T) {
 		t.Fatalf("TLSVerify round-trip: got %v want %v", out.TLSVerify, in.TLSVerify)
 	}
 }
+
+// TestRouteModel_RoutingTargetsRoundTrip guards the two fields that
+// decide where a route points. ServiceName picks the service inside a
+// multi-service instance; Hostname scopes the route to a single host so
+// per-workspace path routes don't collide on the shared wildcard
+// listener.
+//
+// Both live on network.Route but were absent from routeModel, so a
+// route created with either one reloaded from postgres with the field
+// blank: traffic fell back to the instance's Main service and the route
+// widened onto every host on the listener. Nothing errored, which is
+// what makes the round-trip assertion worth keeping.
+func TestRouteModel_RoutingTargetsRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	in := &network.Route{
+		Entity:      ctrlplane.NewEntity(id.PrefixRoute),
+		TenantID:    "tenant-x",
+		InstanceID:  id.New(id.PrefixInstance),
+		ServiceName: "worker",
+		Hostname:    "acme.api.example.com",
+		Path:        "/twinos",
+		Port:        7900,
+		Protocol:    "http",
+		Weight:      1,
+	}
+
+	m := toRouteModel(in)
+	if m.ServiceName != in.ServiceName {
+		t.Fatalf("toRouteModel dropped ServiceName: got %q want %q", m.ServiceName, in.ServiceName)
+	}
+
+	if m.Hostname != in.Hostname {
+		t.Fatalf("toRouteModel dropped Hostname: got %q want %q", m.Hostname, in.Hostname)
+	}
+
+	out := fromRouteModel(m)
+	if out.ServiceName != in.ServiceName {
+		t.Fatalf("ServiceName round-trip: got %q want %q", out.ServiceName, in.ServiceName)
+	}
+
+	if out.Hostname != in.Hostname {
+		t.Fatalf("Hostname round-trip: got %q want %q", out.Hostname, in.Hostname)
+	}
+}

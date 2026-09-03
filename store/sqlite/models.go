@@ -215,6 +215,8 @@ type routeModel struct {
 	ID          string `grove:"id,pk"`
 	TenantID    string `grove:"tenant_id,notnull"`
 	InstanceID  string `grove:"instance_id,notnull"`
+	ServiceName string `grove:"service_name"`
+	Hostname    string `grove:"hostname"`
 	Path        string `grove:"path,notnull"`
 	Port        int    `grove:"port,notnull"`
 	Protocol    string `grove:"protocol"`
@@ -535,6 +537,8 @@ func toRouteModel(route *network.Route) *routeModel {
 		ID:          route.ID.String(),
 		TenantID:    route.TenantID,
 		InstanceID:  route.InstanceID.String(),
+		ServiceName: route.ServiceName,
+		Hostname:    route.Hostname,
 		Path:        route.Path,
 		Port:        route.Port,
 		Protocol:    route.Protocol,
@@ -560,6 +564,8 @@ func fromRouteModel(m *routeModel) *network.Route {
 		},
 		TenantID:    m.TenantID,
 		InstanceID:  id.MustParse(m.InstanceID),
+		ServiceName: m.ServiceName,
+		Hostname:    m.Hostname,
 		Path:        m.Path,
 		Port:        m.Port,
 		Protocol:    m.Protocol,

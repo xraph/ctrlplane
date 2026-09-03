@@ -724,5 +724,39 @@ CREATE TABLE IF NOT EXISTS cp_bootstrap_workloads (
 				return nil
 			},
 		},
+		// Routing targets on routes. Mirrors postgres migration
+		// 20240101000027. service_name picks the service inside a
+		// multi-service instance; hostname scopes the route to a single
+		// host. Both default to empty, which is the pre-existing
+		// behaviour (Main service, every host). One column per ALTER,
+		// as SQLite requires.
+		&migrate.Migration{
+			Name:    "add_routing_targets_to_cp_routes",
+			Version: "20240101000021",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				for _, stmt := range []string{
+					`ALTER TABLE cp_routes ADD COLUMN service_name TEXT NOT NULL DEFAULT ''`,
+					`ALTER TABLE cp_routes ADD COLUMN hostname TEXT NOT NULL DEFAULT ''`,
+				} {
+					if _, err := exec.Exec(ctx, stmt); err != nil {
+						return err
+					}
+				}
+
+				return nil
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				for _, stmt := range []string{
+					`ALTER TABLE cp_routes DROP COLUMN service_name`,
+					`ALTER TABLE cp_routes DROP COLUMN hostname`,
+				} {
+					if _, err := exec.Exec(ctx, stmt); err != nil {
+						return err
+					}
+				}
+
+				return nil
+			},
+		},
 	)
 }
