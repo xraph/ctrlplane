@@ -59,17 +59,30 @@ func (a *API) removeDomain(ctx forge.Context, req *RemoveDomainRequest) (*networ
 	return nil, nil
 }
 
+// toAddRouteRequest maps the HTTP DTO onto the service request. The two
+// are separate structs because network.AddRouteRequest claims the
+// instance_id json tag the path parameter needs, so every body field is
+// copied by hand here.
+func toAddRouteRequest(req *AddRouteAPIRequest) network.AddRouteRequest {
+	return network.AddRouteRequest{
+		InstanceID:        req.InstanceID,
+		ServiceName:       req.ServiceName,
+		Hostname:          req.Hostname,
+		Path:              req.Path,
+		Port:              req.Port,
+		Protocol:          req.Protocol,
+		Weight:            req.Weight,
+		StripPrefix:       req.StripPrefix,
+		RewriteRedirects:  req.RewriteRedirects,
+		RewriteCookiePath: req.RewriteCookiePath,
+		UpstreamOrigin:    req.UpstreamOrigin,
+		TLSVerify:         req.TLSVerify,
+	}
+}
+
 // addRoute handles POST /v1/instances/:instanceId/routes.
 func (a *API) addRoute(ctx forge.Context, req *AddRouteAPIRequest) (*network.Route, error) {
-	routeReq := network.AddRouteRequest{
-		InstanceID: req.InstanceID,
-		Path:       req.Path,
-		Port:       req.Port,
-		Protocol:   req.Protocol,
-		Weight:     req.Weight,
-	}
-
-	route, err := a.cp.Network.AddRoute(ctx.Context(), routeReq)
+	route, err := a.cp.Network.AddRoute(ctx.Context(), toAddRouteRequest(req))
 	if err != nil {
 		return nil, mapError(err)
 	}
@@ -90,15 +103,25 @@ func (a *API) listRoutes(ctx forge.Context, req *ListRoutesRequest) ([]network.R
 	return routes, nil
 }
 
+// toUpdateRouteRequest maps the HTTP DTO onto the service request. Every
+// field stays a pointer so an omitted key leaves the stored value alone.
+func toUpdateRouteRequest(req *UpdateRouteAPIRequest) network.UpdateRouteRequest {
+	return network.UpdateRouteRequest{
+		ServiceName:       req.ServiceName,
+		Hostname:          req.Hostname,
+		Path:              req.Path,
+		Weight:            req.Weight,
+		StripPrefix:       req.StripPrefix,
+		RewriteRedirects:  req.RewriteRedirects,
+		RewriteCookiePath: req.RewriteCookiePath,
+		UpstreamOrigin:    req.UpstreamOrigin,
+		TLSVerify:         req.TLSVerify,
+	}
+}
+
 // updateRoute handles PATCH /v1/routes/:routeID.
 func (a *API) updateRoute(ctx forge.Context, req *UpdateRouteAPIRequest) (*network.Route, error) {
-	updateReq := network.UpdateRouteRequest{
-		Path:        req.Path,
-		Weight:      req.Weight,
-		StripPrefix: req.StripPrefix,
-	}
-
-	route, err := a.cp.Network.UpdateRoute(ctx.Context(), req.RouteID, updateReq)
+	route, err := a.cp.Network.UpdateRoute(ctx.Context(), req.RouteID, toUpdateRouteRequest(req))
 	if err != nil {
 		return nil, mapError(err)
 	}

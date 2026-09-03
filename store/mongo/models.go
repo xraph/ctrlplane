@@ -604,16 +604,24 @@ func fromDomainModel(m *domainModel) *network.Domain {
 type routeModel struct {
 	grove.BaseModel `grove:"table:cp_routes"`
 
-	ID          string    `bson:"_id"                grove:"id,pk"`
-	TenantID    string    `bson:"tenant_id"          grove:"tenant_id"`
-	InstanceID  string    `bson:"instance_id"        grove:"instance_id"`
-	Path        string    `bson:"path"               grove:"path"`
-	Port        int       `bson:"port"               grove:"port"`
-	Protocol    string    `bson:"protocol,omitempty" grove:"protocol"`
-	Weight      int       `bson:"weight"             grove:"weight"`
-	StripPrefix bool      `bson:"strip_prefix"       grove:"strip_prefix"`
-	CreatedAt   time.Time `bson:"created_at"         grove:"created_at"`
-	UpdatedAt   time.Time `bson:"updated_at"         grove:"updated_at"`
+	ID          string `bson:"_id"                    grove:"id,pk"`
+	TenantID    string `bson:"tenant_id"              grove:"tenant_id"`
+	InstanceID  string `bson:"instance_id"            grove:"instance_id"`
+	ServiceName string `bson:"service_name,omitempty" grove:"service_name"`
+	Hostname    string `bson:"hostname,omitempty"     grove:"hostname"`
+	Path        string `bson:"path"                   grove:"path"`
+	Port        int    `bson:"port"                   grove:"port"`
+	Protocol    string `bson:"protocol,omitempty"     grove:"protocol"`
+	Weight      int    `bson:"weight"                 grove:"weight"`
+	StripPrefix bool   `bson:"strip_prefix"           grove:"strip_prefix"`
+
+	RewriteRedirects  bool   `bson:"rewrite_redirects"   grove:"rewrite_redirects"`
+	RewriteCookiePath bool   `bson:"rewrite_cookie_path" grove:"rewrite_cookie_path"`
+	UpstreamOrigin    string `bson:"upstream_origin"     grove:"upstream_origin"`
+	TLSVerify         bool   `bson:"tls_verify"          grove:"tls_verify"`
+
+	CreatedAt time.Time `bson:"created_at" grove:"created_at"`
+	UpdatedAt time.Time `bson:"updated_at" grove:"updated_at"`
 }
 
 func toRouteModel(r *network.Route) *routeModel {
@@ -621,13 +629,21 @@ func toRouteModel(r *network.Route) *routeModel {
 		ID:          idStr(r.ID),
 		TenantID:    r.TenantID,
 		InstanceID:  idStr(r.InstanceID),
+		ServiceName: r.ServiceName,
+		Hostname:    r.Hostname,
 		Path:        r.Path,
 		Port:        r.Port,
 		Protocol:    r.Protocol,
 		Weight:      r.Weight,
 		StripPrefix: r.StripPrefix,
-		CreatedAt:   r.CreatedAt,
-		UpdatedAt:   r.UpdatedAt,
+
+		RewriteRedirects:  r.RewriteRedirects,
+		RewriteCookiePath: r.RewriteCookiePath,
+		UpstreamOrigin:    r.UpstreamOrigin,
+		TLSVerify:         r.TLSVerify,
+
+		CreatedAt: r.CreatedAt,
+		UpdatedAt: r.UpdatedAt,
 	}
 }
 
@@ -640,11 +656,18 @@ func fromRouteModel(m *routeModel) *network.Route {
 		},
 		TenantID:    m.TenantID,
 		InstanceID:  id.MustParse(m.InstanceID),
+		ServiceName: m.ServiceName,
+		Hostname:    m.Hostname,
 		Path:        m.Path,
 		Port:        m.Port,
 		Protocol:    m.Protocol,
 		Weight:      m.Weight,
 		StripPrefix: m.StripPrefix,
+
+		RewriteRedirects:  m.RewriteRedirects,
+		RewriteCookiePath: m.RewriteCookiePath,
+		UpstreamOrigin:    m.UpstreamOrigin,
+		TLSVerify:         m.TLSVerify,
 	}
 }
 

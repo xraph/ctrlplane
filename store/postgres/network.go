@@ -352,11 +352,18 @@ func fromRouteModel(m *routeModel) *network.Route {
 		},
 		TenantID:    m.TenantID,
 		InstanceID:  id.MustParse(m.InstanceID),
+		ServiceName: m.ServiceName,
+		Hostname:    m.Hostname,
 		Path:        m.Path,
 		Port:        m.Port,
 		Protocol:    m.Protocol,
 		Weight:      m.Weight,
 		StripPrefix: m.StripPrefix,
+
+		RewriteRedirects:  m.RewriteRedirects,
+		RewriteCookiePath: m.RewriteCookiePath,
+		UpstreamOrigin:    m.UpstreamOrigin,
+		TLSVerify:         m.TLSVerify,
 	}
 }
 
