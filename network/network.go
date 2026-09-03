@@ -36,14 +36,43 @@ type Route struct {
 	Port        int    `db:"port"         json:"port"`
 	Protocol    string `db:"protocol"     json:"protocol"`
 	Weight      int    `db:"weight"       json:"weight"`
-	StripPrefix bool   `db:"strip_prefix" json:"strip_prefix"`
+	// StripPrefix drops the route's Path prefix before the request
+	// reaches the backend. It doubles as the route's path mode for
+	// proxying: the annotation emitter maps true to octopus's "strip"
+	// and false to "passthrough". Keeping one field here means the two
+	// can never disagree.
+	StripPrefix bool `db:"strip_prefix" json:"strip_prefix"`
+
+	// Proxy-mode fields. Octopus reads these off the emitted HTTPRoute
+	// to decide how far it rewrites a proxied response. They only take
+	// effect once the route is in proxy mode, which the emitter decides;
+	// a route with all of them at their zero value proxies as before.
+	//
+	// RewriteRedirects re-adds a stripped prefix to Location headers so
+	// a backend mounted at "/" doesn't send browsers outside the
+	// gateway prefix. RewriteCookiePath does the same for Set-Cookie
+	// Path attributes.
+	RewriteRedirects  bool `db:"rewrite_redirects"   json:"rewrite_redirects,omitempty"`
+	RewriteCookiePath bool `db:"rewrite_cookie_path" json:"rewrite_cookie_path,omitempty"`
+
+	// UpstreamOrigin overrides the backend address with an absolute
+	// scheme://host[:port], for routes that proxy somewhere outside the
+	// cluster. TLSVerify controls certificate verification against that
+	// origin and is meaningless without it. TLSVerify defaults to true;
+	// AddRoute treats an unset AddRouteRequest.TLSVerify as true so a
+	// caller can never silently disable verification by omission.
+	// UpdateRoute holds the matching invariant from the other side: an
+	// empty UpstreamOrigin always implies TLSVerify, because clearing
+	// the origin resets verification.
+	UpstreamOrigin string `db:"upstream_origin" json:"upstream_origin,omitempty"`
+	TLSVerify      bool   `db:"tls_verify"      json:"tls_verify"`
+
 	// Hostname, when set, scopes the route to a single host (the
 	// workspace's API hostname). The OctopusRouter uses it as the
 	// Gateway API HTTPRoute's `hostnames` entry so per-workspace path
 	// routes don't collide on the shared *.api wildcard listener.
-	// Transient: carried from AddRouteRequest to the router at create
-	// time; not persisted (stores map via their own models).
-	Hostname string `json:"hostname,omitempty"`
+	// Empty means the route answers on every host the listener serves.
+	Hostname string `db:"hostname" json:"hostname,omitempty"`
 }
 
 // Certificate holds TLS certificate state.

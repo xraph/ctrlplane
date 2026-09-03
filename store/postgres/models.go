@@ -216,16 +216,24 @@ type domainModel struct {
 type routeModel struct {
 	grove.BaseModel `grove:"table:cp_routes"`
 
-	ID          string    `grove:"id,pk"`
-	TenantID    string    `grove:"tenant_id,notnull"`
-	InstanceID  string    `grove:"instance_id,notnull"`
-	Path        string    `grove:"path,notnull"`
-	Port        int       `grove:"port,notnull"`
-	Protocol    string    `grove:"protocol"`
-	Weight      int       `grove:"weight"`
-	StripPrefix bool      `grove:"strip_prefix"`
-	CreatedAt   time.Time `grove:"created_at,notnull"`
-	UpdatedAt   time.Time `grove:"updated_at,notnull"`
+	ID          string `grove:"id,pk"`
+	TenantID    string `grove:"tenant_id,notnull"`
+	InstanceID  string `grove:"instance_id,notnull"`
+	ServiceName string `grove:"service_name"`
+	Hostname    string `grove:"hostname"`
+	Path        string `grove:"path,notnull"`
+	Port        int    `grove:"port,notnull"`
+	Protocol    string `grove:"protocol"`
+	Weight      int    `grove:"weight"`
+	StripPrefix bool   `grove:"strip_prefix"`
+
+	RewriteRedirects  bool   `grove:"rewrite_redirects"`
+	RewriteCookiePath bool   `grove:"rewrite_cookie_path"`
+	UpstreamOrigin    string `grove:"upstream_origin"`
+	TLSVerify         bool   `grove:"tls_verify"`
+
+	CreatedAt time.Time `grove:"created_at,notnull"`
+	UpdatedAt time.Time `grove:"updated_at,notnull"`
 }
 
 // certificateModel is the database model for network.Certificate.
@@ -518,13 +526,21 @@ func toRouteModel(route *network.Route) *routeModel {
 		ID:          route.ID.String(),
 		TenantID:    route.TenantID,
 		InstanceID:  route.InstanceID.String(),
+		ServiceName: route.ServiceName,
+		Hostname:    route.Hostname,
 		Path:        route.Path,
 		Port:        route.Port,
 		Protocol:    route.Protocol,
 		Weight:      route.Weight,
 		StripPrefix: route.StripPrefix,
-		CreatedAt:   route.CreatedAt,
-		UpdatedAt:   route.UpdatedAt,
+
+		RewriteRedirects:  route.RewriteRedirects,
+		RewriteCookiePath: route.RewriteCookiePath,
+		UpstreamOrigin:    route.UpstreamOrigin,
+		TLSVerify:         route.TLSVerify,
+
+		CreatedAt: route.CreatedAt,
+		UpdatedAt: route.UpdatedAt,
 	}
 }
 

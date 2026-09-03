@@ -179,16 +179,20 @@ func (s *service) AddRoute(ctx context.Context, req AddRouteRequest) (*Route, er
 	}
 
 	route := &Route{
-		Entity:      ctrlplane.NewEntity(id.PrefixRoute),
-		TenantID:    claims.TenantID,
-		InstanceID:  req.InstanceID,
-		ServiceName: req.ServiceName,
-		Path:        req.Path,
-		Port:        req.Port,
-		Protocol:    protocol,
-		Weight:      weight,
-		StripPrefix: req.StripPrefix,
-		Hostname:    req.Hostname,
+		Entity:            ctrlplane.NewEntity(id.PrefixRoute),
+		TenantID:          claims.TenantID,
+		InstanceID:        req.InstanceID,
+		ServiceName:       req.ServiceName,
+		Path:              req.Path,
+		Port:              req.Port,
+		Protocol:          protocol,
+		Weight:            weight,
+		StripPrefix:       req.StripPrefix,
+		RewriteRedirects:  req.RewriteRedirects,
+		RewriteCookiePath: req.RewriteCookiePath,
+		UpstreamOrigin:    req.UpstreamOrigin,
+		TLSVerify:         req.TLSVerify == nil || *req.TLSVerify,
+		Hostname:          req.Hostname,
 	}
 
 	if err := s.store.InsertRoute(ctx, route); err != nil {
@@ -241,6 +245,36 @@ func (s *service) UpdateRoute(ctx context.Context, routeID id.ID, req UpdateRout
 
 	if req.ServiceName != nil {
 		route.ServiceName = *req.ServiceName
+	}
+
+	if req.Hostname != nil {
+		route.Hostname = *req.Hostname
+	}
+
+	if req.RewriteRedirects != nil {
+		route.RewriteRedirects = *req.RewriteRedirects
+	}
+
+	if req.RewriteCookiePath != nil {
+		route.RewriteCookiePath = *req.RewriteCookiePath
+	}
+
+	if req.TLSVerify != nil {
+		route.TLSVerify = *req.TLSVerify
+	}
+
+	// Applied after TLSVerify so the reset below wins over an explicit
+	// tls_verify=false sent in the same request.
+	if req.UpstreamOrigin != nil {
+		route.UpstreamOrigin = *req.UpstreamOrigin
+
+		// Octopus only consults tls_verify when an origin is set, so a
+		// route left unverified with no origin is dead state: invisible
+		// until someone points it at a new origin and silently inherits
+		// unverified TLS. Clearing the origin clears that with it.
+		if route.UpstreamOrigin == "" {
+			route.TLSVerify = true
+		}
 	}
 
 	route.UpdatedAt = time.Now().UTC()
