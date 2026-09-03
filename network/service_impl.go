@@ -247,6 +247,10 @@ func (s *service) UpdateRoute(ctx context.Context, routeID id.ID, req UpdateRout
 		route.ServiceName = *req.ServiceName
 	}
 
+	if req.Hostname != nil {
+		route.Hostname = *req.Hostname
+	}
+
 	if req.RewriteRedirects != nil {
 		route.RewriteRedirects = *req.RewriteRedirects
 	}

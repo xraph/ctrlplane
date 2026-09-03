@@ -51,6 +51,9 @@ type AddDomainRequest struct {
 // ServiceName optionally targets a specific service inside a
 // multi-service instance — leave empty to route to the instance's
 // Main service (the default for single-service workloads).
+//
+// Hostname optionally scopes the route to a single host — leave empty
+// to answer on every host the gateway listener serves.
 type AddRouteRequest struct {
 	InstanceID        id.ID  `json:"instance_id"                   validate:"required"`
 	ServiceName       string `json:"service_name,omitempty"`
@@ -78,6 +81,7 @@ type AddRouteRequest struct {
 // turned off again once a new origin is set.
 type UpdateRouteRequest struct {
 	ServiceName *string `json:"service_name,omitempty"`
+	Hostname    *string `json:"hostname,omitempty"`
 	Path        *string `json:"path,omitempty"`
 	Weight      *int    `json:"weight,omitempty"`
 	StripPrefix *bool   `json:"strip_prefix,omitempty"`
