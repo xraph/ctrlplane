@@ -7,8 +7,6 @@ import (
 	"net/http"
 
 	"github.com/xraph/forge"
-	dashboard "github.com/xraph/forge/extensions/dashboard"
-	"github.com/xraph/forge/extensions/dashboard/contributor"
 	"github.com/xraph/grove"
 	"github.com/xraph/vessel"
 
@@ -16,7 +14,6 @@ import (
 	"github.com/xraph/ctrlplane/app"
 	audithook "github.com/xraph/ctrlplane/audit_hook"
 	"github.com/xraph/ctrlplane/auth"
-	cpdash "github.com/xraph/ctrlplane/dashboard"
 	"github.com/xraph/ctrlplane/secrets"
 	memoryvault "github.com/xraph/ctrlplane/secrets/memoryvault"
 	"github.com/xraph/ctrlplane/store"
@@ -37,9 +34,6 @@ const ExtensionVersion = "0.1.0"
 
 // Ensure Extension implements forge.Extension at compile time.
 var _ forge.Extension = (*Extension)(nil)
-
-// Ensure Extension implements dashboard.DashboardAware at compile time.
-var _ dashboard.DashboardAware = (*Extension)(nil)
 
 // Extension adapts CtrlPlane as a Forge extension.
 // It implements the forge.Extension interface when used with Forge.
@@ -219,13 +213,6 @@ func (e *Extension) Health(ctx context.Context) error {
 // where the parent app owns the router.
 func (e *Extension) RegisterRoutes(router forge.Router) {
 	e.api.RegisterRoutes(router)
-}
-
-// DashboardContributor implements dashboard.DashboardAware. It returns a
-// LocalContributor that renders ctrlplane pages, widgets, and settings
-// in the Forge dashboard using templ + ForgeUI.
-func (e *Extension) DashboardContributor() contributor.LocalContributor {
-	return cpdash.New(cpdash.NewManifest(), e.cp)
 }
 
 // --- Store Resolution ---
