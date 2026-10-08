@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/dgraph-io/badger/v4"
 
@@ -110,6 +111,17 @@ func (s *Store) List(_ context.Context, tenantID string, opts instance.ListOptio
 
 			if opts.Provider != "" && inst.ProviderName != opts.Provider {
 				return nil
+			}
+
+			if opts.Datacenter != "" && inst.DatacenterID.String() != opts.Datacenter {
+				return nil
+			}
+
+			if opts.Label != "" {
+				key, value, valid := strings.Cut(opts.Label, "=")
+				if !valid || key == "" || inst.Labels[key] != value {
+					return nil
+				}
 			}
 
 			items = append(items, &inst)
