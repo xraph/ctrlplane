@@ -13,8 +13,18 @@ import (
 // InsertWorkload persists a Workload. The id is a TEXT pk assigned by the
 // caller, so a plain insert is safe (no BIGSERIAL/autoincrement concern).
 func (s *Store) InsertWorkload(ctx context.Context, w *workload.Workload) error {
-	if _, err := s.pg.NewInsert(toWorkloadModel(w)).Exec(ctx); err != nil {
+	result, err := s.pg.NewInsert(toWorkloadModel(w)).OnConflict("DO NOTHING").Exec(ctx)
+	if err != nil {
 		return fmt.Errorf("postgres: insert workload: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("postgres: insert workload count: %w", err)
+	}
+
+	if rows == 0 {
+		return fmt.Errorf("workload %s: %w", w.ID, ctrlplane.ErrAlreadyExists)
 	}
 
 	return nil
@@ -126,13 +136,22 @@ func (s *Store) ListWorkloads(ctx context.Context, tenantID string, opts workloa
 	return &workload.ListResult{Items: items, Total: int(total), NextCursor: next}, nil
 }
 
-// UpdateWorkload persists changes. Mirrors mongo: no not-found error when the
-// row is absent (workload.Service handles existence checks).
+// UpdateWorkload persists changes only within the workload's owning tenant.
 func (s *Store) UpdateWorkload(ctx context.Context, w *workload.Workload) error {
 	w.UpdatedAt = now()
 
-	if _, err := s.pg.NewUpdate(toWorkloadModel(w)).WherePK().Exec(ctx); err != nil {
+	result, err := s.pg.NewUpdate(toWorkloadModel(w)).Where("id = ? AND tenant_id = ?", w.ID.String(), w.TenantID).Exec(ctx)
+	if err != nil {
 		return fmt.Errorf("postgres: update workload: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("postgres: update workload count: %w", err)
+	}
+
+	if rows == 0 {
+		return fmt.Errorf("workload %s: %w", w.ID, ctrlplane.ErrNotFound)
 	}
 
 	return nil
@@ -146,8 +165,18 @@ func (s *Store) DeleteWorkload(ctx context.Context, tenantID string, workloadID 
 		q = q.Where("tenant_id = $2", tenantID)
 	}
 
-	if _, err := q.Exec(ctx); err != nil {
+	result, err := q.Exec(ctx)
+	if err != nil {
 		return fmt.Errorf("postgres: delete workload: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("postgres: delete workload count: %w", err)
+	}
+
+	if rows == 0 {
+		return fmt.Errorf("workload %s: %w", workloadID, ctrlplane.ErrNotFound)
 	}
 
 	return nil

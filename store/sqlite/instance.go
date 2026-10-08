@@ -65,10 +65,6 @@ func (s *Store) List(ctx context.Context, tenantID string, opts instance.ListOpt
 		return nil, err
 	}
 
-	if opts.Datacenter != "" {
-		return nil, fmt.Errorf("datacenter instance filter: %w", ctrlplane.ErrNotImplemented)
-	}
-
 	q := s.sdb.NewSelect(&models)
 
 	q = q.Where("tenant_id = ?", tenantID)
@@ -78,6 +74,10 @@ func (s *Store) List(ctx context.Context, tenantID string, opts instance.ListOpt
 
 	if opts.Provider != "" {
 		q = q.Where("provider_name = ?", opts.Provider)
+	}
+
+	if opts.Datacenter != "" {
+		q = q.Where("datacenter_id = ?", opts.Datacenter)
 	}
 
 	if opts.Label != "" {
@@ -124,7 +124,7 @@ func (s *Store) Update(ctx context.Context, inst *instance.Instance) error {
 	inst.UpdatedAt = now()
 	model := toInstanceModel(inst)
 
-	res, err := s.sdb.NewUpdate(model).WherePK().Exec(ctx)
+	res, err := s.sdb.NewUpdate(model).Where("id = ? AND tenant_id = ?", inst.ID.String(), inst.TenantID).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("sqlite: update instance failed: %w", err)
 	}

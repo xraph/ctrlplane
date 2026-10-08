@@ -75,10 +75,6 @@ func (s *Store) List(ctx context.Context, tenantID string, opts instance.ListOpt
 		return nil, err
 	}
 
-	if opts.Datacenter != "" {
-		return nil, fmt.Errorf("datacenter instance filter: %w", ctrlplane.ErrNotImplemented)
-	}
-
 	filter := bson.M{}
 
 	filter["tenant_id"] = tenantID
@@ -88,6 +84,10 @@ func (s *Store) List(ctx context.Context, tenantID string, opts instance.ListOpt
 
 	if opts.Provider != "" {
 		filter["provider_name"] = opts.Provider
+	}
+
+	if opts.Datacenter != "" {
+		filter["datacenter_id"] = opts.Datacenter
 	}
 
 	if opts.Label != "" {
@@ -135,7 +135,7 @@ func (s *Store) Update(ctx context.Context, inst *instance.Instance) error {
 	model := toInstanceModel(inst)
 
 	res, err := s.mdb.NewUpdate(model).
-		Filter(bson.M{"_id": model.ID}).
+		Filter(bson.M{"_id": model.ID, "tenant_id": inst.TenantID}).
 		Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("mongo: update instance failed: %w", err)

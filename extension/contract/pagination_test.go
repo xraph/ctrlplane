@@ -63,8 +63,9 @@ func assertContinuation[T any](t *testing.T, list func(string) ([]T, string, int
 		t.Fatal("ignored malformed cursor")
 	}
 }
+
 func TestStoreContinuationConformance(t *testing.T) {
-	for _, backend := range []string{"memory", "badger", "sqlite"} {
+	for _, backend := range []string{"memory", "badger", "sqlite", "postgres", "mongo"} {
 		t.Run(backend, func(t *testing.T) {
 			cp, _ := storageHarness(t, backend)
 			s := cp.Store()
@@ -103,10 +104,8 @@ func TestStoreContinuationConformance(t *testing.T) {
 					}
 				}
 
-				if backend != "sqlite" {
-					if err := s.InsertWorkload(ctx, &workload.Workload{Entity: entity(id.PrefixWorkload), TenantID: "alpha", Slug: fmt.Sprintf("workload-%d", i), Name: "Workload", State: workload.StateActive}); err != nil {
-						t.Fatal(err)
-					}
+				if err := s.InsertWorkload(ctx, &workload.Workload{Entity: entity(id.PrefixWorkload), TenantID: "alpha", Slug: fmt.Sprintf("workload-%d", i), Name: "Workload", State: workload.StateActive}); err != nil {
+					t.Fatal(err)
 				}
 			}
 
@@ -161,23 +160,22 @@ func TestStoreContinuationConformance(t *testing.T) {
 				}, func(v *datacenter.Datacenter) id.ID { return v.ID }, 5)
 			})
 
-			if backend != "sqlite" {
-				t.Run("workloads", func(t *testing.T) {
-					assertContinuation(t, func(cursor string) ([]*workload.Workload, string, int, error) {
-						r, err := s.ListWorkloads(ctx, "alpha", workload.ListOptions{Cursor: cursor, Limit: 2})
-						if err != nil {
-							return nil, "", 0, err
-						}
+			t.Run("workloads", func(t *testing.T) {
+				assertContinuation(t, func(cursor string) ([]*workload.Workload, string, int, error) {
+					r, err := s.ListWorkloads(ctx, "alpha", workload.ListOptions{Cursor: cursor, Limit: 2})
+					if err != nil {
+						return nil, "", 0, err
+					}
 
-						return r.Items, r.NextCursor, r.Total, nil
-					}, func(v *workload.Workload) id.ID { return v.ID }, 5)
-				})
-			}
+					return r.Items, r.NextCursor, r.Total, nil
+				}, func(v *workload.Workload) id.ID { return v.ID }, 5)
+			})
 		})
 	}
 }
+
 func TestWorkloadDeploymentContinuationAcrossReplicas(t *testing.T) {
-	for _, backend := range []string{"memory", "badger"} {
+	for _, backend := range []string{"memory", "badger", "sqlite", "postgres", "mongo"} {
 		t.Run(backend, func(t *testing.T) {
 			cp, h := storageHarness(t, backend)
 			ctx := context.Background()
@@ -195,7 +193,7 @@ func TestWorkloadDeploymentContinuationAcrossReplicas(t *testing.T) {
 			}
 
 			for i := range 5 {
-				d := &deploy.Deployment{Entity: ctrlplane.NewEntity(id.PrefixDeployment), TenantID: "alpha", InstanceID: instances[i%2]}
+				d := &deploy.Deployment{Entity: ctrlplane.NewEntity(id.PrefixDeployment), TenantID: "alpha", InstanceID: instances[i%2], ReleaseID: id.New(id.PrefixRelease)}
 
 				d.CreatedAt = time.Date(2026, 10, 8, 0, 0, 0, 0, time.UTC)
 				if err := cp.Store().InsertDeployment(ctx, d); err != nil {

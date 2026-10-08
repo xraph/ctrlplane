@@ -19,6 +19,7 @@ import (
 	"github.com/xraph/ctrlplane/secrets"
 	"github.com/xraph/ctrlplane/telemetry"
 	"github.com/xraph/ctrlplane/template"
+	"github.com/xraph/ctrlplane/workload"
 )
 
 // tenantModel is the database model for admin.Tenant.
@@ -39,24 +40,27 @@ type tenantModel struct {
 type instanceModel struct {
 	grove.BaseModel `grove:"table:cp_instances"`
 
-	ID           string    `grove:"id,pk"`
-	TenantID     string    `grove:"tenant_id,notnull"`
-	Slug         string    `grove:"slug,notnull"`
-	Name         string    `grove:"name,notnull"`
-	State        string    `grove:"state,notnull"`
-	ProviderName string    `grove:"provider_name,notnull"`
-	ProviderRef  string    `grove:"provider_ref"`
-	Region       string    `grove:"region"`
-	Kind         string    `grove:"kind"`
-	Services     []byte    `grove:"services"`
-	ServiceRefs  []byte    `grove:"service_refs"`
-	Labels       []byte    `grove:"labels"`
-	Endpoints    []byte    `grove:"endpoints"`
-	Config       []byte    `grove:"config"`
-	Metadata     []byte    `grove:"metadata"`
-	Source       []byte    `grove:"source"`
-	CreatedAt    time.Time `grove:"created_at,notnull"`
-	UpdatedAt    time.Time `grove:"updated_at,notnull"`
+	ID             string     `grove:"id,pk"`
+	DatacenterID   id.ID      `grove:"datacenter_id"`
+	CurrentRelease id.ID      `grove:"current_release"`
+	SuspendedAt    *time.Time `grove:"suspended_at"`
+	TenantID       string     `grove:"tenant_id,notnull"`
+	Slug           string     `grove:"slug,notnull"`
+	Name           string     `grove:"name,notnull"`
+	State          string     `grove:"state,notnull"`
+	ProviderName   string     `grove:"provider_name,notnull"`
+	ProviderRef    string     `grove:"provider_ref"`
+	Region         string     `grove:"region"`
+	Kind           string     `grove:"kind"`
+	Services       []byte     `grove:"services"`
+	ServiceRefs    []byte     `grove:"service_refs"`
+	Labels         []byte     `grove:"labels"`
+	Endpoints      []byte     `grove:"endpoints"`
+	Config         []byte     `grove:"config"`
+	Metadata       []byte     `grove:"metadata"`
+	Source         []byte     `grove:"source"`
+	CreatedAt      time.Time  `grove:"created_at,notnull"`
+	UpdatedAt      time.Time  `grove:"updated_at,notnull"`
 }
 
 // deploymentModel is the database model for deploy.Deployment.
@@ -296,22 +300,25 @@ type templateModel struct {
 
 func toInstanceModel(inst *instance.Instance) *instanceModel {
 	return &instanceModel{
-		ID:           inst.ID.String(),
-		TenantID:     inst.TenantID,
-		Slug:         inst.Slug,
-		Name:         inst.Name,
-		State:        string(inst.State),
-		ProviderName: inst.ProviderName,
-		ProviderRef:  inst.ProviderRef,
-		Region:       inst.Region,
-		Kind:         string(inst.Kind),
-		Services:     marshalJSON(inst.Services),
-		ServiceRefs:  marshalJSON(inst.ServiceRefs),
-		Labels:       marshalJSON(inst.Labels),
-		Endpoints:    marshalJSON(inst.Endpoints),
-		Source:       marshalJSON(inst.Source),
-		CreatedAt:    inst.CreatedAt,
-		UpdatedAt:    inst.UpdatedAt,
+		ID:             inst.ID.String(),
+		TenantID:       inst.TenantID,
+		DatacenterID:   inst.DatacenterID,
+		CurrentRelease: inst.CurrentRelease,
+		SuspendedAt:    inst.SuspendedAt,
+		Slug:           inst.Slug,
+		Name:           inst.Name,
+		State:          string(inst.State),
+		ProviderName:   inst.ProviderName,
+		ProviderRef:    inst.ProviderRef,
+		Region:         inst.Region,
+		Kind:           string(inst.Kind),
+		Services:       marshalJSON(inst.Services),
+		ServiceRefs:    marshalJSON(inst.ServiceRefs),
+		Labels:         marshalJSON(inst.Labels),
+		Endpoints:      marshalJSON(inst.Endpoints),
+		Source:         marshalJSON(inst.Source),
+		CreatedAt:      inst.CreatedAt,
+		UpdatedAt:      inst.UpdatedAt,
 	}
 }
 
@@ -322,14 +329,17 @@ func fromInstanceModel(m *instanceModel) *instance.Instance {
 			CreatedAt: m.CreatedAt,
 			UpdatedAt: m.UpdatedAt,
 		},
-		TenantID:     m.TenantID,
-		Slug:         m.Slug,
-		Name:         m.Name,
-		State:        provider.InstanceState(m.State),
-		ProviderName: m.ProviderName,
-		ProviderRef:  m.ProviderRef,
-		Region:       m.Region,
-		Kind:         provider.WorkloadKind(m.Kind),
+		TenantID:       m.TenantID,
+		DatacenterID:   m.DatacenterID,
+		CurrentRelease: m.CurrentRelease,
+		SuspendedAt:    m.SuspendedAt,
+		Slug:           m.Slug,
+		Name:           m.Name,
+		State:          provider.InstanceState(m.State),
+		ProviderName:   m.ProviderName,
+		ProviderRef:    m.ProviderRef,
+		Region:         m.Region,
+		Kind:           provider.WorkloadKind(m.Kind),
 	}
 
 	unmarshalJSON(m.Services, &out.Services)
@@ -894,4 +904,78 @@ func fromBootstrapModel(m *bootstrapModel) *bootstrap.BootstrapWorkload {
 		Attempts:     m.Attempts,
 		Labels:       labels,
 	}
+}
+
+// workloadModel is the persistent multi-service workload specification.
+type workloadModel struct {
+	grove.BaseModel `grove:"table:cp_workloads"`
+
+	ID               id.ID      `grove:"id,pk"`
+	TenantID         string     `grove:"tenant_id,notnull"`
+	Name             string     `grove:"name,notnull"`
+	Slug             string     `grove:"slug,notnull"`
+	DatacenterID     id.ID      `grove:"datacenter_id"`
+	ProviderName     string     `grove:"provider_name"`
+	Region           string     `grove:"region"`
+	Kind             string     `grove:"kind"`
+	Services         []byte     `grove:"services"`
+	Labels           []byte     `grove:"labels"`
+	TemplateID       id.ID      `grove:"template_id"`
+	CurrentReleaseID id.ID      `grove:"current_release_id"`
+	ReplicaCount     int        `grove:"replica_count,notnull"`
+	PreviousReplicas int        `grove:"previous_replicas"`
+	State            string     `grove:"state,notnull"`
+	PausedAt         *time.Time `grove:"paused_at"`
+	CreatedAt        time.Time  `grove:"created_at,notnull"`
+	UpdatedAt        time.Time  `grove:"updated_at,notnull"`
+}
+
+func toWorkloadModel(w *workload.Workload) *workloadModel {
+	return &workloadModel{
+		ID:               w.ID,
+		TenantID:         w.TenantID,
+		Name:             w.Name,
+		Slug:             w.Slug,
+		DatacenterID:     w.DatacenterID,
+		ProviderName:     w.ProviderName,
+		Region:           w.Region,
+		Kind:             string(w.Kind),
+		Services:         marshalJSON(w.Services),
+		Labels:           marshalJSON(w.Labels),
+		TemplateID:       w.TemplateID,
+		CurrentReleaseID: w.CurrentReleaseID,
+		ReplicaCount:     w.ReplicaCount,
+		PreviousReplicas: w.PreviousReplicas,
+		State:            string(w.State),
+		PausedAt:         w.PausedAt,
+		CreatedAt:        w.CreatedAt,
+		UpdatedAt:        w.UpdatedAt,
+	}
+}
+
+func fromWorkloadModel(m *workloadModel) *workload.Workload {
+	w := &workload.Workload{
+		Entity: ctrlplane.Entity{
+			ID:        m.ID,
+			CreatedAt: m.CreatedAt,
+			UpdatedAt: m.UpdatedAt,
+		},
+		TenantID:         m.TenantID,
+		Name:             m.Name,
+		Slug:             m.Slug,
+		DatacenterID:     m.DatacenterID,
+		ProviderName:     m.ProviderName,
+		Region:           m.Region,
+		Kind:             provider.WorkloadKind(m.Kind),
+		TemplateID:       m.TemplateID,
+		CurrentReleaseID: m.CurrentReleaseID,
+		ReplicaCount:     m.ReplicaCount,
+		PreviousReplicas: m.PreviousReplicas,
+		State:            workload.State(m.State),
+		PausedAt:         m.PausedAt,
+	}
+	unmarshalJSON(m.Services, &w.Services)
+	unmarshalJSON(m.Labels, &w.Labels)
+
+	return w
 }

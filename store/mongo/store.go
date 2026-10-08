@@ -108,12 +108,17 @@ func migrationIndexes() map[string][]mongo.IndexModel {
 				Options: options.Index().SetUnique(true),
 			},
 		},
+		colWorkloads: {
+			{Keys: bson.D{{Key: "tenant_id", Value: 1}, {Key: "slug", Value: 1}}, Options: options.Index().SetUnique(true)},
+			{Keys: bson.D{{Key: "tenant_id", Value: 1}, {Key: "created_at", Value: -1}, {Key: "_id", Value: -1}}},
+		},
 		colInstances: {
 			{
 				Keys:    bson.D{{Key: "tenant_id", Value: 1}, {Key: "slug", Value: 1}},
 				Options: options.Index().SetUnique(true),
 			},
 			{Keys: bson.D{{Key: "tenant_id", Value: 1}, {Key: "created_at", Value: -1}}},
+			{Keys: bson.D{{Key: "tenant_id", Value: 1}, {Key: "datacenter_id", Value: 1}, {Key: "created_at", Value: -1}, {Key: "_id", Value: -1}}},
 		},
 		colDatacenters: {
 			// Unique on (tenant_id, slug) — defense-in-depth against

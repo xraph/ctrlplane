@@ -64,10 +64,6 @@ func (s *Store) List(ctx context.Context, tenantID string, opts instance.ListOpt
 		return nil, err
 	}
 
-	if opts.Datacenter != "" {
-		return nil, fmt.Errorf("datacenter instance filter: %w", ctrlplane.ErrNotImplemented)
-	}
-
 	q := s.pg.NewSelect(&models)
 	argCount := 0
 	q = q.Where(fmt.Sprintf("tenant_id = $%d", argCount+1), tenantID)
@@ -80,6 +76,11 @@ func (s *Store) List(ctx context.Context, tenantID string, opts instance.ListOpt
 
 	if opts.Provider != "" {
 		q = q.Where(fmt.Sprintf("provider_name = $%d", argCount+1), opts.Provider)
+		argCount += 1
+	}
+
+	if opts.Datacenter != "" {
+		q = q.Where(fmt.Sprintf("datacenter_id = $%d", argCount+1), opts.Datacenter)
 		argCount += 1
 	}
 
@@ -128,7 +129,7 @@ func (s *Store) Update(ctx context.Context, inst *instance.Instance) error {
 	inst.UpdatedAt = now()
 	model := toInstanceModel(inst)
 
-	res, err := s.pg.NewUpdate(model).WherePK().Exec(ctx)
+	res, err := s.pg.NewUpdate(model).Where("id = ? AND tenant_id = ?", inst.ID.String(), inst.TenantID).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("postgres: update instance failed: %w", err)
 	}

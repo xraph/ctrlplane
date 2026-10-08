@@ -69,11 +69,13 @@ func storageHarness(t *testing.T, backend string) (*app.CtrlPlane, http.Handler)
 		if err := persistent.Migrate(context.Background()); err != nil {
 			t.Fatal(err)
 		}
+	case "postgres", "mongo":
+		s = liveStore(t, backend)
 	default:
 		t.Fatalf("unknown backend %s", backend)
 	}
 
-	if backend != "sqlite" {
+	if backend == "memory" || backend == "badger" {
 		t.Cleanup(func() {
 			if err := s.Close(); err != nil {
 				t.Error(err)
@@ -96,7 +98,7 @@ func storageHarness(t *testing.T, backend string) (*app.CtrlPlane, http.Handler)
 	return cp, transport.NewHandler(reg, wreg, d, nil)
 }
 func TestPersistentPartialUpdates(t *testing.T) {
-	for _, backend := range []string{"memory", "badger", "sqlite"} {
+	for _, backend := range []string{"memory", "badger", "sqlite", "postgres", "mongo"} {
 		t.Run(backend, func(t *testing.T) {
 			cp, h := storageHarness(t, backend)
 			user := principal("alpha", false)
@@ -167,7 +169,7 @@ func TestPersistentPartialUpdates(t *testing.T) {
 	}
 }
 func TestHTTPTemplateContinuation(t *testing.T) {
-	for _, backend := range []string{"memory", "badger", "sqlite"} {
+	for _, backend := range []string{"memory", "badger", "sqlite", "postgres", "mongo"} {
 		t.Run(backend, func(t *testing.T) {
 			cp, h := storageHarness(t, backend)
 			stamp := time.Date(2026, 10, 8, 0, 0, 0, 0, time.UTC)

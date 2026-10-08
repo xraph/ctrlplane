@@ -150,6 +150,10 @@ func (s *Store) Update(_ context.Context, inst *instance.Instance) error {
 			return fmt.Errorf("%w: instance %s", ctrlplane.ErrNotFound, inst.ID)
 		}
 
+		if existing.TenantID != inst.TenantID {
+			return fmt.Errorf("instance %s: %w", inst.ID, ctrlplane.ErrNotFound)
+		}
+
 		inst.UpdatedAt = now()
 
 		return s.set(txn, key, inst)

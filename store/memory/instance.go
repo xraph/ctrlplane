@@ -111,7 +111,7 @@ func (s *Store) Update(_ context.Context, inst *instance.Instance) error {
 	defer s.mu.Unlock()
 
 	key := idStr(inst.ID)
-	if _, ok := s.instances[key]; !ok {
+	if existing, ok := s.instances[key]; !ok || existing.TenantID != inst.TenantID {
 		return fmt.Errorf("%w: instance %s", ctrlplane.ErrNotFound, key)
 	}
 

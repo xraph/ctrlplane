@@ -112,7 +112,7 @@ func (s *Store) UpdateWorkload(_ context.Context, w *workload.Workload) error {
 	defer s.mu.Unlock()
 
 	key := idStr(w.ID)
-	if _, ok := s.workloads[key]; !ok {
+	if existing, ok := s.workloads[key]; !ok || existing.TenantID != w.TenantID {
 		return fmt.Errorf("%w: workload %s", ctrlplane.ErrNotFound, key)
 	}
 

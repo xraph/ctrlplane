@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
+	"go.mongodb.org/mongo-driver/v2/mongo"
 
 	ctrlplane "github.com/xraph/ctrlplane"
 	"github.com/xraph/ctrlplane/id"
@@ -19,6 +20,10 @@ func (s *Store) InsertWorkload(ctx context.Context, w *workload.Workload) error 
 	model := toWorkloadModel(w)
 
 	if _, err := s.mdb.NewInsert(model).Exec(ctx); err != nil {
+		if mongo.IsDuplicateKeyError(err) {
+			return fmt.Errorf("workload %s: %w", w.ID, ctrlplane.ErrAlreadyExists)
+		}
+
 		return fmt.Errorf("mongo: insert workload: %w", err)
 	}
 
@@ -126,15 +131,18 @@ func (s *Store) ListWorkloads(ctx context.Context, tenantID string, opts workloa
 	return &workload.ListResult{Items: items, Total: int(total), NextCursor: next}, nil
 }
 
-// UpdateWorkload persists changes.
+// UpdateWorkload persists changes only within the workload's owning tenant.
 func (s *Store) UpdateWorkload(ctx context.Context, w *workload.Workload) error {
 	w.UpdatedAt = now()
 	model := toWorkloadModel(w)
 
-	if _, err := s.mdb.NewUpdate(model).
-		Filter(bson.M{"_id": model.ID}).
-		Exec(ctx); err != nil {
+	result, err := s.mdb.NewUpdate(model).Filter(bson.M{"_id": model.ID, "tenant_id": w.TenantID}).Exec(ctx)
+	if err != nil {
 		return fmt.Errorf("mongo: update workload: %w", err)
+	}
+
+	if result.MatchedCount() == 0 {
+		return fmt.Errorf("workload %s: %w", w.ID, ctrlplane.ErrNotFound)
 	}
 
 	return nil
@@ -149,10 +157,13 @@ func (s *Store) DeleteWorkload(ctx context.Context, tenantID string, workloadID 
 		filter["tenant_id"] = tenantID
 	}
 
-	if _, err := s.mdb.NewDelete((*workloadModel)(nil)).
-		Filter(filter).
-		Exec(ctx); err != nil {
+	result, err := s.mdb.NewDelete((*workloadModel)(nil)).Filter(filter).Exec(ctx)
+	if err != nil {
 		return fmt.Errorf("mongo: delete workload: %w", err)
+	}
+
+	if result.DeletedCount() == 0 {
+		return fmt.Errorf("workload %s: %w", workloadID, ctrlplane.ErrNotFound)
 	}
 
 	return nil

@@ -43,24 +43,27 @@ type tenantModel struct {
 type instanceModel struct {
 	grove.BaseModel `grove:"table:cp_instances"`
 
-	ID           string    `grove:"id,pk"`
-	TenantID     string    `grove:"tenant_id,notnull"`
-	Slug         string    `grove:"slug,notnull"`
-	Name         string    `grove:"name,notnull"`
-	State        string    `grove:"state,notnull"`
-	ProviderName string    `grove:"provider_name,notnull"`
-	ProviderRef  string    `grove:"provider_ref"`
-	Region       string    `grove:"region"`
-	Kind         string    `grove:"kind"`
-	Services     []byte    `grove:"services,type:jsonb"`
-	ServiceRefs  []byte    `grove:"service_refs,type:jsonb"`
-	Labels       []byte    `grove:"labels,type:jsonb"`
-	Config       []byte    `grove:"config,type:jsonb"`
-	Metadata     []byte    `grove:"metadata,type:jsonb"`
-	Endpoints    []byte    `grove:"endpoints,type:jsonb"`
-	Source       []byte    `grove:"source,type:jsonb"`
-	CreatedAt    time.Time `grove:"created_at,notnull"`
-	UpdatedAt    time.Time `grove:"updated_at,notnull"`
+	ID             string     `grove:"id,pk"`
+	DatacenterID   id.ID      `grove:"datacenter_id"`
+	CurrentRelease id.ID      `grove:"current_release"`
+	SuspendedAt    *time.Time `grove:"suspended_at"`
+	TenantID       string     `grove:"tenant_id,notnull"`
+	Slug           string     `grove:"slug,notnull"`
+	Name           string     `grove:"name,notnull"`
+	State          string     `grove:"state,notnull"`
+	ProviderName   string     `grove:"provider_name,notnull"`
+	ProviderRef    string     `grove:"provider_ref"`
+	Region         string     `grove:"region"`
+	Kind           string     `grove:"kind"`
+	Services       []byte     `grove:"services,type:jsonb"`
+	ServiceRefs    []byte     `grove:"service_refs,type:jsonb"`
+	Labels         []byte     `grove:"labels,type:jsonb"`
+	Config         []byte     `grove:"config,type:jsonb"`
+	Metadata       []byte     `grove:"metadata,type:jsonb"`
+	Endpoints      []byte     `grove:"endpoints,type:jsonb"`
+	Source         []byte     `grove:"source,type:jsonb"`
+	CreatedAt      time.Time  `grove:"created_at,notnull"`
+	UpdatedAt      time.Time  `grove:"updated_at,notnull"`
 }
 
 // deploymentModel is the database model for deploy.Deployment.
@@ -300,22 +303,25 @@ type templateModel struct {
 
 func toInstanceModel(inst *instance.Instance) *instanceModel {
 	return &instanceModel{
-		ID:           inst.ID.String(),
-		TenantID:     inst.TenantID,
-		Slug:         inst.Slug,
-		Name:         inst.Name,
-		State:        string(inst.State),
-		ProviderName: inst.ProviderName,
-		ProviderRef:  inst.ProviderRef,
-		Region:       inst.Region,
-		Kind:         string(inst.Kind),
-		Services:     marshalJSONB(inst.Services),
-		ServiceRefs:  marshalJSONB(inst.ServiceRefs),
-		Labels:       marshalJSONB(inst.Labels),
-		Endpoints:    marshalJSONB(inst.Endpoints),
-		Source:       marshalJSONB(inst.Source),
-		CreatedAt:    inst.CreatedAt,
-		UpdatedAt:    inst.UpdatedAt,
+		ID:             inst.ID.String(),
+		TenantID:       inst.TenantID,
+		DatacenterID:   inst.DatacenterID,
+		CurrentRelease: inst.CurrentRelease,
+		SuspendedAt:    inst.SuspendedAt,
+		Slug:           inst.Slug,
+		Name:           inst.Name,
+		State:          string(inst.State),
+		ProviderName:   inst.ProviderName,
+		ProviderRef:    inst.ProviderRef,
+		Region:         inst.Region,
+		Kind:           string(inst.Kind),
+		Services:       marshalJSONB(inst.Services),
+		ServiceRefs:    marshalJSONB(inst.ServiceRefs),
+		Labels:         marshalJSONB(inst.Labels),
+		Endpoints:      marshalJSONB(inst.Endpoints),
+		Source:         marshalJSONB(inst.Source),
+		CreatedAt:      inst.CreatedAt,
+		UpdatedAt:      inst.UpdatedAt,
 	}
 }
 
@@ -323,17 +329,20 @@ func fromInstanceModel(m *instanceModel) *instance.Instance {
 	out := &instance.Instance{
 		Entity: ctrlplane.Entity{
 			ID:        id.MustParse(m.ID),
-			CreatedAt: m.CreatedAt,
-			UpdatedAt: m.UpdatedAt,
+			CreatedAt: m.CreatedAt.UTC(),
+			UpdatedAt: m.UpdatedAt.UTC(),
 		},
-		TenantID:     m.TenantID,
-		Slug:         m.Slug,
-		Name:         m.Name,
-		State:        provider.InstanceState(m.State),
-		ProviderName: m.ProviderName,
-		ProviderRef:  m.ProviderRef,
-		Region:       m.Region,
-		Kind:         provider.WorkloadKind(m.Kind),
+		TenantID:       m.TenantID,
+		DatacenterID:   m.DatacenterID,
+		CurrentRelease: m.CurrentRelease,
+		SuspendedAt:    utcTimestamp(m.SuspendedAt),
+		Slug:           m.Slug,
+		Name:           m.Name,
+		State:          provider.InstanceState(m.State),
+		ProviderName:   m.ProviderName,
+		ProviderRef:    m.ProviderRef,
+		Region:         m.Region,
+		Kind:           provider.WorkloadKind(m.Kind),
 	}
 
 	unmarshalJSONB(m.Services, &out.Services)
@@ -918,8 +927,8 @@ func fromWorkloadModel(m *workloadModel) *workload.Workload {
 	w := &workload.Workload{
 		Entity: ctrlplane.Entity{
 			ID:        id.MustParse(m.ID),
-			CreatedAt: m.CreatedAt,
-			UpdatedAt: m.UpdatedAt,
+			CreatedAt: m.CreatedAt.UTC(),
+			UpdatedAt: m.UpdatedAt.UTC(),
 		},
 		TenantID:         m.TenantID,
 		Name:             m.Name,
@@ -930,7 +939,7 @@ func fromWorkloadModel(m *workloadModel) *workload.Workload {
 		ReplicaCount:     m.ReplicaCount,
 		PreviousReplicas: m.PreviousReplicas,
 		State:            workload.State(m.State),
-		PausedAt:         m.PausedAt,
+		PausedAt:         utcTimestamp(m.PausedAt),
 	}
 
 	unmarshalJSONB(m.Services, &w.Services)
@@ -949,4 +958,14 @@ func fromWorkloadModel(m *workloadModel) *workload.Workload {
 	}
 
 	return w
+}
+
+func utcTimestamp(value *time.Time) *time.Time {
+	if value == nil {
+		return nil
+	}
+
+	stamp := value.UTC()
+
+	return &stamp
 }

@@ -9,6 +9,7 @@ import (
 
 	"github.com/xraph/grove"
 	"github.com/xraph/grove/drivers/pgdriver"
+	"github.com/xraph/grove/drivers/pgdriver/pgmigrate"
 	"github.com/xraph/grove/migrate"
 
 	"github.com/xraph/ctrlplane/store"
@@ -36,10 +37,7 @@ func (s *Store) DB() *grove.DB { return s.db }
 
 // Migrate creates the required tables and indexes using the grove orchestrator.
 func (s *Store) Migrate(ctx context.Context) error {
-	executor, err := migrate.NewExecutorFor(s.pg)
-	if err != nil {
-		return fmt.Errorf("ctrlplane/postgres: create migration executor: %w", err)
-	}
+	executor := pgmigrate.New(s.pg)
 
 	orch := migrate.NewOrchestrator(executor, Migrations)
 	if _, err := orch.Migrate(ctx); err != nil {

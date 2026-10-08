@@ -887,5 +887,36 @@ CREATE INDEX IF NOT EXISTS idx_cp_workloads_state ON cp_workloads (state);
 				return err
 			},
 		},
+		&migrate.Migration{
+			Name: "persist_instance_placement_and_lifecycle", Version: "20240101000028",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `ALTER TABLE cp_instances
+ ADD COLUMN IF NOT EXISTS datacenter_id TEXT,
+ ADD COLUMN IF NOT EXISTS current_release TEXT,
+ ADD COLUMN IF NOT EXISTS suspended_at TIMESTAMPTZ;
+ CREATE INDEX IF NOT EXISTS idx_cp_instances_datacenter ON cp_instances (tenant_id, datacenter_id, created_at DESC, id DESC);`)
+
+				return err
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `DROP INDEX IF EXISTS idx_cp_instances_datacenter;
+ ALTER TABLE cp_instances DROP COLUMN IF EXISTS suspended_at, DROP COLUMN IF EXISTS current_release, DROP COLUMN IF EXISTS datacenter_id;`)
+
+				return err
+			},
+		},
+		&migrate.Migration{
+			Name: "unique_workload_slugs", Version: "20240101000029",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS idx_cp_workloads_tenant_slug_unique ON cp_workloads (tenant_id,slug)`)
+
+				return err
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `DROP INDEX IF EXISTS idx_cp_workloads_tenant_slug_unique`)
+
+				return err
+			},
+		},
 	)
 }

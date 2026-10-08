@@ -819,5 +819,68 @@ CREATE TABLE IF NOT EXISTS cp_bootstrap_workloads (
 				return nil
 			},
 		},
+		&migrate.Migration{
+			Name: "create_cp_workloads", Version: "20240101000023",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `CREATE TABLE cp_workloads (
+ id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, name TEXT NOT NULL, slug TEXT NOT NULL,
+ datacenter_id TEXT, provider_name TEXT NOT NULL DEFAULT '', region TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL DEFAULT '',
+ services BLOB, labels BLOB, template_id TEXT, current_release_id TEXT,
+ replica_count INTEGER NOT NULL DEFAULT 0, previous_replicas INTEGER NOT NULL DEFAULT 0,
+ state TEXT NOT NULL DEFAULT '', paused_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+ );`)
+				if err != nil {
+					return err
+				}
+
+				for _, stmt := range []string{
+					`CREATE UNIQUE INDEX idx_cp_workloads_tenant_slug ON cp_workloads (tenant_id, slug)`,
+					`CREATE INDEX idx_cp_workloads_tenant_created ON cp_workloads (tenant_id, created_at DESC, id DESC)`,
+					`CREATE INDEX idx_cp_workloads_state ON cp_workloads (state)`,
+				} {
+					if _, err := exec.Exec(ctx, stmt); err != nil {
+						return err
+					}
+				}
+
+				return nil
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `DROP TABLE cp_workloads`)
+
+				return err
+			},
+		},
+		&migrate.Migration{
+			Name: "persist_instance_placement_and_lifecycle", Version: "20240101000024",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				for _, stmt := range []string{
+					`ALTER TABLE cp_instances ADD COLUMN datacenter_id TEXT`,
+					`ALTER TABLE cp_instances ADD COLUMN current_release TEXT`,
+					`ALTER TABLE cp_instances ADD COLUMN suspended_at TEXT`,
+					`CREATE INDEX idx_cp_instances_datacenter ON cp_instances (tenant_id, datacenter_id, created_at DESC, id DESC)`,
+				} {
+					if _, err := exec.Exec(ctx, stmt); err != nil {
+						return err
+					}
+				}
+
+				return nil
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				for _, stmt := range []string{
+					`DROP INDEX idx_cp_instances_datacenter`,
+					`ALTER TABLE cp_instances DROP COLUMN suspended_at`,
+					`ALTER TABLE cp_instances DROP COLUMN current_release`,
+					`ALTER TABLE cp_instances DROP COLUMN datacenter_id`,
+				} {
+					if _, err := exec.Exec(ctx, stmt); err != nil {
+						return err
+					}
+				}
+
+				return nil
+			},
+		},
 	)
 }
