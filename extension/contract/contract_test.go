@@ -63,7 +63,13 @@ func principal(tenant string, admin bool) *dashauth.UserInfo {
 	return user
 }
 
-func request(t *testing.T, h http.Handler, user *dashauth.UserInfo, kind dash.Kind, intent string, payload any) dash.Response {
+type testResponse struct {
+	dash.Response
+
+	Error *dash.Error `json:"error,omitempty"`
+}
+
+func request(t *testing.T, h http.Handler, user *dashauth.UserInfo, kind dash.Kind, intent string, payload any) testResponse {
 	t.Helper()
 
 	data, err := json.Marshal(payload)
@@ -86,7 +92,7 @@ func request(t *testing.T, h http.Handler, user *dashauth.UserInfo, kind dash.Ki
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
 
-	var result dash.Response
+	var result testResponse
 	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
 		t.Fatal(err)
 	}

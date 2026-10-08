@@ -185,11 +185,19 @@ func (e *Extension) Start(ctx context.Context) error {
 		e.cp.SetAuditRecorder(r)
 	}
 
-	return e.cp.Start(ctx)
+	if err := e.cp.Start(ctx); err != nil {
+		return err
+	}
+
+	e.MarkStarted()
+
+	return nil
 }
 
 // Stop gracefully shuts down.
 func (e *Extension) Stop(ctx context.Context) error {
+	e.MarkStopped()
+
 	return e.cp.Stop(ctx)
 }
 

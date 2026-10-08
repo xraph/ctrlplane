@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	dash "github.com/xraph/forge/extensions/dashboard/contract"
 	"github.com/xraph/forge/extensions/dashboard/contract/dispatcher"
@@ -21,13 +22,33 @@ import (
 //go:embed manifest.yaml
 var manifestYAML []byte
 
-// Register binds the Ctrlplane manifest and handlers to the dashboard transport.
+// Deps resolves initialized services without coupling registration to startup.
+type Deps struct {
+	ControlPlane func() *app.CtrlPlane
+	Ready        func() bool
+	Logger       *slog.Logger
+}
+
+// Register binds an initialized standalone control plane to the dashboard.
 func Register(d *dispatcher.Dispatcher, reg dash.Registry, wreg dash.WardenRegistry, cp *app.CtrlPlane) error {
 	if cp == nil {
 		return errors.New("ctrlplane contract: control plane is required")
 	}
 
-	if err := wreg.Register("ctrlplane.auth", authorizer{cp: cp}); err != nil {
+	return RegisterWithResolver(d, reg, wreg, Deps{ControlPlane: func() *app.CtrlPlane { return cp }})
+}
+
+// RegisterWithResolver validates bindings before publishing a lazy contributor.
+func RegisterWithResolver(d *dispatcher.Dispatcher, reg dash.Registry, wreg dash.WardenRegistry, deps Deps) error {
+	if deps.ControlPlane == nil {
+		return errors.New("ctrlplane contract: resolver is required")
+	}
+
+	if deps.Logger == nil {
+		deps.Logger = slog.Default()
+	}
+
+	if err := wreg.Register("ctrlplane.auth", authorizer{deps: deps}); err != nil {
 		return fmt.Errorf("register ctrlplane authorizer: %w", err)
 	}
 
@@ -40,55 +61,117 @@ func Register(d *dispatcher.Dispatcher, reg dash.Registry, wreg dash.WardenRegis
 		return fmt.Errorf("validate ctrlplane manifest: %w", err)
 	}
 
+	b := &bindings{deps: deps, handlers: make(map[string]binding), invalidates: make(map[string][]string)}
+	registerQueries(b)
+	registerCommands(b)
+
+	if b.err != nil {
+		return b.err
+	}
+
+	if err := validateBindings(manifest.Intents, b); err != nil {
+		return err
+	}
+
 	if err := reg.Register(manifest); err != nil {
 		return fmt.Errorf("register ctrlplane manifest: %w", err)
 	}
 
-	b := &bindings{d: d, cp: cp}
-
 	for _, in := range manifest.Intents {
-		if in.Kind == dash.IntentKindQuery {
-			b.invalidates = append(b.invalidates, in.Name)
+		b.invalidates[in.Name] = append([]string(nil), in.Invalidates...)
+		if err := d.Register("ctrlplane", in.Name, 1, b.handlers[in.Name].handler); err != nil {
+			return fmt.Errorf("bind ctrlplane intent %s: %w", in.Name, err)
 		}
 	}
 
-	registerQueries(b)
-	registerCommands(b)
-
-	return b.err
+	return nil
 }
 
+func validateBindings(intents []dash.Intent, b *bindings) error {
+	if len(intents) != len(b.handlers) {
+		return errors.New("ctrlplane contract: manifest and bindings differ")
+	}
+
+	names := make(map[string]bool)
+
+	for _, in := range intents {
+		if names[in.Name] {
+			return fmt.Errorf("ctrlplane contract: duplicate intent %s", in.Name)
+		}
+
+		names[in.Name] = true
+
+		bound, ok := b.handlers[in.Name]
+		if !ok || dash.IntentKind(bound.kind) != in.Kind || in.Version != 1 {
+			return fmt.Errorf("ctrlplane contract: invalid binding %s", in.Name)
+		}
+
+		seen := make(map[string]bool)
+
+		for _, target := range in.Invalidates {
+			dependency, ok := b.handlers[target]
+			if !ok || dependency.kind != dash.KindQuery || seen[target] {
+				return fmt.Errorf("ctrlplane contract: invalid dependency %s for %s", target, in.Name)
+			}
+
+			seen[target] = true
+		}
+	}
+
+	return nil
+}
+
+type binding struct {
+	kind    dash.Kind
+	handler dispatcher.Handler
+}
 type bindings struct {
-	d           *dispatcher.Dispatcher
-	cp          *app.CtrlPlane
+	deps        Deps
+	handlers    map[string]binding
+	invalidates map[string][]string
 	err         error
-	invalidates []string
 }
 
-func query[I any](b *bindings, name string, fn func(context.Context, I) (any, error)) {
-	if b.err != nil {
+func query[I any](b *bindings, name string, fn func(context.Context, *app.CtrlPlane, I) (any, error)) {
+	bind(b, name, dash.KindQuery, wire(b, name, dash.KindQuery, fn))
+}
+func command[I any](b *bindings, name string, fn func(context.Context, *app.CtrlPlane, I) (any, error)) {
+	bind(b, name, dash.KindCommand, wire(b, name, dash.KindCommand, fn))
+}
+func bind(b *bindings, name string, kind dash.Kind, handler dispatcher.Handler) {
+	if _, ok := b.handlers[name]; ok {
+		b.err = fmt.Errorf("ctrlplane contract: duplicate binding %s", name)
+
 		return
 	}
 
-	b.err = b.d.Register("ctrlplane", name, 1, wire(b, name, dash.KindQuery, fn))
+	b.handlers[name] = binding{kind: kind, handler: handler}
 }
-
-func command[I any](b *bindings, name string, fn func(context.Context, I) (any, error)) {
-	if b.err != nil {
-		return
+func (deps Deps) available(cp *app.CtrlPlane) bool {
+	return (deps.Ready == nil || deps.Ready()) && cp != nil && cp.Instances != nil && cp.Workloads != nil && cp.Templates != nil && cp.Admin != nil
+}
+func (deps Deps) resolve() (*app.CtrlPlane, error) {
+	cp := deps.ControlPlane()
+	if !deps.available(cp) {
+		return nil, unavailable("Ctrlplane is not ready.")
 	}
 
-	b.err = b.d.Register("ctrlplane", name, 1, wire(b, name, dash.KindCommand, fn))
+	return cp, nil
 }
 
-func wire[I any](b *bindings, name string, kind dash.Kind, fn func(context.Context, I) (any, error)) dispatcher.Handler {
+func wire[I any](b *bindings, name string, kind dash.Kind, fn func(context.Context, *app.CtrlPlane, I) (any, error)) dispatcher.Handler {
 	return func(ctx context.Context, payload json.RawMessage, params map[string]any, p dash.Principal) (*dispatcher.Result, error) {
 		ctx, err := principalContext(ctx, p)
 		if err != nil {
 			return nil, err
 		}
 
-		decision, err := (authorizer{cp: b.cp}).Authorize(ctx, p, dash.Action{Intent: name, Kind: kind})
+		cp, err := b.deps.resolve()
+		if err != nil {
+			return nil, err
+		}
+
+		decision, err := (authorizer{deps: b.deps}).Authorize(ctx, p, dash.Action{Intent: name, Kind: kind})
 		if err != nil {
 			return nil, unavailable("Authorization provider unavailable.")
 		}
@@ -116,49 +199,51 @@ func wire[I any](b *bindings, name string, kind dash.Kind, fn func(context.Conte
 			}
 		}
 
-		out, err := fn(ctx, in)
+		out, err := fn(ctx, cp, in)
 		if err != nil {
-			return nil, contractError(err)
+			return nil, b.failure(ctx, name, err)
 		}
 
 		data, err := json.Marshal(out)
 		if err != nil {
-			return nil, contractError(err)
+			return nil, b.failure(ctx, name, err)
 		}
 
-		result := &dispatcher.Result{Data: data}
-		if kind == dash.KindCommand {
-			result.ExtraInvalidates = append([]string(nil), b.invalidates...)
-		}
+		result := &dispatcher.Result{Data: data, ExtraInvalidates: append([]string(nil), b.invalidates[name]...)}
 
 		return result, nil
 	}
 }
 
+func (b *bindings) failure(ctx context.Context, intent string, err error) error {
+	b.deps.Logger.ErrorContext(ctx, "ctrlplane dashboard operation failed", "intent", intent, "error", err)
+
+	return contractError(err)
+}
 func contractError(err error) error {
 	var ce *dash.Error
 	if errors.As(err, &ce) {
-		return err
+		return ce
 	}
 
-	code := dash.CodeInternal
+	code, message := dash.CodeInternal, "Ctrlplane could not complete the operation."
 
 	switch {
 	case errors.Is(err, ctrlplane.ErrInvalidConfig), errors.Is(err, ctrlplane.ErrInvalidSource), errors.Is(err, ctrlplane.ErrUnsupportedSource):
-		code = dash.CodeBadRequest
-	case errors.Is(err, ctrlplane.ErrProviderUnavail), errors.Is(err, ctrlplane.ErrNotImplemented):
-		code = dash.CodeUnavailable
+		code, message = dash.CodeBadRequest, "The resource configuration is invalid or unsupported."
+	case errors.Is(err, ctrlplane.ErrProviderUnavail), errors.Is(err, ctrlplane.ErrNotImplemented), errors.Is(err, ctrlplane.ErrDatacenterUnavailable):
+		code, message = dash.CodeUnavailable, "The requested service is unavailable."
 	case errors.Is(err, ctrlplane.ErrNotFound), errors.Is(err, ctrlplane.ErrProviderNotFound):
-		code = dash.CodeNotFound
+		code, message = dash.CodeNotFound, "The requested resource was not found."
 	case errors.Is(err, ctrlplane.ErrForbidden), errors.Is(err, ctrlplane.ErrUnauthorized), errors.Is(err, auth.ErrUnauthorized):
-		code = dash.CodePermissionDenied
-	case errors.Is(err, ctrlplane.ErrInvalidState), errors.Is(err, ctrlplane.ErrAlreadyExists):
-		code = dash.CodeConflict
+		code, message = dash.CodePermissionDenied, "You do not have permission for this operation."
+	case errors.Is(err, ctrlplane.ErrInvalidState), errors.Is(err, ctrlplane.ErrAlreadyExists), errors.Is(err, ctrlplane.ErrQuotaExceeded):
+		code, message = dash.CodeConflict, "The operation conflicts with the resource state or quota."
 	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
-		code = dash.CodeUnavailable
+		code, message = dash.CodeUnavailable, "The operation was interrupted. Retry when the service is available."
 	}
 
-	return &dash.Error{Code: code, Message: err.Error(), Retryable: code == dash.CodeUnavailable}
+	return &dash.Error{Code: code, Message: message, Retryable: code == dash.CodeUnavailable}
 }
 
 func parseID(value string, prefix id.Prefix) (id.ID, error) {

@@ -9,5 +9,5 @@ import (
 
 // RegisterContractContributor publishes Ctrlplane's authorized dashboard intents.
 func (e *Extension) RegisterContractContributor(d *dispatcher.Dispatcher, reg dash.Registry, wreg dash.WardenRegistry) error {
-	return cpcontract.Register(d, reg, wreg, e.cp)
+	return cpcontract.RegisterWithResolver(d, reg, wreg, cpcontract.Deps{ControlPlane: e.CtrlPlane, Ready: e.IsStarted})
 }
