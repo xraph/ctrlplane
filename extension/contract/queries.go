@@ -20,11 +20,7 @@ func registerQueries(b *bindings) {
 	query(b, "session.detail", func(ctx context.Context, cp *app.CtrlPlane, _ struct{}) (any, error) {
 		claims := auth.ClaimsFrom(ctx)
 
-		return struct {
-			Subject  string `json:"subject"`
-			TenantID string `json:"tenant_id"`
-			Admin    bool   `json:"admin"`
-		}{claims.SubjectID, claims.TenantID, claims.IsSystemAdmin()}, nil
+		return sessionDTO{claims.SubjectID, claims.TenantID, claims.IsSystemAdmin()}, nil
 	})
 	query(b, "instances.list", func(ctx context.Context, cp *app.CtrlPlane, in instance.ListOptions) (any, error) {
 		in.Limit = limit(in.Limit)
@@ -78,27 +74,17 @@ func registerQueries(b *bindings) {
 			return nil, err
 		}
 
-		type row struct {
-			*datacenter.Datacenter
-
-			InstanceCount int `json:"instance_count"`
-		}
-
-		items := make([]row, 0, len(result.Items))
+		items := make([]datacenterRowDTO, 0, len(result.Items))
 		for _, dc := range result.Items {
 			count, err := cp.Store().CountInstancesByDatacenter(ctx, auth.ClaimsFrom(ctx).TenantID, dc.ID)
 			if err != nil {
 				return nil, err
 			}
 
-			items = append(items, row{dc, count})
+			items = append(items, datacenterRowDTO{projectDatacenter(*dc), count})
 		}
 
-		return struct {
-			Items      []row  `json:"items"`
-			Total      int    `json:"total"`
-			NextCursor string `json:"next_cursor,omitempty"`
-		}{items, result.Total, result.NextCursor}, nil
+		return listDTO[datacenterRowDTO]{items, result.Total, result.NextCursor}, nil
 	})
 	query(b, "datacenters.detail", func(ctx context.Context, cp *app.CtrlPlane, in entityInput) (any, error) {
 		target, err := parseID(in.ID, id.PrefixDatacenter)

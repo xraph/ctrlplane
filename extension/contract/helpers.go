@@ -69,14 +69,7 @@ func recentEvents(cp *app.CtrlPlane, in eventInput) page {
 func configDetail(cp *app.CtrlPlane) any {
 	cfg := cp.Config()
 
-	return struct {
-		DefaultProvider    string `json:"default_provider"`
-		HealthInterval     string `json:"health_interval"`
-		TelemetryInterval  string `json:"telemetry_interval"`
-		MaxInstances       int    `json:"max_instances_per_tenant"`
-		AuditEnabled       bool   `json:"audit_enabled"`
-		DatabaseConfigured bool   `json:"database_url_configured"`
-	}{cfg.DefaultProvider, cfg.HealthInterval.String(), cfg.TelemetryFlushInterval.String(), cfg.MaxInstancesPerTenant, cfg.AuditEnabled, cfg.DatabaseURL != ""}
+	return configDTO{cfg.DefaultProvider, cfg.HealthInterval.String(), cfg.TelemetryFlushInterval.String(), cfg.MaxInstancesPerTenant, cfg.AuditEnabled, cfg.DatabaseURL != ""}
 }
 
 type healthRow struct {
@@ -106,7 +99,7 @@ func healthSummary(ctx context.Context, cp *app.CtrlPlane, in instance.ListOptio
 
 		row := healthRow{Instance: inst, Health: h}
 		if err != nil {
-			row.Error = err.Error()
+			row.Error = safeDiagnostic(err.Error())
 			row.Health = &health.InstanceHealth{InstanceID: inst.ID, Status: health.StatusUnknown}
 			out.Complete = false
 		}
@@ -177,7 +170,7 @@ func purgeProvider(ctx context.Context, cp *app.CtrlPlane, name string) (any, er
 
 		for _, row := range rows.Items {
 			if err := cp.Workloads.Delete(ctx, row.ID); err != nil {
-				summary.Failures = append(summary.Failures, fmt.Sprintf("workload %s: %v", row.ID, err))
+				summary.Failures = append(summary.Failures, fmt.Sprintf("workload %s: %s", row.ID, safeDiagnostic(err.Error())))
 			} else {
 				summary.WorkloadsDeleted++
 			}
@@ -200,7 +193,7 @@ func purgeProvider(ctx context.Context, cp *app.CtrlPlane, name string) (any, er
 
 		for _, row := range rows.Items {
 			if err := cp.Instances.Delete(ctx, row.ID); err != nil {
-				summary.Failures = append(summary.Failures, fmt.Sprintf("instance %s: %v", row.ID, err))
+				summary.Failures = append(summary.Failures, fmt.Sprintf("instance %s: %s", row.ID, safeDiagnostic(err.Error())))
 			} else {
 				summary.InstancesDeleted++
 			}
@@ -221,11 +214,7 @@ func systemStats(ctx context.Context, cp *app.CtrlPlane) (any, error) {
 	}
 	// These three counters are populated by the service. The remaining fields
 	// on SystemStats are currently zero-value placeholders, not measurements.
-	return struct {
-		TotalTenants   int `json:"total_tenants"`
-		ActiveTenants  int `json:"active_tenants"`
-		TotalProviders int `json:"total_providers"`
-	}{stats.TotalTenants, stats.ActiveTenants, stats.TotalProviders}, nil
+	return statsDTO{stats.TotalTenants, stats.ActiveTenants, stats.TotalProviders}, nil
 }
 
 type providerStatus struct {
@@ -251,7 +240,11 @@ func providerStatuses(ctx context.Context, cp *app.CtrlPlane) (any, error) {
 			if cached, ok := cp.ProviderHealth.Get(row.Name); ok {
 				item.Healthy = &cached.Healthy
 				item.CheckedAt = &cached.CheckedAt
-				item.Message = cached.Message
+
+				item.Message = "Provider health check failed."
+				if cached.Healthy {
+					item.Message = "Provider health check passed."
+				}
 			}
 		}
 

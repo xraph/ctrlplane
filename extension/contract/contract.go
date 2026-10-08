@@ -204,6 +204,11 @@ func wire[I any](b *bindings, name string, kind dash.Kind, fn func(context.Conte
 			return nil, b.failure(ctx, name, err)
 		}
 
+		out, err = projectResponse(out)
+		if err != nil {
+			return nil, b.failure(ctx, name, err)
+		}
+
 		data, err := json.Marshal(out)
 		if err != nil {
 			return nil, b.failure(ctx, name, err)
@@ -286,9 +291,7 @@ type page struct {
 }
 
 func ack(err error) (any, error) {
-	return struct {
-		OK bool `json:"ok"`
-	}{OK: err == nil}, err
+	return ackDTO{OK: err == nil}, err
 }
 
 func requireTenant(ctx context.Context) error {
