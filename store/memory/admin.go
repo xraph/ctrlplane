@@ -3,10 +3,10 @@ package memory
 import (
 	"context"
 	"fmt"
-	"sort"
 
 	ctrlplane "github.com/xraph/ctrlplane"
 	"github.com/xraph/ctrlplane/admin"
+	"github.com/xraph/ctrlplane/internal/pagination"
 )
 
 func (s *Store) InsertTenant(_ context.Context, tenant *admin.Tenant) error {
@@ -94,23 +94,12 @@ func (s *Store) ListTenants(_ context.Context, opts admin.ListTenantsOptions) (*
 		items = append(items, &clone)
 	}
 
-	sort.Slice(items, func(i, j int) bool {
-		return items[i].CreatedAt.After(items[j].CreatedAt)
-	})
-
-	total := len(items)
-
-	limit := opts.Limit
-	if limit <= 0 || limit > total {
-		limit = total
+	items, next, total, err := pagination.Page(items, opts.Cursor, opts.Limit, func(v *admin.Tenant) ctrlplane.Entity { return v.Entity })
+	if err != nil {
+		return nil, err
 	}
 
-	items = items[:limit]
-
-	return &admin.TenantListResult{
-		Items: items,
-		Total: total,
-	}, nil
+	return &admin.TenantListResult{Items: items, NextCursor: next, Total: total}, nil
 }
 
 func (s *Store) UpdateTenant(_ context.Context, tenant *admin.Tenant) error {

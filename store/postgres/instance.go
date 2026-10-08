@@ -3,10 +3,12 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	ctrlplane "github.com/xraph/ctrlplane"
 	"github.com/xraph/ctrlplane/id"
 	"github.com/xraph/ctrlplane/instance"
+	"github.com/xraph/ctrlplane/internal/pagination"
 )
 
 func (s *Store) Insert(ctx context.Context, inst *instance.Instance) error {
@@ -57,49 +59,59 @@ func (s *Store) GetBySlug(ctx context.Context, tenantID string, slug string) (*i
 func (s *Store) List(ctx context.Context, tenantID string, opts instance.ListOptions) (*instance.ListResult, error) {
 	var models []instanceModel
 
-	q := s.pg.NewSelect(&models).Where("tenant_id = $1", tenantID)
+	position, err := pagination.Decode(opts.Cursor)
+	if err != nil {
+		return nil, err
+	}
 
-	argIdx := 1
+	if opts.Datacenter != "" {
+		return nil, fmt.Errorf("datacenter instance filter: %w", ctrlplane.ErrNotImplemented)
+	}
+
+	q := s.pg.NewSelect(&models)
+	argCount := 0
+	q = q.Where(fmt.Sprintf("tenant_id = $%d", argCount+1), tenantID)
+
+	argCount += 1
 	if opts.State != "" {
-		argIdx++
-		q = q.Where(fmt.Sprintf("state = $%d", argIdx), opts.State)
+		q = q.Where(fmt.Sprintf("state = $%d", argCount+1), opts.State)
+		argCount += 1
 	}
 
 	if opts.Provider != "" {
-		argIdx++
-		q = q.Where(fmt.Sprintf("provider_name = $%d", argIdx), opts.Provider)
+		q = q.Where(fmt.Sprintf("provider_name = $%d", argCount+1), opts.Provider)
+		argCount += 1
 	}
 
-	q = q.OrderExpr("created_at DESC")
-
-	limit := opts.Limit
-	if limit <= 0 {
-		limit = 100
+	if opts.Label != "" {
+		if key, val, ok := strings.Cut(opts.Label, "="); ok && key != "" {
+			q = q.Where(fmt.Sprintf("labels::jsonb ->> $%d = $%d", argCount+1, argCount+2), key, val)
+			argCount += 2
+		}
 	}
 
-	q = q.Limit(limit)
+	total, err := q.Count(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: count List: %w", err)
+	}
+
+	if opts.Cursor != "" {
+		q = q.Where(fmt.Sprintf("(created_at < $%d OR (created_at = $%d AND id < $%d))", argCount+1, argCount+2, argCount+3), position.CreatedAt, position.CreatedAt, position.ID.String())
+	}
+
+	q = q.OrderExpr("created_at DESC, id DESC")
+
+	pageLimit := opts.Limit
+	if pageLimit <= 0 {
+		pageLimit = 100
+	}
+
+	if pageLimit > 0 {
+		q = q.Limit(pageLimit + 1)
+	}
 
 	if err := q.Scan(ctx); err != nil {
-		return nil, fmt.Errorf("postgres: list instances failed: %w", err)
-	}
-
-	// Count total matching records.
-	countQ := s.pg.NewSelect((*instanceModel)(nil)).Where("tenant_id = $1", tenantID)
-
-	cArgIdx := 1
-	if opts.State != "" {
-		cArgIdx++
-		countQ = countQ.Where(fmt.Sprintf("state = $%d", cArgIdx), opts.State)
-	}
-
-	if opts.Provider != "" {
-		cArgIdx++
-		countQ = countQ.Where(fmt.Sprintf("provider_name = $%d", cArgIdx), opts.Provider)
-	}
-
-	total, err := countQ.Count(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("postgres: count instances failed: %w", err)
+		return nil, fmt.Errorf("postgres: list List: %w", err)
 	}
 
 	items := make([]*instance.Instance, 0, len(models))
@@ -107,10 +119,9 @@ func (s *Store) List(ctx context.Context, tenantID string, opts instance.ListOpt
 		items = append(items, fromInstanceModel(&models[i]))
 	}
 
-	return &instance.ListResult{
-		Items: items,
-		Total: int(total),
-	}, nil
+	items, next := pagination.Trim(items, pageLimit, func(v *instance.Instance) ctrlplane.Entity { return v.Entity })
+
+	return &instance.ListResult{Items: items, Total: int(total), NextCursor: next}, nil
 }
 
 func (s *Store) Update(ctx context.Context, inst *instance.Instance) error {

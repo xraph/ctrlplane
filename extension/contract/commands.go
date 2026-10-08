@@ -11,6 +11,7 @@ import (
 	"github.com/xraph/ctrlplane/id"
 	"github.com/xraph/ctrlplane/instance"
 	"github.com/xraph/ctrlplane/network"
+	"github.com/xraph/ctrlplane/provider"
 	"github.com/xraph/ctrlplane/secrets"
 	"github.com/xraph/ctrlplane/template"
 	"github.com/xraph/ctrlplane/workload"
@@ -379,6 +380,15 @@ func registerCommands(b *bindings) {
 		return ack(cp.Secrets.Delete(ctx, target, in.Key))
 	})
 	command(b, "providers.test", func(ctx context.Context, cp *app.CtrlPlane, in namedInput) (any, error) {
+		p, err := cp.Providers().Get(in.Name)
+		if err != nil {
+			return nil, err
+		}
+
+		if _, checksHealth := p.(provider.HealthChecker); !checksHealth {
+			return nil, unavailable("Provider does not expose a health check.")
+		}
+
 		return cp.Admin.TestProviderHealth(ctx, in.Name)
 	})
 	command(b, "providers.purge", func(ctx context.Context, cp *app.CtrlPlane, in namedInput) (any, error) {

@@ -3,10 +3,13 @@ package sqlite
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 
 	ctrlplane "github.com/xraph/ctrlplane"
 	"github.com/xraph/ctrlplane/id"
 	"github.com/xraph/ctrlplane/instance"
+	"github.com/xraph/ctrlplane/internal/pagination"
 )
 
 func (s *Store) Insert(ctx context.Context, inst *instance.Instance) error {
@@ -57,8 +60,18 @@ func (s *Store) GetBySlug(ctx context.Context, tenantID string, slug string) (*i
 func (s *Store) List(ctx context.Context, tenantID string, opts instance.ListOptions) (*instance.ListResult, error) {
 	var models []instanceModel
 
-	q := s.sdb.NewSelect(&models).Where("tenant_id = ?", tenantID)
+	position, err := pagination.Decode(opts.Cursor)
+	if err != nil {
+		return nil, err
+	}
 
+	if opts.Datacenter != "" {
+		return nil, fmt.Errorf("datacenter instance filter: %w", ctrlplane.ErrNotImplemented)
+	}
+
+	q := s.sdb.NewSelect(&models)
+
+	q = q.Where("tenant_id = ?", tenantID)
 	if opts.State != "" {
 		q = q.Where("state = ?", opts.State)
 	}
@@ -67,33 +80,34 @@ func (s *Store) List(ctx context.Context, tenantID string, opts instance.ListOpt
 		q = q.Where("provider_name = ?", opts.Provider)
 	}
 
-	q = q.OrderExpr("created_at DESC")
-
-	limit := opts.Limit
-	if limit <= 0 {
-		limit = 100
+	if opts.Label != "" {
+		if key, val, ok := strings.Cut(opts.Label, "="); ok && key != "" {
+			q = q.Where("json_extract(labels, ?) = ?", "$."+strconv.Quote(key), val)
+		}
 	}
 
-	q = q.Limit(limit)
+	total, err := q.Count(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: count List: %w", err)
+	}
+
+	if opts.Cursor != "" {
+		q = q.Where("(created_at < ? OR (created_at = ? AND id < ?))", position.CreatedAt, position.CreatedAt, position.ID.String())
+	}
+
+	q = q.OrderExpr("created_at DESC, id DESC")
+
+	pageLimit := opts.Limit
+	if pageLimit <= 0 {
+		pageLimit = 100
+	}
+
+	if pageLimit > 0 {
+		q = q.Limit(pageLimit + 1)
+	}
 
 	if err := q.Scan(ctx); err != nil {
-		return nil, fmt.Errorf("sqlite: list instances failed: %w", err)
-	}
-
-	// Count total matching records.
-	countQ := s.sdb.NewSelect((*instanceModel)(nil)).Where("tenant_id = ?", tenantID)
-
-	if opts.State != "" {
-		countQ = countQ.Where("state = ?", opts.State)
-	}
-
-	if opts.Provider != "" {
-		countQ = countQ.Where("provider_name = ?", opts.Provider)
-	}
-
-	total, err := countQ.Count(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("sqlite: count instances failed: %w", err)
+		return nil, fmt.Errorf("sqlite: list List: %w", err)
 	}
 
 	items := make([]*instance.Instance, 0, len(models))
@@ -101,10 +115,9 @@ func (s *Store) List(ctx context.Context, tenantID string, opts instance.ListOpt
 		items = append(items, fromInstanceModel(&models[i]))
 	}
 
-	return &instance.ListResult{
-		Items: items,
-		Total: int(total),
-	}, nil
+	items, next := pagination.Trim(items, pageLimit, func(v *instance.Instance) ctrlplane.Entity { return v.Entity })
+
+	return &instance.ListResult{Items: items, Total: int(total), NextCursor: next}, nil
 }
 
 func (s *Store) Update(ctx context.Context, inst *instance.Instance) error {

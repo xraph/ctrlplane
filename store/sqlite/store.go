@@ -9,6 +9,7 @@ import (
 
 	"github.com/xraph/grove"
 	"github.com/xraph/grove/drivers/sqlitedriver"
+	"github.com/xraph/grove/drivers/sqlitedriver/sqlitemigrate"
 	"github.com/xraph/grove/migrate"
 
 	"github.com/xraph/ctrlplane/store"
@@ -36,10 +37,7 @@ func (s *Store) DB() *grove.DB { return s.db }
 
 // Migrate creates the required tables and indexes using the grove orchestrator.
 func (s *Store) Migrate(ctx context.Context) error {
-	executor, err := migrate.NewExecutorFor(s.sdb)
-	if err != nil {
-		return fmt.Errorf("ctrlplane/sqlite: create migration executor: %w", err)
-	}
+	executor := sqlitemigrate.New(s.sdb)
 
 	orch := migrate.NewOrchestrator(executor, Migrations)
 	if _, err := orch.Migrate(ctx); err != nil {

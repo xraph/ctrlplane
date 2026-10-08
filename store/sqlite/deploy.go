@@ -9,6 +9,7 @@ import (
 	ctrlplane "github.com/xraph/ctrlplane"
 	"github.com/xraph/ctrlplane/deploy"
 	"github.com/xraph/ctrlplane/id"
+	"github.com/xraph/ctrlplane/internal/pagination"
 )
 
 func (s *Store) InsertDeployment(ctx context.Context, d *deploy.Deployment) error {
@@ -63,27 +64,37 @@ func (s *Store) UpdateDeployment(ctx context.Context, d *deploy.Deployment) erro
 func (s *Store) ListDeployments(ctx context.Context, tenantID string, instanceID id.ID, opts deploy.ListOptions) (*deploy.DeployListResult, error) {
 	var models []deploymentModel
 
-	q := s.sdb.NewSelect(&models).
-		Where("tenant_id = ? AND instance_id = ?", tenantID, instanceID.String()).
-		OrderExpr("created_at DESC")
-
-	limit := opts.Limit
-	if limit <= 0 {
-		limit = 100
+	position, err := pagination.Decode(opts.Cursor)
+	if err != nil {
+		return nil, err
 	}
 
-	q = q.Limit(limit)
+	q := s.sdb.NewSelect(&models)
+	q = q.Where("tenant_id = ?", tenantID)
+	q = q.Where("instance_id = ?", instanceID.String())
+
+	total, err := q.Count(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: count ListDeployments: %w", err)
+	}
+
+	if opts.Cursor != "" {
+		q = q.Where("(created_at < ? OR (created_at = ? AND id < ?))", position.CreatedAt, position.CreatedAt, position.ID.String())
+	}
+
+	q = q.OrderExpr("created_at DESC, id DESC")
+
+	pageLimit := opts.Limit
+	if pageLimit <= 0 {
+		pageLimit = 100
+	}
+
+	if pageLimit > 0 {
+		q = q.Limit(pageLimit + 1)
+	}
 
 	if err := q.Scan(ctx); err != nil {
-		return nil, fmt.Errorf("sqlite: list deployments failed: %w", err)
-	}
-
-	// Count total.
-	total, err := s.sdb.NewSelect((*deploymentModel)(nil)).
-		Where("tenant_id = ? AND instance_id = ?", tenantID, instanceID.String()).
-		Count(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("sqlite: count deployments failed: %w", err)
+		return nil, fmt.Errorf("sqlite: list ListDeployments: %w", err)
 	}
 
 	items := make([]*deploy.Deployment, 0, len(models))
@@ -91,10 +102,9 @@ func (s *Store) ListDeployments(ctx context.Context, tenantID string, instanceID
 		items = append(items, fromDeploymentModel(&models[i]))
 	}
 
-	return &deploy.DeployListResult{
-		Items: items,
-		Total: int(total),
-	}, nil
+	items, next := pagination.Trim(items, pageLimit, func(v *deploy.Deployment) ctrlplane.Entity { return v.Entity })
+
+	return &deploy.DeployListResult{Items: items, Total: int(total), NextCursor: next}, nil
 }
 
 func (s *Store) InsertRelease(ctx context.Context, r *deploy.Release) error {
@@ -128,27 +138,37 @@ func (s *Store) GetRelease(ctx context.Context, tenantID string, releaseID id.ID
 func (s *Store) ListReleases(ctx context.Context, tenantID string, instanceID id.ID, opts deploy.ListOptions) (*deploy.ReleaseListResult, error) {
 	var models []releaseModel
 
-	q := s.sdb.NewSelect(&models).
-		Where("tenant_id = ? AND instance_id = ?", tenantID, instanceID.String()).
-		OrderExpr("version DESC")
-
-	limit := opts.Limit
-	if limit <= 0 {
-		limit = 100
+	position, err := pagination.Decode(opts.Cursor)
+	if err != nil {
+		return nil, err
 	}
 
-	q = q.Limit(limit)
+	q := s.sdb.NewSelect(&models)
+	q = q.Where("tenant_id = ?", tenantID)
+	q = q.Where("instance_id = ?", instanceID.String())
+
+	total, err := q.Count(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: count ListReleases: %w", err)
+	}
+
+	if opts.Cursor != "" {
+		q = q.Where("(created_at < ? OR (created_at = ? AND id < ?))", position.CreatedAt, position.CreatedAt, position.ID.String())
+	}
+
+	q = q.OrderExpr("created_at DESC, id DESC")
+
+	pageLimit := opts.Limit
+	if pageLimit <= 0 {
+		pageLimit = 100
+	}
+
+	if pageLimit > 0 {
+		q = q.Limit(pageLimit + 1)
+	}
 
 	if err := q.Scan(ctx); err != nil {
-		return nil, fmt.Errorf("sqlite: list releases failed: %w", err)
-	}
-
-	// Count total.
-	total, err := s.sdb.NewSelect((*releaseModel)(nil)).
-		Where("tenant_id = ? AND instance_id = ?", tenantID, instanceID.String()).
-		Count(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("sqlite: count releases failed: %w", err)
+		return nil, fmt.Errorf("sqlite: list ListReleases: %w", err)
 	}
 
 	items := make([]*deploy.Release, 0, len(models))
@@ -156,10 +176,9 @@ func (s *Store) ListReleases(ctx context.Context, tenantID string, instanceID id
 		items = append(items, fromReleaseModel(&models[i]))
 	}
 
-	return &deploy.ReleaseListResult{
-		Items: items,
-		Total: int(total),
-	}, nil
+	items, next := pagination.Trim(items, pageLimit, func(v *deploy.Release) ctrlplane.Entity { return v.Entity })
+
+	return &deploy.ReleaseListResult{Items: items, Total: int(total), NextCursor: next}, nil
 }
 
 func (s *Store) NextReleaseVersion(ctx context.Context, tenantID string, instanceID id.ID) (int, error) {

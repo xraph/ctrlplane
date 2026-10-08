@@ -8,6 +8,7 @@ import (
 
 	ctrlplane "github.com/xraph/ctrlplane"
 	"github.com/xraph/ctrlplane/id"
+	"github.com/xraph/ctrlplane/internal/pagination"
 	"github.com/xraph/ctrlplane/workload"
 )
 
@@ -73,6 +74,11 @@ func (s *Store) GetWorkloadBySlug(ctx context.Context, tenantID, slug string) (*
 func (s *Store) ListWorkloads(ctx context.Context, tenantID string, opts workload.ListOptions) (*workload.ListResult, error) {
 	var models []workloadModel
 
+	position, err := pagination.Decode(opts.Cursor)
+	if err != nil {
+		return nil, err
+	}
+
 	filter := bson.M{}
 	if tenantID != "" {
 		filter["tenant_id"] = tenantID
@@ -90,16 +96,24 @@ func (s *Store) ListWorkloads(ctx context.Context, tenantID string, opts workloa
 		filter["region"] = opts.Region
 	}
 
-	q := s.mdb.NewFind(&models).
-		Filter(filter).
-		Sort(bson.D{{Key: "created_at", Value: -1}})
+	total, err := s.mdb.NewFind((*workloadModel)(nil)).Filter(filter).Count(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("mongo: count ListWorkloads: %w", err)
+	}
 
-	if opts.Limit > 0 {
-		q = q.Limit(int64(opts.Limit))
+	if opts.Cursor != "" {
+		filter["$or"] = bson.A{bson.M{"created_at": bson.M{"$lt": position.CreatedAt}}, bson.M{"created_at": position.CreatedAt, "_id": bson.M{"$lt": position.ID.String()}}}
+	}
+
+	q := s.mdb.NewFind(&models).Filter(filter).Sort(bson.D{{Key: "created_at", Value: -1}, {Key: "_id", Value: -1}})
+
+	pageLimit := opts.Limit
+	if pageLimit > 0 {
+		q = q.Limit(int64(pageLimit + 1))
 	}
 
 	if err := q.Scan(ctx); err != nil {
-		return nil, fmt.Errorf("mongo: list workloads: %w", err)
+		return nil, fmt.Errorf("mongo: list ListWorkloads: %w", err)
 	}
 
 	items := make([]*workload.Workload, 0, len(models))
@@ -107,7 +121,9 @@ func (s *Store) ListWorkloads(ctx context.Context, tenantID string, opts workloa
 		items = append(items, fromWorkloadModel(&models[i]))
 	}
 
-	return &workload.ListResult{Items: items, Total: len(items)}, nil
+	items, next := pagination.Trim(items, pageLimit, func(v *workload.Workload) ctrlplane.Entity { return v.Entity })
+
+	return &workload.ListResult{Items: items, Total: int(total), NextCursor: next}, nil
 }
 
 // UpdateWorkload persists changes.

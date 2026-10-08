@@ -2,6 +2,7 @@ package health
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -119,6 +120,9 @@ func (s *service) GetHealth(ctx context.Context, instanceID id.ID) (*InstanceHea
 
 	for _, check := range checks {
 		result, err := s.store.GetLatestResult(ctx, claims.TenantID, check.ID)
+		if err != nil && !errors.Is(err, ctrlplane.ErrNotFound) {
+			return nil, fmt.Errorf("get health: latest result: %w", err)
+		}
 
 		summary := CheckSummary{
 			CheckID: check.ID,
@@ -136,9 +140,10 @@ func (s *service) GetHealth(ctx context.Context, instanceID id.ID) (*InstanceHea
 				lastChecked = result.CheckedAt
 			}
 
-			if result.Status == StatusHealthy {
+			switch result.Status {
+			case StatusHealthy:
 				healthyCount++
-			} else {
+			case StatusUnhealthy, StatusDegraded:
 				failingCount++
 			}
 		}
@@ -150,6 +155,8 @@ func (s *service) GetHealth(ctx context.Context, instanceID id.ID) (*InstanceHea
 	var status Status
 
 	switch {
+	case healthyCount+failingCount == 0:
+		status = StatusUnknown
 	case healthyCount == len(checks):
 		status = StatusHealthy
 	case failingCount == len(checks):

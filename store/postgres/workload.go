@@ -6,6 +6,7 @@ import (
 
 	ctrlplane "github.com/xraph/ctrlplane"
 	"github.com/xraph/ctrlplane/id"
+	"github.com/xraph/ctrlplane/internal/pagination"
 	"github.com/xraph/ctrlplane/workload"
 )
 
@@ -67,36 +68,52 @@ func (s *Store) GetWorkloadBySlug(ctx context.Context, tenantID, slug string) (*
 func (s *Store) ListWorkloads(ctx context.Context, tenantID string, opts workload.ListOptions) (*workload.ListResult, error) {
 	var models []workloadModel
 
+	position, err := pagination.Decode(opts.Cursor)
+	if err != nil {
+		return nil, err
+	}
+
 	q := s.pg.NewSelect(&models)
 
-	argIdx := 0
+	argCount := 0
 	if tenantID != "" {
-		argIdx++
-		q = q.Where(fmt.Sprintf("tenant_id = $%d", argIdx), tenantID)
+		q = q.Where(fmt.Sprintf("tenant_id = $%d", argCount+1), tenantID)
+		argCount += 1
 	}
 
 	if opts.State != "" {
-		argIdx++
-		q = q.Where(fmt.Sprintf("state = $%d", argIdx), string(opts.State))
+		q = q.Where(fmt.Sprintf("state = $%d", argCount+1), string(opts.State))
+		argCount += 1
 	}
 
 	if opts.ProviderName != "" {
-		argIdx++
-		q = q.Where(fmt.Sprintf("provider_name = $%d", argIdx), opts.ProviderName)
+		q = q.Where(fmt.Sprintf("provider_name = $%d", argCount+1), opts.ProviderName)
+		argCount += 1
 	}
 
 	if opts.Region != "" {
-		argIdx++
-		q = q.Where(fmt.Sprintf("region = $%d", argIdx), opts.Region)
+		q = q.Where(fmt.Sprintf("region = $%d", argCount+1), opts.Region)
+		argCount += 1
 	}
 
-	q = q.OrderExpr("created_at DESC")
-	if opts.Limit > 0 {
-		q = q.Limit(opts.Limit)
+	total, err := q.Count(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: count ListWorkloads: %w", err)
+	}
+
+	if opts.Cursor != "" {
+		q = q.Where(fmt.Sprintf("(created_at < $%d OR (created_at = $%d AND id < $%d))", argCount+1, argCount+2, argCount+3), position.CreatedAt, position.CreatedAt, position.ID.String())
+	}
+
+	q = q.OrderExpr("created_at DESC, id DESC")
+
+	pageLimit := opts.Limit
+	if pageLimit > 0 {
+		q = q.Limit(pageLimit + 1)
 	}
 
 	if err := q.Scan(ctx); err != nil {
-		return nil, fmt.Errorf("postgres: list workloads: %w", err)
+		return nil, fmt.Errorf("postgres: list ListWorkloads: %w", err)
 	}
 
 	items := make([]*workload.Workload, 0, len(models))
@@ -104,7 +121,9 @@ func (s *Store) ListWorkloads(ctx context.Context, tenantID string, opts workloa
 		items = append(items, fromWorkloadModel(&models[i]))
 	}
 
-	return &workload.ListResult{Items: items, Total: len(items)}, nil
+	items, next := pagination.Trim(items, pageLimit, func(v *workload.Workload) ctrlplane.Entity { return v.Entity })
+
+	return &workload.ListResult{Items: items, Total: int(total), NextCursor: next}, nil
 }
 
 // UpdateWorkload persists changes. Mirrors mongo: no not-found error when the

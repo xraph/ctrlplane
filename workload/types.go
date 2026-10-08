@@ -40,6 +40,7 @@ type UpdateRequest struct {
 
 // ListOptions filters the Workload list endpoint.
 type ListOptions struct {
+	Cursor       string `json:"cursor,omitempty"`
 	State        State  `json:"state,omitempty"`
 	ProviderName string `json:"provider_name,omitempty"`
 	Region       string `json:"region,omitempty"`
@@ -48,8 +49,9 @@ type ListOptions struct {
 
 // ListResult holds a page of Workloads.
 type ListResult struct {
-	Items []*Workload `json:"items"`
-	Total int         `json:"total"`
+	NextCursor string      `json:"next_cursor,omitempty"`
+	Items      []*Workload `json:"items"`
+	Total      int         `json:"total"`
 }
 
 // DeployRequest kicks off a new release rollout. Services lists only

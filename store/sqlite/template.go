@@ -6,6 +6,7 @@ import (
 
 	ctrlplane "github.com/xraph/ctrlplane"
 	"github.com/xraph/ctrlplane/id"
+	"github.com/xraph/ctrlplane/internal/pagination"
 	"github.com/xraph/ctrlplane/template"
 )
 
@@ -86,26 +87,36 @@ func (s *Store) DeleteTemplate(ctx context.Context, tenantID string, templateID 
 func (s *Store) ListTemplates(ctx context.Context, tenantID string, opts template.ListOptions) (*template.ListResult, error) {
 	var models []templateModel
 
-	q := s.sdb.NewSelect(&models).
-		Where("tenant_id = ?", tenantID).
-		OrderExpr("created_at DESC")
-
-	limit := opts.Limit
-	if limit <= 0 {
-		limit = 100
+	position, err := pagination.Decode(opts.Cursor)
+	if err != nil {
+		return nil, err
 	}
 
-	q = q.Limit(limit)
+	q := s.sdb.NewSelect(&models)
+	q = q.Where("tenant_id = ?", tenantID)
+
+	total, err := q.Count(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: count ListTemplates: %w", err)
+	}
+
+	if opts.Cursor != "" {
+		q = q.Where("(created_at < ? OR (created_at = ? AND id < ?))", position.CreatedAt, position.CreatedAt, position.ID.String())
+	}
+
+	q = q.OrderExpr("created_at DESC, id DESC")
+
+	pageLimit := opts.Limit
+	if pageLimit <= 0 {
+		pageLimit = 100
+	}
+
+	if pageLimit > 0 {
+		q = q.Limit(pageLimit + 1)
+	}
 
 	if err := q.Scan(ctx); err != nil {
-		return nil, fmt.Errorf("sqlite: list templates failed: %w", err)
-	}
-
-	total, err := s.sdb.NewSelect((*templateModel)(nil)).
-		Where("tenant_id = ?", tenantID).
-		Count(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("sqlite: count templates failed: %w", err)
+		return nil, fmt.Errorf("sqlite: list ListTemplates: %w", err)
 	}
 
 	items := make([]*template.Template, 0, len(models))
@@ -113,8 +124,7 @@ func (s *Store) ListTemplates(ctx context.Context, tenantID string, opts templat
 		items = append(items, fromTemplateModel(&models[i]))
 	}
 
-	return &template.ListResult{
-		Items: items,
-		Total: int(total),
-	}, nil
+	items, next := pagination.Trim(items, pageLimit, func(v *template.Template) ctrlplane.Entity { return v.Entity })
+
+	return &template.ListResult{Items: items, Total: int(total), NextCursor: next}, nil
 }

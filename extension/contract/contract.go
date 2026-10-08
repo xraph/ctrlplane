@@ -48,7 +48,7 @@ func RegisterWithResolver(d *dispatcher.Dispatcher, reg dash.Registry, wreg dash
 		deps.Logger = slog.Default()
 	}
 
-	if err := wreg.Register("ctrlplane.auth", authorizer{deps: deps}); err != nil {
+	if err := wreg.Register("ctrlplane.auth", authorizer{}); err != nil {
 		return fmt.Errorf("register ctrlplane authorizer: %w", err)
 	}
 
@@ -171,13 +171,26 @@ func wire[I any](b *bindings, name string, kind dash.Kind, fn func(context.Conte
 			return nil, err
 		}
 
-		decision, err := (authorizer{deps: b.deps}).Authorize(ctx, p, dash.Action{Intent: name, Kind: kind})
+		decision, err := (authorizer{}).Authorize(ctx, p, dash.Action{Intent: name, Kind: kind})
 		if err != nil {
 			return nil, unavailable("Authorization provider unavailable.")
 		}
 
 		if !decision.Allow {
 			return nil, &dash.Error{Code: dash.CodePermissionDenied, Message: decision.Reason}
+		}
+
+		claims := auth.ClaimsFrom(ctx)
+
+		allowed, policyErr := cp.Auth().Authorize(ctx, auth.AuthzRequest{TenantID: claims.TenantID, SubjectID: claims.SubjectID, Resource: "ctrlplane", Action: name})
+		if policyErr != nil {
+			b.deps.Logger.ErrorContext(ctx, "ctrlplane dashboard authorization failed", "intent", name, "error", policyErr)
+
+			return nil, unavailable("Authorization provider unavailable.")
+		}
+
+		if !allowed {
+			return nil, &dash.Error{Code: dash.CodePermissionDenied, Message: "Ctrlplane authorization policy denied this operation."}
 		}
 
 		var in I
@@ -285,9 +298,10 @@ type namedInput struct {
 	Name string `json:"name"`
 }
 type page struct {
-	Items    any  `json:"items"`
-	Total    int  `json:"total"`
-	Complete bool `json:"complete"`
+	Items      any    `json:"items"`
+	Total      int    `json:"total"`
+	Complete   bool   `json:"complete"`
+	NextCursor string `json:"next_cursor,omitempty"`
 }
 
 func ack(err error) (any, error) {

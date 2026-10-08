@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"sort"
 
+	ctrlplane "github.com/xraph/ctrlplane"
 	"github.com/xraph/ctrlplane/app"
 	"github.com/xraph/ctrlplane/deploy"
 	"github.com/xraph/ctrlplane/id"
 	"github.com/xraph/ctrlplane/instance"
+	"github.com/xraph/ctrlplane/internal/pagination"
 )
 
 // workloadCollection refuses a partial read rather than hiding failed replicas.
@@ -28,7 +30,7 @@ func workloadCollection(ctx context.Context, cp *app.CtrlPlane, target id.ID, ki
 func instanceCollection(ctx context.Context, cp *app.CtrlPlane, instances []*instance.Instance, kind string, opts deploy.ListOptions) (any, error) {
 	items := make([]any, 0)
 	total := 0
-	complete := true
+	hasMore := false
 
 	for _, inst := range instances {
 		switch kind {
@@ -43,7 +45,7 @@ func instanceCollection(ctx context.Context, cp *app.CtrlPlane, instances []*ins
 			}
 
 			total += result.Total
-			complete = complete && result.NextCursor == "" && len(result.Items) >= result.Total && len(result.Items) < opts.Limit
+			hasMore = hasMore || result.NextCursor != ""
 		case "releases":
 			result, err := cp.Deploys.ListReleases(ctx, inst.ID, opts)
 			if err != nil {
@@ -55,7 +57,7 @@ func instanceCollection(ctx context.Context, cp *app.CtrlPlane, instances []*ins
 			}
 
 			total += result.Total
-			complete = complete && result.NextCursor == "" && len(result.Items) >= result.Total && len(result.Items) < opts.Limit
+			hasMore = hasMore || result.NextCursor != ""
 		case "domains":
 			result, err := cp.Network.ListDomains(ctx, inst.ID)
 			if err != nil {
@@ -81,19 +83,29 @@ func instanceCollection(ctx context.Context, cp *app.CtrlPlane, instances []*ins
 		}
 	}
 
-	if kind == "deployments" {
+	if kind == "deployments" || kind == "releases" {
 		sort.Slice(items, func(i, j int) bool {
-			return items[i].(*deploy.Deployment).CreatedAt.After(items[j].(*deploy.Deployment).CreatedAt)
+			a, b := collectionEntity(items[i]), collectionEntity(items[j])
+			if a.CreatedAt.Equal(b.CreatedAt) {
+				return a.ID.String() > b.ID.String()
+			}
+
+			return a.CreatedAt.After(b.CreatedAt)
 		})
 	}
 
-	if kind == "releases" {
-		sort.Slice(items, func(i, j int) bool {
-			return items[i].(*deploy.Release).CreatedAt.After(items[j].(*deploy.Release).CreatedAt)
-		})
+	complete := opts.Cursor == "" && !hasMore && len(items) >= total
+
+	items, next := pagination.Trim(items, opts.Limit, collectionEntity)
+	if next == "" && hasMore && len(items) > 0 {
+		next = pagination.Encode(collectionEntity(items[len(items)-1]))
 	}
 
-	return page{Items: items, Total: total, Complete: complete}, nil
+	if next != "" {
+		complete = false
+	}
+
+	return page{Items: items, Total: total, Complete: complete, NextCursor: next}, nil
 }
 
 func recentDeployments(ctx context.Context, cp *app.CtrlPlane, in instance.ListOptions) (any, error) {
@@ -110,6 +122,7 @@ func recentDeployments(ctx context.Context, cp *app.CtrlPlane, in instance.ListO
 	}
 
 	out := result.(page)
+	out.NextCursor = ""
 	items := out.Items.([]any)
 
 	out.Complete = out.Complete && instances.NextCursor == "" && len(instances.Items) >= instances.Total && len(instances.Items) < in.Limit
@@ -119,4 +132,15 @@ func recentDeployments(ctx context.Context, cp *app.CtrlPlane, in instance.ListO
 	}
 
 	return out, nil
+}
+
+func collectionEntity(value any) ctrlplane.Entity {
+	switch value := value.(type) {
+	case *deploy.Deployment:
+		return value.Entity
+	case *deploy.Release:
+		return value.Entity
+	default:
+		return ctrlplane.Entity{}
+	}
 }

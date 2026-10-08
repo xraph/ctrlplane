@@ -243,6 +243,15 @@ func TestConfiguredPolicyRefusalStopsReadsAndWrites(t *testing.T) {
 			if response.OK {
 				t.Fatalf("policy refusal accepted: %+v", response)
 			}
+
+			want := dash.CodePermissionDenied
+			if failure {
+				want = dash.CodeUnavailable
+			}
+
+			if response.Error == nil || response.Error.Code != want || response.Error.Retryable != failure {
+				t.Fatalf("policy failure classification: %+v", response.Error)
+			}
 		}
 	}
 }

@@ -16,6 +16,7 @@ import (
 
 	ctrlplane "github.com/xraph/ctrlplane"
 	"github.com/xraph/ctrlplane/app"
+	"github.com/xraph/ctrlplane/provider"
 	"github.com/xraph/ctrlplane/template"
 )
 
@@ -125,5 +126,26 @@ func TestCommandInvalidationIsSpecific(t *testing.T) {
 		if slices.Contains(got.Meta.Invalidates, unrelated) {
 			t.Fatalf("unrelated invalidation %s", unrelated)
 		}
+	}
+}
+
+// noProbeProvider supplies metadata without pretending to support connectivity checks.
+type noProbeProvider struct{ provider.Provider }
+
+func (noProbeProvider) Info() provider.ProviderInfo         { return provider.ProviderInfo{Name: "no-probe"} }
+func (noProbeProvider) Capabilities() []provider.Capability { return nil }
+
+func TestProviderWithoutProbeStaysUnknown(t *testing.T) {
+	cp, h := harness(t, app.WithProvider("no-probe", noProbeProvider{}))
+	cp.ProviderHealth.CheckNow(context.Background())
+
+	got := request(t, h, principal("alpha", true), dash.KindQuery, "providers.list", struct{}{})
+	if !got.OK || !bytes.Contains(got.Data, []byte(`"healthy":null`)) {
+		t.Fatalf("synthetic health observation: %s", got.Data)
+	}
+
+	tested := request(t, h, principal("alpha", true), dash.KindCommand, "providers.test", map[string]any{"name": "no-probe"})
+	if tested.OK || tested.Error.Code != dash.CodeUnavailable {
+		t.Fatal("unsupported probe returned success")
 	}
 }

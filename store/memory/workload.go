@@ -3,10 +3,10 @@ package memory
 import (
 	"context"
 	"fmt"
-	"sort"
 
 	ctrlplane "github.com/xraph/ctrlplane"
 	"github.com/xraph/ctrlplane/id"
+	"github.com/xraph/ctrlplane/internal/pagination"
 	"github.com/xraph/ctrlplane/workload"
 )
 
@@ -99,20 +99,12 @@ func (s *Store) ListWorkloads(_ context.Context, tenantID string, opts workload.
 		items = append(items, &clone)
 	}
 
-	sort.Slice(items, func(i, j int) bool {
-		return items[i].CreatedAt.After(items[j].CreatedAt)
-	})
-
-	total := len(items)
-
-	limit := opts.Limit
-	if limit <= 0 || limit > total {
-		limit = total
+	items, next, total, err := pagination.Page(items, opts.Cursor, opts.Limit, func(v *workload.Workload) ctrlplane.Entity { return v.Entity })
+	if err != nil {
+		return nil, err
 	}
 
-	items = items[:limit]
-
-	return &workload.ListResult{Items: items, Total: total}, nil
+	return &workload.ListResult{Items: items, NextCursor: next, Total: total}, nil
 }
 
 func (s *Store) UpdateWorkload(_ context.Context, w *workload.Workload) error {

@@ -3,10 +3,13 @@ package sqlite
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 
 	ctrlplane "github.com/xraph/ctrlplane"
 	"github.com/xraph/ctrlplane/datacenter"
 	"github.com/xraph/ctrlplane/id"
+	"github.com/xraph/ctrlplane/internal/pagination"
 )
 
 // InsertDatacenter persists a new datacenter.
@@ -74,8 +77,14 @@ func (s *Store) GetDatacenterBySlug(ctx context.Context, tenantID string, slug s
 func (s *Store) ListDatacenters(ctx context.Context, tenantID string, opts datacenter.ListOptions) (*datacenter.ListResult, error) {
 	var models []datacenterModel
 
-	q := s.sdb.NewSelect(&models).Where("tenant_id = ? OR tenant_id = ''", tenantID)
+	position, err := pagination.Decode(opts.Cursor)
+	if err != nil {
+		return nil, err
+	}
 
+	q := s.sdb.NewSelect(&models)
+
+	q = q.Where("(tenant_id = ? OR tenant_id = '')", tenantID)
 	if opts.Status != "" {
 		q = q.Where("status = ?", opts.Status)
 	}
@@ -88,25 +97,40 @@ func (s *Store) ListDatacenters(ctx context.Context, tenantID string, opts datac
 		q = q.Where("region = ?", opts.Region)
 	}
 
-	q = q.OrderExpr("created_at DESC")
+	if opts.Label != "" {
+		if key, val, ok := strings.Cut(opts.Label, "="); ok && key != "" {
+			q = q.Where("json_extract(labels, ?) = ?", "$."+strconv.Quote(key), val)
+		}
+	}
 
-	if opts.Limit > 0 {
-		q = q.Limit(opts.Limit)
+	total, err := q.Count(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: count ListDatacenters: %w", err)
+	}
+
+	if opts.Cursor != "" {
+		q = q.Where("(created_at < ? OR (created_at = ? AND id < ?))", position.CreatedAt, position.CreatedAt, position.ID.String())
+	}
+
+	q = q.OrderExpr("created_at DESC, id DESC")
+
+	pageLimit := opts.Limit
+	if pageLimit > 0 {
+		q = q.Limit(pageLimit + 1)
 	}
 
 	if err := q.Scan(ctx); err != nil {
-		return nil, fmt.Errorf("sqlite: list datacenters: %w", err)
+		return nil, fmt.Errorf("sqlite: list ListDatacenters: %w", err)
 	}
 
 	items := make([]*datacenter.Datacenter, 0, len(models))
-	for _, m := range models {
-		items = append(items, fromDatacenterModel(&m))
+	for i := range models {
+		items = append(items, fromDatacenterModel(&models[i]))
 	}
 
-	return &datacenter.ListResult{
-		Items: items,
-		Total: len(items),
-	}, nil
+	items, next := pagination.Trim(items, pageLimit, func(v *datacenter.Datacenter) ctrlplane.Entity { return v.Entity })
+
+	return &datacenter.ListResult{Items: items, Total: int(total), NextCursor: next}, nil
 }
 
 // UpdateDatacenter persists changes to an existing datacenter.

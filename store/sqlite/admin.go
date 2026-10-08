@@ -6,6 +6,7 @@ import (
 
 	ctrlplane "github.com/xraph/ctrlplane"
 	"github.com/xraph/ctrlplane/admin"
+	"github.com/xraph/ctrlplane/internal/pagination"
 )
 
 func (s *Store) InsertTenant(ctx context.Context, tenant *admin.Tenant) error {
@@ -113,57 +114,48 @@ func (s *Store) GetTenantBySlug(ctx context.Context, slug string) (*admin.Tenant
 func (s *Store) ListTenants(ctx context.Context, opts admin.ListTenantsOptions) (*admin.TenantListResult, error) {
 	var models []tenantModel
 
-	q := s.sdb.NewSelect(&models)
+	position, err := pagination.Decode(opts.Cursor)
+	if err != nil {
+		return nil, err
+	}
 
+	q := s.sdb.NewSelect(&models)
 	if opts.Status != "" {
 		q = q.Where("status = ?", opts.Status)
 	}
 
-	q = q.OrderExpr("created_at DESC")
-
-	limit := opts.Limit
-	if limit <= 0 {
-		limit = 100
+	total, err := q.Count(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: count ListTenants: %w", err)
 	}
 
-	q = q.Limit(limit)
+	if opts.Cursor != "" {
+		q = q.Where("(created_at < ? OR (created_at = ? AND id < ?))", position.CreatedAt, position.CreatedAt, position.ID.String())
+	}
+
+	q = q.OrderExpr("created_at DESC, id DESC")
+
+	pageLimit := opts.Limit
+	if pageLimit <= 0 {
+		pageLimit = 100
+	}
+
+	if pageLimit > 0 {
+		q = q.Limit(pageLimit + 1)
+	}
 
 	if err := q.Scan(ctx); err != nil {
-		return nil, fmt.Errorf("sqlite: list tenants failed: %w", err)
-	}
-
-	// Count total.
-	countQ := s.sdb.NewSelect((*tenantModel)(nil))
-
-	if opts.Status != "" {
-		countQ = countQ.Where("status = ?", opts.Status)
-	}
-
-	total, err := countQ.Count(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("sqlite: count tenants failed: %w", err)
+		return nil, fmt.Errorf("sqlite: list ListTenants: %w", err)
 	}
 
 	items := make([]*admin.Tenant, 0, len(models))
-	for _, model := range models {
-		tenant := &admin.Tenant{
-			Entity: ctrlplane.Entity{
-				ID:        model.ID,
-				CreatedAt: model.CreatedAt,
-				UpdatedAt: model.UpdatedAt,
-			},
-			ExternalID: model.ExternalID,
-			Slug:       model.Slug,
-			Name:       model.Name,
-			Status:     admin.TenantStatus(model.Status),
-		}
-		items = append(items, tenant)
+	for i := range models {
+		items = append(items, tenantFromPageModel(&models[i]))
 	}
 
-	return &admin.TenantListResult{
-		Items: items,
-		Total: int(total),
-	}, nil
+	items, next := pagination.Trim(items, pageLimit, func(v *admin.Tenant) ctrlplane.Entity { return v.Entity })
+
+	return &admin.TenantListResult{Items: items, Total: int(total), NextCursor: next}, nil
 }
 
 func (s *Store) UpdateTenant(ctx context.Context, tenant *admin.Tenant) error {
@@ -299,4 +291,8 @@ func (s *Store) QueryAuditLog(ctx context.Context, opts admin.AuditQuery) (*admi
 		Items: items,
 		Total: len(items),
 	}, nil
+}
+
+func tenantFromPageModel(m *tenantModel) *admin.Tenant {
+	return &admin.Tenant{Entity: ctrlplane.Entity{ID: m.ID, CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt}, ExternalID: m.ExternalID, Slug: m.Slug, Name: m.Name, Status: admin.TenantStatus(m.Status)}
 }

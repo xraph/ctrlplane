@@ -804,7 +804,7 @@ type checkSummaryDTO struct {
 	CheckID    id.ID            `json:"check_id"`
 	Name       string           `json:"name"`
 	Status     health.Status    `json:"status"`
-	Latency    time.Duration    `json:"latency"`
+	Latency    *time.Duration   `json:"latency"`
 	LastResult *healthResultDTO `json:"last_result,omitempty"`
 }
 
@@ -813,7 +813,7 @@ func projectCheckSummary(v health.CheckSummary) checkSummaryDTO {
 		CheckID:    v.CheckID,
 		Name:       v.Name,
 		Status:     v.Status,
-		Latency:    v.Latency,
+		Latency:    observedLatency(v.LastResult, v.Latency),
 		LastResult: viewPointer(v.LastResult, projectHealthResult),
 	}
 }

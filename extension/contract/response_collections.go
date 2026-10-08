@@ -8,6 +8,7 @@ import (
 	"github.com/xraph/ctrlplane/admin"
 	"github.com/xraph/ctrlplane/datacenter"
 	"github.com/xraph/ctrlplane/deploy"
+	"github.com/xraph/ctrlplane/health"
 	"github.com/xraph/ctrlplane/id"
 	"github.com/xraph/ctrlplane/instance"
 	"github.com/xraph/ctrlplane/template"
@@ -99,7 +100,7 @@ func projectCollection(v any) (any, error) {
 			return nil, errors.New("ctrlplane contract: missing list result")
 		}
 
-		return listDTO[auditEntryDTO]{viewSlice(v.Items, projectAuditEntry), v.Total, v.NextCursor}, nil
+		return page{Items: viewSlice(v.Items, projectAuditEntry), Total: v.Total, Complete: false}, nil
 	case healthResult:
 		return healthSummaryDTO{Items: viewSlice(v.Items, func(v healthRow) healthRowDTO {
 			return healthRowDTO{viewPointer(v.Instance, projectInstance), viewPointer(v.Health, projectInstanceHealth), safeDiagnostic(v.Error)}
@@ -114,7 +115,7 @@ func projectCollection(v any) (any, error) {
 			return nil, err
 		}
 
-		return page{Items: items, Total: v.Total, Complete: v.Complete}, nil
+		return page{Items: items, Total: v.Total, Complete: v.Complete, NextCursor: v.NextCursor}, nil
 	case []any:
 		out := make([]any, 0, len(v))
 		for _, row := range v {
@@ -157,7 +158,7 @@ func safeMetadata(in map[string]any) map[string]any {
 		switch key {
 		case "error", "warning":
 			out[key] = "See server diagnostics for details."
-		case "workload_id", "instance_id", "template_id", "datacenter_id", "deployment_id", "release_id", "domain_id", "route_id", "certificate_id", "tenant_name", "plan", "reason", "services_deployed", "strategy", "version", "replicas", "replica_count", "service_count", "kind", "cpu_millis", "memory_mb", "hostname", "path", "port", "protocol", "rollback":
+		case "workload_id", "instance_id", "template_id", "datacenter_id", "deployment_id", "release_id", "domain_id", "route_id", "certificate_id", "tenant_name", "plan", "name", "source", "forked_from", "reason", "services_deployed", "strategy", "version", "replicas", "replica_count", "service_count", "kind", "cpu_millis", "memory_mb", "hostname", "path", "port", "protocol", "rollback":
 			switch value := value.(type) {
 			case string, bool, int, int32, int64, uint, uint64, float64, []string:
 				out[key] = value
@@ -188,4 +189,12 @@ func observedTime(t time.Time) *time.Time {
 	t = t.UTC()
 
 	return &t
+}
+
+func observedLatency(result *health.HealthResult, latency time.Duration) *time.Duration {
+	if result == nil {
+		return nil
+	}
+
+	return &latency
 }

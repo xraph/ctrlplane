@@ -16,6 +16,7 @@ import (
 	"github.com/xraph/ctrlplane/health"
 	"github.com/xraph/ctrlplane/id"
 	"github.com/xraph/ctrlplane/instance"
+	"github.com/xraph/ctrlplane/provider"
 	"github.com/xraph/ctrlplane/workload"
 )
 
@@ -236,6 +237,17 @@ func providerStatuses(ctx context.Context, cp *app.CtrlPlane) (any, error) {
 	out := make([]providerStatus, 0, len(statuses))
 	for _, row := range statuses {
 		item := providerStatus{Name: row.Name, Region: row.Region, Location: row.Location, Capabilities: row.Capabilities, Message: "No health observation yet."}
+
+		p, err := cp.Providers().Get(row.Name)
+		if err == nil {
+			if _, checksHealth := p.(provider.HealthChecker); !checksHealth {
+				item.Message = "Provider does not expose a health check."
+				out = append(out, item)
+
+				continue
+			}
+		}
+
 		if cp.ProviderHealth != nil {
 			if cached, ok := cp.ProviderHealth.Get(row.Name); ok {
 				item.Healthy = &cached.Healthy

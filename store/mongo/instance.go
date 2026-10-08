@@ -10,6 +10,7 @@ import (
 	ctrlplane "github.com/xraph/ctrlplane"
 	"github.com/xraph/ctrlplane/id"
 	"github.com/xraph/ctrlplane/instance"
+	"github.com/xraph/ctrlplane/internal/pagination"
 )
 
 func (s *Store) Insert(ctx context.Context, inst *instance.Instance) error {
@@ -69,58 +70,54 @@ func (s *Store) GetBySlug(ctx context.Context, tenantID string, slug string) (*i
 func (s *Store) List(ctx context.Context, tenantID string, opts instance.ListOptions) (*instance.ListResult, error) {
 	var models []instanceModel
 
-	// Empty tenantID = cross-tenant view (admin dashboard pattern).
-	// Service-level gating decides whether the caller is allowed
-	// to pass empty; here we just honour the contract.
-	f := bson.M{}
-	if tenantID != "" {
-		f["tenant_id"] = tenantID
+	position, err := pagination.Decode(opts.Cursor)
+	if err != nil {
+		return nil, err
 	}
 
+	if opts.Datacenter != "" {
+		return nil, fmt.Errorf("datacenter instance filter: %w", ctrlplane.ErrNotImplemented)
+	}
+
+	filter := bson.M{}
+
+	filter["tenant_id"] = tenantID
 	if opts.State != "" {
-		f["state"] = opts.State
+		filter["state"] = opts.State
 	}
 
 	if opts.Provider != "" {
-		f["provider_name"] = opts.Provider
+		filter["provider_name"] = opts.Provider
 	}
 
-	// opts.Label is "key=value". The label key may contain dots
-	// (e.g. "ctrlplane.workload"), which mongo's path syntax would
-	// otherwise interpret as nested-field access. Use $expr +
-	// $getField so the dotted key is treated as a literal map key
-	// inside the labels sub-document.
 	if opts.Label != "" {
 		if key, val, ok := strings.Cut(opts.Label, "="); ok && key != "" {
-			f["$expr"] = bson.M{
-				"$eq": bson.A{
-					bson.M{"$getField": bson.M{"field": key, "input": "$labels"}},
-					val,
-				},
-			}
+			filter["$expr"] = bson.M{"$eq": bson.A{bson.M{"$getField": bson.M{"field": bson.M{"$literal": key}, "input": "$labels"}}, val}}
 		}
 	}
 
-	limit := opts.Limit
-	if limit <= 0 {
-		limit = 100
+	total, err := s.mdb.NewFind((*instanceModel)(nil)).Filter(filter).Count(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("mongo: count List: %w", err)
 	}
 
-	err := s.mdb.NewFind(&models).
-		Filter(f).
-		Sort(bson.D{{Key: "created_at", Value: -1}}).
-		Limit(int64(limit)).
-		Scan(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("mongo: list instances failed: %w", err)
+	if opts.Cursor != "" {
+		filter["$or"] = bson.A{bson.M{"created_at": bson.M{"$lt": position.CreatedAt}}, bson.M{"created_at": position.CreatedAt, "_id": bson.M{"$lt": position.ID.String()}}}
 	}
 
-	// Count total matching records.
-	total, err := s.mdb.NewFind((*instanceModel)(nil)).
-		Filter(f).
-		Count(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("mongo: count instances failed: %w", err)
+	q := s.mdb.NewFind(&models).Filter(filter).Sort(bson.D{{Key: "created_at", Value: -1}, {Key: "_id", Value: -1}})
+
+	pageLimit := opts.Limit
+	if pageLimit <= 0 {
+		pageLimit = 100
+	}
+
+	if pageLimit > 0 {
+		q = q.Limit(int64(pageLimit + 1))
+	}
+
+	if err := q.Scan(ctx); err != nil {
+		return nil, fmt.Errorf("mongo: list List: %w", err)
 	}
 
 	items := make([]*instance.Instance, 0, len(models))
@@ -128,10 +125,9 @@ func (s *Store) List(ctx context.Context, tenantID string, opts instance.ListOpt
 		items = append(items, fromInstanceModel(&models[i]))
 	}
 
-	return &instance.ListResult{
-		Items: items,
-		Total: int(total),
-	}, nil
+	items, next := pagination.Trim(items, pageLimit, func(v *instance.Instance) ctrlplane.Entity { return v.Entity })
+
+	return &instance.ListResult{Items: items, Total: int(total), NextCursor: next}, nil
 }
 
 func (s *Store) Update(ctx context.Context, inst *instance.Instance) error {

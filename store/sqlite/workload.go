@@ -2,7 +2,9 @@ package sqlite
 
 import (
 	"context"
-	"errors"
+	"fmt"
+
+	ctrlplane "github.com/xraph/ctrlplane"
 
 	"github.com/xraph/ctrlplane/id"
 	"github.com/xraph/ctrlplane/workload"
@@ -11,7 +13,7 @@ import (
 // errWorkloadSqliteUnsupported keeps the sqlite backend compiling
 // against the new aggregate Store interface; real implementation
 // follows once a sqlite-backed deployment needs it.
-var errWorkloadSqliteUnsupported = errors.New("sqlite: workload store not implemented yet (use mongo backend)")
+var errWorkloadSqliteUnsupported = fmt.Errorf("sqlite: workload store: %w", ctrlplane.ErrNotImplemented)
 
 func (s *Store) InsertWorkload(_ context.Context, _ *workload.Workload) error {
 	return errWorkloadSqliteUnsupported

@@ -2,7 +2,6 @@ package contract
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	dash "github.com/xraph/forge/extensions/dashboard/contract"
@@ -31,7 +30,8 @@ func principalContext(ctx context.Context, p dash.Principal) (context.Context, e
 	return auth.WithClaims(ctx, &auth.Claims{SubjectID: p.User.Subject, TenantID: tenant, Email: p.User.Email, Name: p.User.DisplayName, Roles: append([]string(nil), p.User.Roles...)}), nil
 }
 
-type authorizer struct{ deps Deps }
+// authorizer checks transport identity and scopes. The handler applies the configured policy after readiness.
+type authorizer struct{}
 
 func (a authorizer) Authorize(ctx context.Context, p dash.Principal, action dash.Action) (dash.Decision, error) {
 	scoped, err := principalContext(ctx, p)
@@ -55,19 +55,7 @@ func (a authorizer) Authorize(ctx context.Context, p dash.Principal, action dash
 		return dash.Decision{Reason: "Missing " + scope + " scope."}, nil
 	}
 
-	cp := a.deps.ControlPlane()
-	if !a.deps.available(cp) {
-		// Local claims and scopes have passed. The handler checks readiness
-		// before any service call, so startup failures retain UNAVAILABLE.
-		return dash.Decision{Allow: true}, nil
-	}
-
-	allowed, err := cp.Auth().Authorize(scoped, auth.AuthzRequest{TenantID: claims.TenantID, SubjectID: claims.SubjectID, Resource: "ctrlplane", Action: action.Intent})
-	if err != nil {
-		return dash.Decision{}, fmt.Errorf("authorize ctrlplane intent %s: %w", action.Intent, err)
-	}
-
-	return dash.Decision{Allow: allowed, Reason: "Ctrlplane authorization policy"}, nil
+	return dash.Decision{Allow: true}, nil
 }
 
 func systemIntent(name string) bool {

@@ -6,6 +6,7 @@ import (
 
 	ctrlplane "github.com/xraph/ctrlplane"
 	"github.com/xraph/ctrlplane/admin"
+	"github.com/xraph/ctrlplane/internal/pagination"
 )
 
 func (s *Store) InsertTenant(ctx context.Context, tenant *admin.Tenant) error {
@@ -125,65 +126,51 @@ func (s *Store) GetTenantBySlug(ctx context.Context, slug string) (*admin.Tenant
 func (s *Store) ListTenants(ctx context.Context, opts admin.ListTenantsOptions) (*admin.TenantListResult, error) {
 	var models []tenantModel
 
+	position, err := pagination.Decode(opts.Cursor)
+	if err != nil {
+		return nil, err
+	}
+
 	q := s.pg.NewSelect(&models)
 
-	argIdx := 0
+	argCount := 0
 	if opts.Status != "" {
-		argIdx++
-		q = q.Where(fmt.Sprintf("status = $%d", argIdx), opts.Status)
+		q = q.Where(fmt.Sprintf("status = $%d", argCount+1), opts.Status)
+		argCount += 1
 	}
 
-	q = q.OrderExpr("created_at DESC")
-
-	limit := opts.Limit
-	if limit <= 0 {
-		limit = 100
+	total, err := q.Count(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: count ListTenants: %w", err)
 	}
 
-	q = q.Limit(limit)
+	if opts.Cursor != "" {
+		q = q.Where(fmt.Sprintf("(created_at < $%d OR (created_at = $%d AND id < $%d))", argCount+1, argCount+2, argCount+3), position.CreatedAt, position.CreatedAt, position.ID.String())
+	}
+
+	q = q.OrderExpr("created_at DESC, id DESC")
+
+	pageLimit := opts.Limit
+	if pageLimit <= 0 {
+		pageLimit = 100
+	}
+
+	if pageLimit > 0 {
+		q = q.Limit(pageLimit + 1)
+	}
 
 	if err := q.Scan(ctx); err != nil {
-		return nil, fmt.Errorf("postgres: list tenants failed: %w", err)
-	}
-
-	// Count total.
-	countQ := s.pg.NewSelect((*tenantModel)(nil))
-
-	cArgIdx := 0
-	if opts.Status != "" {
-		cArgIdx++
-		countQ = countQ.Where(fmt.Sprintf("status = $%d", cArgIdx), opts.Status)
-	}
-
-	total, err := countQ.Count(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("postgres: count tenants failed: %w", err)
+		return nil, fmt.Errorf("postgres: list ListTenants: %w", err)
 	}
 
 	items := make([]*admin.Tenant, 0, len(models))
-	for _, model := range models {
-		tenant := &admin.Tenant{
-			Entity: ctrlplane.Entity{
-				ID:        model.ID,
-				CreatedAt: model.CreatedAt,
-				UpdatedAt: model.UpdatedAt,
-			},
-			ExternalID:  model.ExternalID,
-			Slug:        model.Slug,
-			Name:        model.Name,
-			Status:      admin.TenantStatus(model.Status),
-			Plan:        model.Plan,
-			SuspendedAt: model.SuspendedAt,
-		}
-		unmarshalJSONB(model.Metadata, &tenant.Metadata)
-		unmarshalJSONB(model.Quota, &tenant.Quota)
-		items = append(items, tenant)
+	for i := range models {
+		items = append(items, tenantFromPageModel(&models[i]))
 	}
 
-	return &admin.TenantListResult{
-		Items: items,
-		Total: int(total),
-	}, nil
+	items, next := pagination.Trim(items, pageLimit, func(v *admin.Tenant) ctrlplane.Entity { return v.Entity })
+
+	return &admin.TenantListResult{Items: items, Total: int(total), NextCursor: next}, nil
 }
 
 func (s *Store) UpdateTenant(ctx context.Context, tenant *admin.Tenant) error {
@@ -334,4 +321,8 @@ func (s *Store) QueryAuditLog(ctx context.Context, opts admin.AuditQuery) (*admi
 		Items: items,
 		Total: len(items),
 	}, nil
+}
+
+func tenantFromPageModel(m *tenantModel) *admin.Tenant {
+	return &admin.Tenant{Entity: ctrlplane.Entity{ID: m.ID, CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt}, ExternalID: m.ExternalID, Slug: m.Slug, Name: m.Name, Status: admin.TenantStatus(m.Status)}
 }

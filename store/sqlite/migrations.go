@@ -633,6 +633,17 @@ CREATE TABLE IF NOT EXISTS cp_templates (
 			Name:    "add_bootstrap_services_to_cp_datacenters",
 			Version: "20240101000018",
 			Up: func(ctx context.Context, exec migrate.Executor) error {
+				// Fresh SQLite databases never created the prerequisite table.
+				if _, err := exec.Exec(ctx, `CREATE TABLE IF NOT EXISTS cp_datacenters (
+ id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, name TEXT NOT NULL, slug TEXT NOT NULL,
+ provider_name TEXT NOT NULL, region TEXT NOT NULL, zone TEXT NOT NULL DEFAULT '', status TEXT NOT NULL,
+ latitude REAL NOT NULL DEFAULT 0, longitude REAL NOT NULL DEFAULT 0, country TEXT NOT NULL DEFAULT '', city TEXT NOT NULL DEFAULT '',
+ max_instances INTEGER NOT NULL DEFAULT 0, max_cpu_millis INTEGER NOT NULL DEFAULT 0, max_memory_mb INTEGER NOT NULL DEFAULT 0,
+ labels BLOB, metadata BLOB, last_checked_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);`); err != nil {
+					return err
+				}
+
 				_, err := exec.Exec(ctx, `ALTER TABLE cp_datacenters ADD COLUMN bootstrap_services BLOB`)
 
 				return err
@@ -749,6 +760,56 @@ CREATE TABLE IF NOT EXISTS cp_bootstrap_workloads (
 				for _, stmt := range []string{
 					`ALTER TABLE cp_routes DROP COLUMN service_name`,
 					`ALTER TABLE cp_routes DROP COLUMN hostname`,
+				} {
+					if _, err := exec.Exec(ctx, stmt); err != nil {
+						return err
+					}
+				}
+
+				return nil
+			},
+		},
+		&migrate.Migration{
+			Name:    "reconcile_multi_service_columns",
+			Version: "20240101000022",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				for _, stmt := range []string{
+					`ALTER TABLE cp_instances ADD COLUMN kind TEXT`,
+					`ALTER TABLE cp_instances ADD COLUMN services BLOB`,
+					`ALTER TABLE cp_instances ADD COLUMN service_refs BLOB`,
+					`ALTER TABLE cp_instances ADD COLUMN labels BLOB`,
+					`ALTER TABLE cp_instances ADD COLUMN endpoints BLOB`,
+					`ALTER TABLE cp_instances ADD COLUMN source BLOB`,
+					`ALTER TABLE cp_deployments ADD COLUMN services BLOB`,
+					`ALTER TABLE cp_deployments ADD COLUMN service_progress BLOB`,
+					`ALTER TABLE cp_releases ADD COLUMN services BLOB`,
+					`ALTER TABLE cp_templates ADD COLUMN default_kind TEXT`,
+					`ALTER TABLE cp_templates ADD COLUMN services BLOB`,
+					`ALTER TABLE cp_templates ADD COLUMN variables BLOB`,
+					`ALTER TABLE cp_templates ADD COLUMN source BLOB`,
+				} {
+					if _, err := exec.Exec(ctx, stmt); err != nil {
+						return err
+					}
+				}
+
+				return nil
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				for _, stmt := range []string{
+					`ALTER TABLE cp_templates DROP COLUMN source`,
+					`ALTER TABLE cp_templates DROP COLUMN variables`,
+					`ALTER TABLE cp_templates DROP COLUMN services`,
+					`ALTER TABLE cp_templates DROP COLUMN default_kind`,
+					`ALTER TABLE cp_releases DROP COLUMN services`,
+					`ALTER TABLE cp_deployments DROP COLUMN service_progress`,
+					`ALTER TABLE cp_deployments DROP COLUMN services`,
+					`ALTER TABLE cp_instances DROP COLUMN source`,
+					`ALTER TABLE cp_instances DROP COLUMN endpoints`,
+					`ALTER TABLE cp_instances DROP COLUMN labels`,
+					`ALTER TABLE cp_instances DROP COLUMN service_refs`,
+					`ALTER TABLE cp_instances DROP COLUMN services`,
+					`ALTER TABLE cp_instances DROP COLUMN kind`,
 				} {
 					if _, err := exec.Exec(ctx, stmt); err != nil {
 						return err

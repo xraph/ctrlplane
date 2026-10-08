@@ -8,6 +8,7 @@ import (
 
 	ctrlplane "github.com/xraph/ctrlplane"
 	"github.com/xraph/ctrlplane/id"
+	"github.com/xraph/ctrlplane/internal/pagination"
 	"github.com/xraph/ctrlplane/template"
 )
 
@@ -82,27 +83,36 @@ func (s *Store) DeleteTemplate(ctx context.Context, tenantID string, templateID 
 func (s *Store) ListTemplates(ctx context.Context, tenantID string, opts template.ListOptions) (*template.ListResult, error) {
 	var models []templateModel
 
-	f := bson.M{"tenant_id": tenantID}
-
-	limit := opts.Limit
-	if limit <= 0 {
-		limit = 100
+	position, err := pagination.Decode(opts.Cursor)
+	if err != nil {
+		return nil, err
 	}
 
-	err := s.mdb.NewFind(&models).
-		Filter(f).
-		Sort(bson.D{{Key: "created_at", Value: -1}}).
-		Limit(int64(limit)).
-		Scan(ctx)
+	filter := bson.M{}
+	filter["tenant_id"] = tenantID
+
+	total, err := s.mdb.NewFind((*templateModel)(nil)).Filter(filter).Count(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("mongo: list templates failed: %w", err)
+		return nil, fmt.Errorf("mongo: count ListTemplates: %w", err)
 	}
 
-	total, err := s.mdb.NewFind((*templateModel)(nil)).
-		Filter(f).
-		Count(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("mongo: count templates failed: %w", err)
+	if opts.Cursor != "" {
+		filter["$or"] = bson.A{bson.M{"created_at": bson.M{"$lt": position.CreatedAt}}, bson.M{"created_at": position.CreatedAt, "_id": bson.M{"$lt": position.ID.String()}}}
+	}
+
+	q := s.mdb.NewFind(&models).Filter(filter).Sort(bson.D{{Key: "created_at", Value: -1}, {Key: "_id", Value: -1}})
+
+	pageLimit := opts.Limit
+	if pageLimit <= 0 {
+		pageLimit = 100
+	}
+
+	if pageLimit > 0 {
+		q = q.Limit(int64(pageLimit + 1))
+	}
+
+	if err := q.Scan(ctx); err != nil {
+		return nil, fmt.Errorf("mongo: list ListTemplates: %w", err)
 	}
 
 	items := make([]*template.Template, 0, len(models))
@@ -110,8 +120,7 @@ func (s *Store) ListTemplates(ctx context.Context, tenantID string, opts templat
 		items = append(items, fromTemplateModel(&models[i]))
 	}
 
-	return &template.ListResult{
-		Items: items,
-		Total: int(total),
-	}, nil
+	items, next := pagination.Trim(items, pageLimit, func(v *template.Template) ctrlplane.Entity { return v.Entity })
+
+	return &template.ListResult{Items: items, Total: int(total), NextCursor: next}, nil
 }

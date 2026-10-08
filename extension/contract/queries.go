@@ -43,7 +43,7 @@ func registerQueries(b *bindings) {
 			return nil, err
 		}
 
-		return page{Items: result.Items, Total: result.Total, Complete: len(result.Items) >= result.Total && len(result.Items) < in.Limit}, nil
+		return page{Items: result.Items, Total: result.Total, Complete: in.Cursor == "" && result.NextCursor == "" && len(result.Items) >= result.Total, NextCursor: result.NextCursor}, nil
 	})
 	query(b, "workloads.detail", func(ctx context.Context, cp *app.CtrlPlane, in entityInput) (any, error) {
 		target, err := parseID(in.ID, id.PrefixWorkload)

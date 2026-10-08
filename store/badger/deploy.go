@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
 	"strconv"
 
 	"github.com/dgraph-io/badger/v4"
@@ -13,6 +12,7 @@ import (
 	ctrlplane "github.com/xraph/ctrlplane"
 	"github.com/xraph/ctrlplane/deploy"
 	"github.com/xraph/ctrlplane/id"
+	"github.com/xraph/ctrlplane/internal/pagination"
 )
 
 func (s *Store) InsertDeployment(_ context.Context, d *deploy.Deployment) error {
@@ -93,23 +93,12 @@ func (s *Store) ListDeployments(_ context.Context, tenantID string, instanceID i
 		return nil, err
 	}
 
-	sort.Slice(items, func(i, j int) bool {
-		return items[i].CreatedAt.After(items[j].CreatedAt)
-	})
-
-	total := len(items)
-
-	limit := opts.Limit
-	if limit <= 0 || limit > total {
-		limit = total
+	items, next, total, err := pagination.Page(items, opts.Cursor, opts.Limit, func(v *deploy.Deployment) ctrlplane.Entity { return v.Entity })
+	if err != nil {
+		return nil, err
 	}
 
-	items = items[:limit]
-
-	return &deploy.DeployListResult{
-		Items: items,
-		Total: total,
-	}, nil
+	return &deploy.DeployListResult{Items: items, NextCursor: next, Total: total}, nil
 }
 
 func (s *Store) InsertRelease(_ context.Context, r *deploy.Release) error {
@@ -175,23 +164,12 @@ func (s *Store) ListReleases(_ context.Context, tenantID string, instanceID id.I
 		return nil, err
 	}
 
-	sort.Slice(items, func(i, j int) bool {
-		return items[i].Version > items[j].Version
-	})
-
-	total := len(items)
-
-	limit := opts.Limit
-	if limit <= 0 || limit > total {
-		limit = total
+	items, next, total, err := pagination.Page(items, opts.Cursor, opts.Limit, func(v *deploy.Release) ctrlplane.Entity { return v.Entity })
+	if err != nil {
+		return nil, err
 	}
 
-	items = items[:limit]
-
-	return &deploy.ReleaseListResult{
-		Items: items,
-		Total: total,
-	}, nil
+	return &deploy.ReleaseListResult{Items: items, NextCursor: next, Total: total}, nil
 }
 
 func (s *Store) NextReleaseVersion(_ context.Context, tenantID string, instanceID id.ID) (int, error) {

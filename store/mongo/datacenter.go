@@ -3,12 +3,14 @@ package mongo
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 
 	ctrlplane "github.com/xraph/ctrlplane"
 	"github.com/xraph/ctrlplane/datacenter"
 	"github.com/xraph/ctrlplane/id"
+	"github.com/xraph/ctrlplane/internal/pagination"
 )
 
 const colDatacenters = "cp_datacenters"
@@ -86,8 +88,14 @@ func (s *Store) GetDatacenterBySlug(ctx context.Context, tenantID string, slug s
 func (s *Store) ListDatacenters(ctx context.Context, tenantID string, opts datacenter.ListOptions) (*datacenter.ListResult, error) {
 	var models []datacenterModel
 
-	filter := bson.M{"tenant_id": bson.M{"$in": bson.A{tenantID, ""}}}
+	position, err := pagination.Decode(opts.Cursor)
+	if err != nil {
+		return nil, err
+	}
 
+	filter := bson.M{}
+
+	filter["tenant_id"] = bson.M{"$in": bson.A{tenantID, ""}}
 	if opts.Status != "" {
 		filter["status"] = opts.Status
 	}
@@ -100,27 +108,40 @@ func (s *Store) ListDatacenters(ctx context.Context, tenantID string, opts datac
 		filter["region"] = opts.Region
 	}
 
-	q := s.mdb.NewFind(&models).
-		Filter(filter).
-		Sort(bson.D{{Key: "created_at", Value: -1}})
+	if opts.Label != "" {
+		if key, val, ok := strings.Cut(opts.Label, "="); ok && key != "" {
+			filter["$expr"] = bson.M{"$eq": bson.A{bson.M{"$getField": bson.M{"field": bson.M{"$literal": key}, "input": "$labels"}}, val}}
+		}
+	}
 
-	if opts.Limit > 0 {
-		q = q.Limit(int64(opts.Limit))
+	total, err := s.mdb.NewFind((*datacenterModel)(nil)).Filter(filter).Count(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("mongo: count ListDatacenters: %w", err)
+	}
+
+	if opts.Cursor != "" {
+		filter["$or"] = bson.A{bson.M{"created_at": bson.M{"$lt": position.CreatedAt}}, bson.M{"created_at": position.CreatedAt, "_id": bson.M{"$lt": position.ID.String()}}}
+	}
+
+	q := s.mdb.NewFind(&models).Filter(filter).Sort(bson.D{{Key: "created_at", Value: -1}, {Key: "_id", Value: -1}})
+
+	pageLimit := opts.Limit
+	if pageLimit > 0 {
+		q = q.Limit(int64(pageLimit + 1))
 	}
 
 	if err := q.Scan(ctx); err != nil {
-		return nil, fmt.Errorf("mongo: list datacenters: %w", err)
+		return nil, fmt.Errorf("mongo: list ListDatacenters: %w", err)
 	}
 
 	items := make([]*datacenter.Datacenter, 0, len(models))
-	for _, m := range models {
-		items = append(items, fromDatacenterModel(&m))
+	for i := range models {
+		items = append(items, fromDatacenterModel(&models[i]))
 	}
 
-	return &datacenter.ListResult{
-		Items: items,
-		Total: len(items),
-	}, nil
+	items, next := pagination.Trim(items, pageLimit, func(v *datacenter.Datacenter) ctrlplane.Entity { return v.Entity })
+
+	return &datacenter.ListResult{Items: items, Total: int(total), NextCursor: next}, nil
 }
 
 // UpdateDatacenter persists changes to an existing datacenter.

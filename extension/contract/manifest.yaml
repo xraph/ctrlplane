@@ -71,7 +71,7 @@ intents:
   - { name: secrets.set, kind: command, version: 1, capability: write, requires: { warden: ctrlplane.auth }, invalidates: [secrets.list, tenants.quota, audit.list, events.list] }
   - { name: health.configure, kind: command, version: 1, capability: write, requires: { warden: ctrlplane.auth }, invalidates: [health.detail, health.checks, health.summary, workloads.health, audit.list, events.list] }
   - { name: domains.verify, kind: command, version: 1, capability: write, requires: { warden: ctrlplane.auth }, invalidates: [domains.list, tenants.quota, audit.list, events.list] }
-  - { name: domains.delete, kind: command, version: 1, capability: write, requires: { warden: ctrlplane.auth }, invalidates: [domains.list, tenants.quota, audit.list, events.list] }
+  - { name: domains.delete, kind: command, version: 1, capability: write, requires: { warden: ctrlplane.auth }, invalidates: [domains.list, tenants.quota, certificates.list, audit.list, events.list] }
   - { name: domains.provisionCert, kind: command, version: 1, capability: write, requires: { warden: ctrlplane.auth }, invalidates: [domains.list, tenants.quota, certificates.list, audit.list, events.list] }
   - { name: routes.delete, kind: command, version: 1, capability: write, requires: { warden: ctrlplane.auth }, invalidates: [routes.list, audit.list, events.list] }
   - { name: health.remove, kind: command, version: 1, capability: write, requires: { warden: ctrlplane.auth }, invalidates: [health.detail, health.checks, health.summary, workloads.health, audit.list, events.list] }

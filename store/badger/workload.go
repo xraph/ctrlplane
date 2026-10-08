@@ -4,13 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"slices"
-	"strings"
 
 	"github.com/dgraph-io/badger/v4"
 
 	ctrlplane "github.com/xraph/ctrlplane"
 	"github.com/xraph/ctrlplane/id"
+	"github.com/xraph/ctrlplane/internal/pagination"
 	"github.com/xraph/ctrlplane/workload"
 )
 
@@ -135,23 +134,14 @@ func (s *Store) ListWorkloads(ctx context.Context, tenant string, opts workload.
 		return nil, err
 	}
 
-	slices.SortFunc(items, func(a, b *workload.Workload) int {
-		if result := b.CreatedAt.Compare(a.CreatedAt); result != 0 {
-			return result
-		}
-
-		return strings.Compare(b.ID.String(), a.ID.String())
-	})
-
-	total := len(items)
-	if opts.Limit > 0 && opts.Limit < len(items) {
-		items = items[:opts.Limit]
+	items, next, total, err := pagination.Page(items, opts.Cursor, opts.Limit, func(v *workload.Workload) ctrlplane.Entity { return v.Entity })
+	if err != nil {
+		return nil, err
 	}
 
-	return &workload.ListResult{Items: items, Total: total}, nil
+	return &workload.ListResult{Items: items, NextCursor: next, Total: total}, nil
 }
 
-// UpdateWorkload persists an existing workload without changing its tenant.
 func (s *Store) UpdateWorkload(ctx context.Context, w *workload.Workload) error {
 	if err := ctx.Err(); err != nil {
 		return err

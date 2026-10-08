@@ -4,12 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sort"
 
 	"github.com/dgraph-io/badger/v4"
 
 	ctrlplane "github.com/xraph/ctrlplane"
 	"github.com/xraph/ctrlplane/id"
+	"github.com/xraph/ctrlplane/internal/pagination"
 	"github.com/xraph/ctrlplane/template"
 )
 
@@ -118,21 +118,10 @@ func (s *Store) ListTemplates(_ context.Context, tenantID string, opts template.
 		return nil, err
 	}
 
-	sort.Slice(items, func(i, j int) bool {
-		return items[i].CreatedAt.After(items[j].CreatedAt)
-	})
-
-	total := len(items)
-
-	limit := opts.Limit
-	if limit <= 0 || limit > total {
-		limit = total
+	items, next, total, err := pagination.Page(items, opts.Cursor, opts.Limit, func(v *template.Template) ctrlplane.Entity { return v.Entity })
+	if err != nil {
+		return nil, err
 	}
 
-	items = items[:limit]
-
-	return &template.ListResult{
-		Items: items,
-		Total: total,
-	}, nil
+	return &template.ListResult{Items: items, NextCursor: next, Total: total}, nil
 }

@@ -3,12 +3,12 @@ package memory
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strings"
 
 	ctrlplane "github.com/xraph/ctrlplane"
 	"github.com/xraph/ctrlplane/id"
 	"github.com/xraph/ctrlplane/instance"
+	"github.com/xraph/ctrlplane/internal/pagination"
 )
 
 func (s *Store) Insert(_ context.Context, inst *instance.Instance) error {
@@ -98,23 +98,12 @@ func (s *Store) List(_ context.Context, tenantID string, opts instance.ListOptio
 		items = append(items, &clone)
 	}
 
-	sort.Slice(items, func(i, j int) bool {
-		return items[i].CreatedAt.After(items[j].CreatedAt)
-	})
-
-	total := len(items)
-
-	limit := opts.Limit
-	if limit <= 0 || limit > total {
-		limit = total
+	items, next, total, err := pagination.Page(items, opts.Cursor, opts.Limit, func(v *instance.Instance) ctrlplane.Entity { return v.Entity })
+	if err != nil {
+		return nil, err
 	}
 
-	items = items[:limit]
-
-	return &instance.ListResult{
-		Items: items,
-		Total: total,
-	}, nil
+	return &instance.ListResult{Items: items, NextCursor: next, Total: total}, nil
 }
 
 func (s *Store) Update(_ context.Context, inst *instance.Instance) error {

@@ -3,10 +3,12 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	ctrlplane "github.com/xraph/ctrlplane"
 	"github.com/xraph/ctrlplane/datacenter"
 	"github.com/xraph/ctrlplane/id"
+	"github.com/xraph/ctrlplane/internal/pagination"
 )
 
 // InsertDatacenter persists a new datacenter.
@@ -74,51 +76,66 @@ func (s *Store) GetDatacenterBySlug(ctx context.Context, tenantID string, slug s
 func (s *Store) ListDatacenters(ctx context.Context, tenantID string, opts datacenter.ListOptions) (*datacenter.ListResult, error) {
 	var models []datacenterModel
 
-	// The OR must be parenthesized: chained Where clauses are AND-joined, and
-	// without the parens SQL precedence reads it as
-	// `tenant_id = $1 OR (tenant_id = '' AND <filters>)`, which leaks every
-	// tenant row past the status/provider/region filters.
-	q := s.pg.NewSelect(&models).Where("(tenant_id = $1 OR tenant_id = '')", tenantID)
+	position, err := pagination.Decode(opts.Cursor)
+	if err != nil {
+		return nil, err
+	}
 
-	// Each chained Where shares the query's positional placeholder space, so
-	// the conditional filters must continue numbering from $2 — not restart at
-	// $1, which bound 4 args to a single placeholder ("expected 1 arguments,
-	// got 4"). Mirrors the argIdx pattern in instance.go List.
-	argIdx := 1
+	q := s.pg.NewSelect(&models)
+	argCount := 0
+	q = q.Where(fmt.Sprintf("(tenant_id = $%d OR tenant_id = '')", argCount+1), tenantID)
+
+	argCount += 1
 	if opts.Status != "" {
-		argIdx++
-		q = q.Where(fmt.Sprintf("status = $%d", argIdx), opts.Status)
+		q = q.Where(fmt.Sprintf("status = $%d", argCount+1), opts.Status)
+		argCount += 1
 	}
 
 	if opts.Provider != "" {
-		argIdx++
-		q = q.Where(fmt.Sprintf("provider_name = $%d", argIdx), opts.Provider)
+		q = q.Where(fmt.Sprintf("provider_name = $%d", argCount+1), opts.Provider)
+		argCount += 1
 	}
 
 	if opts.Region != "" {
-		argIdx++
-		q = q.Where(fmt.Sprintf("region = $%d", argIdx), opts.Region)
+		q = q.Where(fmt.Sprintf("region = $%d", argCount+1), opts.Region)
+		argCount += 1
 	}
 
-	q = q.OrderExpr("created_at DESC")
+	if opts.Label != "" {
+		if key, val, ok := strings.Cut(opts.Label, "="); ok && key != "" {
+			q = q.Where(fmt.Sprintf("labels::jsonb ->> $%d = $%d", argCount+1, argCount+2), key, val)
+			argCount += 2
+		}
+	}
 
-	if opts.Limit > 0 {
-		q = q.Limit(opts.Limit)
+	total, err := q.Count(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: count ListDatacenters: %w", err)
+	}
+
+	if opts.Cursor != "" {
+		q = q.Where(fmt.Sprintf("(created_at < $%d OR (created_at = $%d AND id < $%d))", argCount+1, argCount+2, argCount+3), position.CreatedAt, position.CreatedAt, position.ID.String())
+	}
+
+	q = q.OrderExpr("created_at DESC, id DESC")
+
+	pageLimit := opts.Limit
+	if pageLimit > 0 {
+		q = q.Limit(pageLimit + 1)
 	}
 
 	if err := q.Scan(ctx); err != nil {
-		return nil, fmt.Errorf("postgres: list datacenters: %w", err)
+		return nil, fmt.Errorf("postgres: list ListDatacenters: %w", err)
 	}
 
 	items := make([]*datacenter.Datacenter, 0, len(models))
-	for _, m := range models {
-		items = append(items, fromDatacenterModel(&m))
+	for i := range models {
+		items = append(items, fromDatacenterModel(&models[i]))
 	}
 
-	return &datacenter.ListResult{
-		Items: items,
-		Total: len(items),
-	}, nil
+	items, next := pagination.Trim(items, pageLimit, func(v *datacenter.Datacenter) ctrlplane.Entity { return v.Entity })
+
+	return &datacenter.ListResult{Items: items, Total: int(total), NextCursor: next}, nil
 }
 
 // UpdateDatacenter persists changes to an existing datacenter.

@@ -8,6 +8,7 @@ import (
 
 	ctrlplane "github.com/xraph/ctrlplane"
 	"github.com/xraph/ctrlplane/admin"
+	"github.com/xraph/ctrlplane/internal/pagination"
 )
 
 func (s *Store) InsertTenant(ctx context.Context, tenant *admin.Tenant) error {
@@ -79,42 +80,48 @@ func (s *Store) GetTenantBySlug(ctx context.Context, slug string) (*admin.Tenant
 func (s *Store) ListTenants(ctx context.Context, opts admin.ListTenantsOptions) (*admin.TenantListResult, error) {
 	var models []tenantModel
 
-	f := bson.M{}
+	position, err := pagination.Decode(opts.Cursor)
+	if err != nil {
+		return nil, err
+	}
+
+	filter := bson.M{}
 	if opts.Status != "" {
-		f["status"] = opts.Status
+		filter["status"] = opts.Status
 	}
 
-	limit := opts.Limit
-	if limit <= 0 {
-		limit = 100
-	}
-
-	err := s.mdb.NewFind(&models).
-		Filter(f).
-		Sort(bson.D{{Key: "created_at", Value: -1}}).
-		Limit(int64(limit)).
-		Scan(ctx)
+	total, err := s.mdb.NewFind((*tenantModel)(nil)).Filter(filter).Count(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("mongo: list tenants failed: %w", err)
+		return nil, fmt.Errorf("mongo: count ListTenants: %w", err)
 	}
 
-	// Count total.
-	total, err := s.mdb.NewFind((*tenantModel)(nil)).
-		Filter(f).
-		Count(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("mongo: count tenants failed: %w", err)
+	if opts.Cursor != "" {
+		filter["$or"] = bson.A{bson.M{"created_at": bson.M{"$lt": position.CreatedAt}}, bson.M{"created_at": position.CreatedAt, "_id": bson.M{"$lt": position.ID.String()}}}
+	}
+
+	q := s.mdb.NewFind(&models).Filter(filter).Sort(bson.D{{Key: "created_at", Value: -1}, {Key: "_id", Value: -1}})
+
+	pageLimit := opts.Limit
+	if pageLimit <= 0 {
+		pageLimit = 100
+	}
+
+	if pageLimit > 0 {
+		q = q.Limit(int64(pageLimit + 1))
+	}
+
+	if err := q.Scan(ctx); err != nil {
+		return nil, fmt.Errorf("mongo: list ListTenants: %w", err)
 	}
 
 	items := make([]*admin.Tenant, 0, len(models))
 	for i := range models {
-		items = append(items, fromTenantModel(&models[i]))
+		items = append(items, tenantFromPageModel(&models[i]))
 	}
 
-	return &admin.TenantListResult{
-		Items: items,
-		Total: int(total),
-	}, nil
+	items, next := pagination.Trim(items, pageLimit, func(v *admin.Tenant) ctrlplane.Entity { return v.Entity })
+
+	return &admin.TenantListResult{Items: items, Total: int(total), NextCursor: next}, nil
 }
 
 func (s *Store) UpdateTenant(ctx context.Context, tenant *admin.Tenant) error {
@@ -239,3 +246,5 @@ func (s *Store) QueryAuditLog(ctx context.Context, opts admin.AuditQuery) (*admi
 		Total: len(items),
 	}, nil
 }
+
+func tenantFromPageModel(m *tenantModel) *admin.Tenant { return fromTenantModel(m) }
