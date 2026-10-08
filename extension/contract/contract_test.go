@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -23,7 +24,7 @@ import (
 	"github.com/xraph/ctrlplane/store/badger"
 )
 
-func harness(t *testing.T) (*app.CtrlPlane, http.Handler) {
+func harness(t *testing.T, opts ...app.Option) (*app.CtrlPlane, http.Handler) {
 	t.Helper()
 
 	s, err := badger.New(badger.Config{Path: t.TempDir(), SyncWrites: true})
@@ -37,7 +38,7 @@ func harness(t *testing.T) (*app.CtrlPlane, http.Handler) {
 		}
 	})
 
-	cp, err := app.New(app.WithStore(s), app.WithAuth(&auth.NoopProvider{}))
+	cp, err := app.New(append([]app.Option{app.WithStore(s), app.WithAuth(&auth.NoopProvider{})}, opts...)...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,5 +210,39 @@ func TestHTTPDenialsAndSecretRedaction(t *testing.T) {
 
 	if request(t, h, user, dash.KindQuery, "instances.detail", map[string]any{"id": id.New(id.PrefixTemplate).String()}).OK {
 		t.Fatal("wrong TypeID prefix accepted")
+	}
+}
+
+type refusalPolicy struct {
+	auth.NoopProvider
+
+	failure bool
+}
+
+func (p refusalPolicy) Authorize(context.Context, auth.AuthzRequest) (bool, error) {
+	if p.failure {
+		return false, errors.New("policy backend unavailable")
+	}
+
+	return false, nil
+}
+func TestConfiguredPolicyRefusalStopsReadsAndWrites(t *testing.T) {
+	for _, failure := range []bool{false, true} {
+		_, h := harness(t, app.WithAuth(&refusalPolicy{failure: failure}))
+		for _, test := range []struct {
+			kind   dash.Kind
+			intent string
+		}{{dash.KindQuery, "instances.list"}, {dash.KindCommand, "workloads.create"}} {
+			response := request(t, h, principal("alpha", true), test.kind, test.intent, map[string]any{"name": "Orders"})
+			if response.OK {
+				t.Fatalf("policy refusal accepted: %+v", response)
+			}
+		}
+	}
+}
+func TestRegisterRejectsMissingControlPlane(t *testing.T) {
+	err := Register(dispatcher.New(dispatcher.NoopMetricsEmitter{}), dash.NewRegistry(), dash.NewWardenRegistry(), nil)
+	if err == nil {
+		t.Fatal("accepted nil control plane")
 	}
 }

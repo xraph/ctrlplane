@@ -14,6 +14,9 @@ import (
 )
 
 func registerQueries(b *bindings) {
+	query(b, "deployments.recent", func(ctx context.Context, in instance.ListOptions) (any, error) {
+		return recentDeployments(ctx, b.cp, in)
+	})
 	cp := b.cp
 	query(b, "session.detail", func(ctx context.Context, _ struct{}) (any, error) {
 		claims := auth.ClaimsFrom(ctx)
@@ -45,7 +48,7 @@ func registerQueries(b *bindings) {
 			return nil, err
 		}
 
-		return page{Items: result.Items, Total: result.Total, Complete: len(result.Items) >= result.Total}, nil
+		return page{Items: result.Items, Total: result.Total, Complete: len(result.Items) >= result.Total && len(result.Items) < in.Limit}, nil
 	})
 	query(b, "workloads.detail", func(ctx context.Context, in entityInput) (any, error) {
 		target, err := parseID(in.ID, id.PrefixWorkload)
@@ -71,7 +74,32 @@ func registerQueries(b *bindings) {
 	query(b, "datacenters.list", func(ctx context.Context, in datacenter.ListOptions) (any, error) {
 		in.Limit = limit(in.Limit)
 
-		return cp.Datacenters.List(ctx, in)
+		result, err := cp.Datacenters.List(ctx, in)
+		if err != nil {
+			return nil, err
+		}
+
+		type row struct {
+			*datacenter.Datacenter
+
+			InstanceCount int `json:"instance_count"`
+		}
+
+		items := make([]row, 0, len(result.Items))
+		for _, dc := range result.Items {
+			count, err := cp.Store().CountInstancesByDatacenter(ctx, auth.ClaimsFrom(ctx).TenantID, dc.ID)
+			if err != nil {
+				return nil, err
+			}
+
+			items = append(items, row{dc, count})
+		}
+
+		return struct {
+			Items      []row  `json:"items"`
+			Total      int    `json:"total"`
+			NextCursor string `json:"next_cursor,omitempty"`
+		}{items, result.Total, result.NextCursor}, nil
 	})
 	query(b, "datacenters.detail", func(ctx context.Context, in entityInput) (any, error) {
 		target, err := parseID(in.ID, id.PrefixDatacenter)
@@ -87,12 +115,31 @@ func registerQueries(b *bindings) {
 			return nil, err
 		}
 
+		if _, err := cp.Workloads.Get(ctx, target); err != nil {
+			return nil, err
+		}
+
 		return cp.Workloads.ListInstances(ctx, target)
 	})
 	query(b, "workloads.health", func(ctx context.Context, in entityInput) (any, error) {
 		target, err := parseID(in.ID, id.PrefixWorkload)
 		if err != nil {
 			return nil, err
+		}
+
+		if _, err := cp.Workloads.Get(ctx, target); err != nil {
+			return nil, err
+		}
+
+		replicas, err := cp.Workloads.ListInstances(ctx, target)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, replica := range replicas {
+			if _, err := cp.Health.GetHealth(ctx, replica.ID); err != nil {
+				return nil, err
+			}
 		}
 
 		return cp.Workloads.GetHealth(ctx, target)
@@ -105,7 +152,7 @@ func registerQueries(b *bindings) {
 				return nil, err
 			}
 
-			return cp.Workloads.ListDeployments(ctx, target, opts)
+			return workloadCollection(ctx, cp, target, "deployments", opts)
 		}
 
 		target, err := ownedInstance(ctx, cp, in.InstanceID)
@@ -131,7 +178,7 @@ func registerQueries(b *bindings) {
 				return nil, err
 			}
 
-			return cp.Workloads.ListReleases(ctx, target, opts)
+			return workloadCollection(ctx, cp, target, "releases", opts)
 		}
 
 		target, err := ownedInstance(ctx, cp, in.InstanceID)
@@ -188,7 +235,7 @@ func registerQueries(b *bindings) {
 				return nil, err
 			}
 
-			return cp.Workloads.ListDomains(ctx, target)
+			return workloadCollection(ctx, cp, target, "domains", deploy.ListOptions{})
 		}
 
 		target, err := ownedInstance(ctx, cp, in.InstanceID)
@@ -205,7 +252,7 @@ func registerQueries(b *bindings) {
 				return nil, err
 			}
 
-			return cp.Workloads.ListRoutes(ctx, target)
+			return workloadCollection(ctx, cp, target, "routes", deploy.ListOptions{})
 		}
 
 		target, err := ownedInstance(ctx, cp, in.InstanceID)
@@ -227,8 +274,8 @@ func registerQueries(b *bindings) {
 
 		return cp.Network.ListCerts(ctx, target)
 	})
-	query(b, "system.stats", func(ctx context.Context, in struct{}) (any, error) { return cp.Admin.SystemStats(ctx) })
-	query(b, "providers.list", func(ctx context.Context, in struct{}) (any, error) { return cp.Admin.ListProviders(ctx) })
+	query(b, "system.stats", func(ctx context.Context, in struct{}) (any, error) { return systemStats(ctx, cp) })
+	query(b, "providers.list", func(ctx context.Context, in struct{}) (any, error) { return providerStatuses(ctx, cp) })
 	query(b, "workers.list", func(ctx context.Context, in struct{}) (any, error) {
 		if cp.Scheduler() == nil {
 			return nil, unavailable("Scheduler is not configured.")

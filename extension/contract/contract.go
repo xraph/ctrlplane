@@ -144,7 +144,11 @@ func contractError(err error) error {
 	code := dash.CodeInternal
 
 	switch {
-	case errors.Is(err, ctrlplane.ErrNotFound):
+	case errors.Is(err, ctrlplane.ErrInvalidConfig), errors.Is(err, ctrlplane.ErrInvalidSource), errors.Is(err, ctrlplane.ErrUnsupportedSource):
+		code = dash.CodeBadRequest
+	case errors.Is(err, ctrlplane.ErrProviderUnavail), errors.Is(err, ctrlplane.ErrNotImplemented):
+		code = dash.CodeUnavailable
+	case errors.Is(err, ctrlplane.ErrNotFound), errors.Is(err, ctrlplane.ErrProviderNotFound):
 		code = dash.CodeNotFound
 	case errors.Is(err, ctrlplane.ErrForbidden), errors.Is(err, ctrlplane.ErrUnauthorized), errors.Is(err, auth.ErrUnauthorized):
 		code = dash.CodePermissionDenied

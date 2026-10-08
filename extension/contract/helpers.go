@@ -8,6 +8,7 @@ import (
 
 	dash "github.com/xraph/forge/extensions/dashboard/contract"
 
+	"github.com/xraph/ctrlplane/admin"
 	"github.com/xraph/ctrlplane/app"
 	"github.com/xraph/ctrlplane/bootstrap"
 	"github.com/xraph/ctrlplane/datacenter"
@@ -211,4 +212,51 @@ func purgeProvider(ctx context.Context, cp *app.CtrlPlane, name string) (any, er
 	}
 
 	return summary, nil
+}
+
+func systemStats(ctx context.Context, cp *app.CtrlPlane) (any, error) {
+	stats, err := cp.Admin.SystemStats(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// These three counters are populated by the service. The remaining fields
+	// on SystemStats are currently zero-value placeholders, not measurements.
+	return struct {
+		TotalTenants   int `json:"total_tenants"`
+		ActiveTenants  int `json:"active_tenants"`
+		TotalProviders int `json:"total_providers"`
+	}{stats.TotalTenants, stats.ActiveTenants, stats.TotalProviders}, nil
+}
+
+type providerStatus struct {
+	Name         string                  `json:"name"`
+	Region       string                  `json:"region"`
+	Healthy      *bool                   `json:"healthy"`
+	Location     *admin.ProviderLocation `json:"location"`
+	Capabilities []string                `json:"capabilities"`
+	CheckedAt    *time.Time              `json:"checked_at"`
+	Message      string                  `json:"message"`
+}
+
+func providerStatuses(ctx context.Context, cp *app.CtrlPlane) (any, error) {
+	statuses, err := cp.Admin.ListProviders(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]providerStatus, 0, len(statuses))
+	for _, row := range statuses {
+		item := providerStatus{Name: row.Name, Region: row.Region, Location: row.Location, Capabilities: row.Capabilities, Message: "No health observation yet."}
+		if cp.ProviderHealth != nil {
+			if cached, ok := cp.ProviderHealth.Get(row.Name); ok {
+				item.Healthy = &cached.Healthy
+				item.CheckedAt = &cached.CheckedAt
+				item.Message = cached.Message
+			}
+		}
+
+		out = append(out, item)
+	}
+
+	return out, nil
 }
