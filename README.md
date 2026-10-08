@@ -36,7 +36,7 @@ http.ListenAndServe(":8080", api.New(cp).Handler())
 go get github.com/xraph/ctrlplane@latest
 ```
 
-Requires Go 1.22 or later.
+Requires Go 1.26 or later.
 
 ## Quick start
 
@@ -127,6 +127,14 @@ curl -X POST http://localhost:8080/v1/instances \
     "ports": [{"container_port": 80, "protocol": "tcp"}]
   }'
 ```
+
+## React dashboard
+
+Register the Ctrlplane extension before the Forge dashboard extension, then add `@forge-go/dashboard-plugin-ctrlplane` to your React shell. You can find the plugin and persistent local demo in `forge-dashboard/packages/plugin-ctrlplane` in the sibling dashboard checkout. The app mounts at `/@ctrlplane` and exposes workloads, replicas, deployments, templates, health, networking and administration through typed contract intents.
+
+Your dashboard authentication must supply a trusted subject, `ctrlplane:read` or `ctrlplane:write`, and a nonempty `tenant_id` claim. Global administration requires `system:admin`. Every intent also checks the configured Ctrlplane authorization provider. The old templ contributor and its injected administrator claims have been removed.
+
+See [the migration record](MIGRATION.md) for the legacy inventory, behavior changes, verification evidence and remaining infrastructure limits. The local demo persists domain records in Badger and simulates provider operations; it does not start containers or provision cloud resources.
 
 ## Package structure
 
