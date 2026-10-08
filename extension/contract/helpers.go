@@ -56,7 +56,7 @@ func recentEvents(cp *app.CtrlPlane, in eventInput) page {
 	filtered := make([]*event.Event, 0)
 
 	for _, e := range all {
-		if in.Type == "" || strings.HasPrefix(string(e.Type), in.Type+".") {
+		if in.Type == "" || strings.HasPrefix(string(e.Type), in.Type) {
 			filtered = append(filtered, e)
 		}
 	}
@@ -75,7 +75,7 @@ func configDetail(cp *app.CtrlPlane) any {
 		TelemetryInterval  string `json:"telemetry_interval"`
 		MaxInstances       int    `json:"max_instances_per_tenant"`
 		AuditEnabled       bool   `json:"audit_enabled"`
-		DatabaseConfigured bool   `json:"database_configured"`
+		DatabaseConfigured bool   `json:"database_url_configured"`
 	}{cfg.DefaultProvider, cfg.HealthInterval.String(), cfg.TelemetryFlushInterval.String(), cfg.MaxInstancesPerTenant, cfg.AuditEnabled, cfg.DatabaseURL != ""}
 }
 
