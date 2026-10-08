@@ -5,19 +5,29 @@ import (
 	"net/url"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/xraph/grove"
 	"github.com/xraph/grove/drivers/mongodriver"
 	"github.com/xraph/grove/drivers/pgdriver"
+	"github.com/xraph/grove/drivers/pgdriver/pgmigrate"
+	"github.com/xraph/grove/migrate"
 
 	"github.com/xraph/ctrlplane/id"
 	"github.com/xraph/ctrlplane/store"
 	"github.com/xraph/ctrlplane/store/mongo"
 	"github.com/xraph/ctrlplane/store/postgres"
+	"github.com/xraph/ctrlplane/workload"
 )
 
 // liveStore uses a fresh database per test. Configured connection failures fail the test.
 func liveStore(t *testing.T, backend string) store.Store {
+	t.Helper()
+
+	return liveStoreAtVersion(t, backend, "")
+}
+
+func liveStoreAtVersion(t *testing.T, backend, version string) store.Store {
 	t.Helper()
 
 	ctx := context.Background()
@@ -75,12 +85,27 @@ func liveStore(t *testing.T, backend string) store.Store {
 			}
 		})
 
-		if err := persistent.Migrate(ctx); err != nil {
-			t.Fatal(err)
-		}
-		// Running migrations again must retain the data and schema.
-		if err := persistent.Migrate(ctx); err != nil {
-			t.Fatal(err)
+		if version != "" {
+			group := migrate.NewGroup(postgres.Migrations.Name())
+			for _, migration := range postgres.Migrations.Migrations() {
+				if migration.Version <= version {
+					if err := group.Register(migration); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+
+			if _, err := migrate.NewOrchestrator(pgmigrate.New(driver), group).Migrate(ctx); err != nil {
+				t.Fatal(err)
+			}
+		} else {
+			if err := persistent.Migrate(ctx); err != nil {
+				t.Fatal(err)
+			}
+			// Running migrations again must retain the data and schema.
+			if err := persistent.Migrate(ctx); err != nil {
+				t.Fatal(err)
+			}
 		}
 
 		return persistent
@@ -122,4 +147,66 @@ func liveStore(t *testing.T, backend string) store.Store {
 	}
 
 	return persistent
+}
+
+func TestPostgresPlacementMigrationPreservesExistingRows(t *testing.T) {
+	s := liveStoreAtVersion(t, "postgres", "20240101000027").(*postgres.Store)
+	ctx := context.Background()
+	driver := pgdriver.Unwrap(s.DB())
+	target := id.New(id.PrefixInstance)
+
+	stamp := time.Date(2026, 10, 8, 0, 0, 0, 123000000, time.UTC)
+	if _, err := driver.Exec(ctx, `INSERT INTO cp_instances (id,tenant_id,slug,name,state,provider_name,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, target.String(), "alpha", "legacy", "Legacy", "stopped", "demo", stamp, stamp); err != nil {
+		t.Fatal(err)
+	}
+
+	w := workload.NewWorkload()
+	w.TenantID = "alpha"
+
+	w.Slug = "legacy-workload"
+	if err := s.InsertWorkload(ctx, w); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	old, err := s.GetByID(ctx, "alpha", target)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if old.Name != "Legacy" || !old.DatacenterID.IsNil() || !old.CurrentRelease.IsNil() || old.SuspendedAt != nil {
+		t.Fatalf("legacy row changed: %#v", old)
+	}
+
+	old.DatacenterID = id.New(id.PrefixDatacenter)
+	old.CurrentRelease = id.New(id.PrefixRelease)
+
+	old.SuspendedAt = &stamp
+	if err := s.Update(ctx, old); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.GetByID(ctx, "alpha", target)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	old.UpdatedAt = got.UpdatedAt
+	assertStoredValue(t, got, old)
+
+	persisted, err := s.GetWorkloadByID(ctx, "alpha", w.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	w.CreatedAt = persisted.CreatedAt
+	w.UpdatedAt = persisted.UpdatedAt
+	assertStoredValue(t, persisted, w)
 }

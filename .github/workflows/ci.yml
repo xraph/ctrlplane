@@ -31,6 +31,47 @@ jobs:
       # Flip back to true once upstream ships a patch.
       govulncheck-fail-on-findings: false
 
+  persistence:
+    name: Persistent store contracts
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: ctrlplane_test
+          POSTGRES_PASSWORD: ctrlplane_local_test
+          POSTGRES_DB: ctrlplane_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ctrlplane_test -d ctrlplane_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+      mongo:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ping:1})'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      CTRLPLANE_TEST_POSTGRES_DSN: postgres://ctrlplane_test:ctrlplane_local_test@127.0.0.1:5432/ctrlplane_test?sslmode=disable
+      CTRLPLANE_TEST_MONGO_URI: mongodb://127.0.0.1:27017
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.26"
+          cache: true
+          cache-dependency-path: go.sum
+      - name: Verify persistent stores and HTTP contracts
+        run: go test -race -count=1 -v ./extension/contract ./store/sqlite ./store/postgres ./store/mongo
+
   # ─── Format Check ──────────────────────────────────────────────────
   format:
     name: Format
@@ -84,7 +125,7 @@ jobs:
 
       - name: Get pnpm store directory
         shell: bash
-        run: echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+        run: echo "STORE_PATH=$(pnpm store path --silent)" >> "$GITHUB_ENV"
 
       - name: Cache pnpm
         uses: actions/cache@v5

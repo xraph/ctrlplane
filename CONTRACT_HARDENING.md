@@ -23,25 +23,34 @@ Health without observations stays unknown. Uncomputed uptime and failure streaks
 
 Implemented list stores use descending creation time and TypeID as a stable continuation key, with a lookahead row and totals counted before the cursor. Continuation does not depend on the previous anchor still existing. Workload lists expose next_cursor, and deployment/release pages merge replica results in the same global order. Recent deployments, audit and events remain explicitly bounded windows.
 
-SQLite now uses its registered migration executor, creates the missing datacenter prerequisite and migrates the multi-service/source columns used by its current models. Partial-update tests preserve unrelated template and route fields through actual storage.
+SQLite uses its migration executor, creates the missing datacenter prerequisite and migrates the multi-service/source columns used by its current models. Workload CRUD persists services, labels, placement, template/release references, desired replicas and pause/resume state. SQLite and PostgreSQL migrations add instance datacenter, current release and suspension fields; MongoDB retains the same fields in its documents. Datacenter filtering works on all five stores. Partial-update tests preserve unrelated template and route fields through actual storage.
+
+Instance updates and workload updates retain tenant ownership at the storage boundary. Workload creation enforces tenant-local slug uniqueness, including through database indexes on SQLite, PostgreSQL and MongoDB. PostgreSQL lifecycle timestamps return in UTC.
 
 ## Verification on 2026-10-08
 
 | Check | Evidence |
 | --- | --- |
 | Go root | Full build, tests and lint passed; lint reported zero issues. |
-| Race checks | Contract, health, memory, Badger, SQLite and workload packages passed; their continuation tests exercise the shared pagination helper. |
-| Continuation | Equal timestamps, two-row pages, totals, no duplicate IDs and malformed cursors checked against memory, Badger and freshly migrated SQLite. Instances, templates, deployments, releases, tenants and datacenters are covered on all three; workloads are covered on memory and Badger. |
-| HTTP persistence | Template name-only and route weight-only updates preserve unrelated source, service and proxy fields on memory, Badger and SQLite. Foreign template updates are refused. Template continuation survives anchor deletion and insertion of a newer row while excluding another tenant. |
-| Aggregate continuation | Workload deployment pages continue across two replicas on memory and Badger without duplicates or skipped records. |
+| Race checks | Contract, health, memory, Badger, SQLite, PostgreSQL, MongoDB and workload packages passed across the hardening passes; continuation tests exercise the shared pagination helper. |
+| Continuation | Equal timestamps, two-row pages, totals, no duplicate IDs and malformed cursors checked against memory, Badger, SQLite, live PostgreSQL 17 and live MongoDB 7. Instances, templates, deployments, releases, tenants, datacenters and workloads are covered. Workload continuation also checks fractional seconds and a whole-second boundary. |
+| HTTP persistence | Template name-only and route weight-only updates preserve unrelated source, service and proxy fields on all five stores. Foreign template updates are refused. Template continuation survives anchor deletion and insertion of a newer row while excluding another tenant. |
+| Aggregate continuation | Workload deployment pages continue across two replicas on all five stores without duplicates or skipped records. |
+| Placement and ownership | All five stores retain instance placement, current release, suspension and workload specs. Combined datacenter/provider/state/label filters exclude another tenant. Foreign reads, updates and deletes are refused. Optional IDs and lifecycle timestamps clear correctly. Workload duplicate creates return AlreadyExists. |
+| Database upgrades | SQLite upgrades from version 22 while preserving an existing instance, then retains a paused workload and resumed replicas through two close/reopen cycles. PostgreSQL upgrades from version 27 while retaining existing instance/workload rows and saving the new placement and lifecycle fields. Repeated migration is checked. |
+| CI | A persistence job provisions PostgreSQL 17 and MongoDB 7 and runs the HTTP/store suite with the race detector. Its exact test command passed locally against isolated containers; workflow YAML and actionlint passed. The GitHub-hosted job has not run in this local-only change. |
 | Transport | Binding validation, readiness, safe failures, specific invalidation dependencies, configured policy errors and providers without probes are covered. Existing tenant and parent-ownership denial tests still pass. |
 | React compatibility | Plugin typecheck, lint and all nine tests passed. No React source changed in this pass. |
 | Browser | Updated Go demo and React shell rendered workload detail and health. Desktop and 390-pixel health layouts were inspected; unknown values render as absent, the page has no narrow overflow and wide tables scroll locally. Browser console errors were empty. |
 
 The demo build passed with its local Forge replacement. Root checks use the pinned Forge version. Browser observations use a simulated provider and local development identity, and do not qualify a published consumer or production deployment. Write and pagination behavior in this pass was verified through HTTP tests; it was not repeated through browser controls.
 
-## Remaining limits
+## Reproducing the database checks
 
-PostgreSQL and MongoDB implementations compile and pass their existing package tests, but live database continuation was not exercised. SQLite workload persistence remains unsupported and returns safe UNAVAILABLE. SQL and MongoDB instance models do not persist DatacenterID; an instance datacenter filter returns UNAVAILABLE rather than ignoring the filter. This pass does not establish complete persistence parity for those models.
+Set CTRLPLANE_TEST_POSTGRES_DSN to a PostgreSQL URL whose test role can create databases, and CTRLPLANE_TEST_MONGO_URI to a test MongoDB server. Run `go test -race -count=1 -v ./extension/contract ./store/sqlite ./store/postgres ./store/mongo`. Each live test creates and removes its own database. An absent variable skips only that backend; a configured connection or migration failure fails the test. SQLite always uses a temporary on-disk database. The persistence CI job supplies both variables so those cases run there.
+
+The storage gaps recorded in the initial report are resolved. The local test containers were isolated from other development databases and removed after verification. New unique workload indexes reject existing duplicate tenant/slug pairs rather than deleting or choosing a record silently; resolve any such data conflict before rerunning migration.
+
+## Environment qualification
 
 External cloud operations, DNS verification, ACME issuance, live telemetry, remote exec and production credentials remain unverified. The earlier shared-workspace failures and browser coverage limits in MIGRATION.md still apply. We notified the Nexus and dashboard coordination chats of this approach; each contributor retains its own authorization and domain semantics.
