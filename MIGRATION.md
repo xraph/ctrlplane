@@ -18,7 +18,7 @@ The demo provides an explicit development principal and a real authorization pro
 
 ## Contract and data design
 
-Use typed Go inputs with domain DTOs and their snake_case JSON tags. Bind queries and commands separately in an embedded, validated manifest. Every command declares invalidations for all affected queries. Keep command errors inside confirmation dialogs, disable pending submission and reset errors on open. List inputs clamp limits. Existing cursor results retain next_cursor. Workload lists have no cursor in the service and must disclose a bounded result when total exceeds returned rows. Audit and recent events are bounded windows; never invent pagination or imply full history. Child collections have bounded parent selection and explicit refresh.
+Use typed Go inputs and explicit dashboard response DTOs with snake_case JSON tags. Bind queries and commands separately in an embedded, validated manifest. Every command declares and returns invalidations for its affected queries. Keep command errors inside confirmation dialogs, disable pending submission and reset errors on open. List inputs clamp limits. Implemented stores use stable creation-time/TypeID continuation, including workload lists and deployment/release history across replicas. Audit and recent events are bounded windows; never invent pagination or imply full history. Child collections have bounded parent selection and explicit refresh.
 
 Do not expose DatabaseURL, secret values, vault internals or provider credentials. Config shows intervals, default provider, quota and configured flags only. Preserve multi-service arrays and typed deployment sources when editing templates. Missing health remains unknown. Propagate failed component reads. Mark bounded aggregations incomplete. Network verification and certificate issuance currently record domain state without proving external DNS/ACME integration; label those operations by the service behavior and do not imply live verification.
 
@@ -99,7 +99,7 @@ Every legacy renderer below has a replacement or an explicit behavior change. Mi
 ## Service actions behind the legacy surfaces
 
 - Instances: list state/label/provider/cursor/limit; info, deploys, releases, health checks, domains/routes, secret metadata, telemetry; start, stop, restart, suspend with reason, unsuspend, delete. Parent workload links come from ctrlplane.workload labels.
-- Workloads: state/provider/region/limit, replica count and image; replicas, deployments, releases, health, domains/routes; restart, pause, resume, scale to a nonnegative replica count, delete. Preserve failed teardown errors rather than redirecting them away.
+- Workloads: state/provider/region/cursor/limit, replica count and image; replicas, deployments, releases, health, domains/routes; restart, pause, resume, scale to a nonnegative replica count, delete. Preserve failed teardown errors rather than redirecting them away.
 - Deployments: workload or instance selection, strategy/state/initiator/start time, release detail, errors and timing; create with image, strategy, commit SHA and notes; cancel; rollback to a saved release. Replace the legacy per-replica bounded unsorted rollup with the workload service's aggregate and disclose limits.
 - Health: workload worst-of-replicas summary and per-instance health; healthy/degraded/unhealthy/unknown counts. Recent summary covers a bounded sample, not the whole installation.
 - Network: choose instance, domains/routes tabs; hostname/TLS/token/verified and path/port/protocol/weight; add/remove domain, record verification, provision certificate, add/remove route. New proxy fields from fetched main must survive create/update, including service_name, hostname and TLS verification defaults.
@@ -115,6 +115,8 @@ Every legacy renderer below has a replacement or an explicit behavior change. Mi
 - Settings: read-only default provider, health interval, telemetry interval, per-tenant quota, audit setting, database configured flag and provider list. A configured URL is not proof of a connected database.
 
 ## Verification status
+
+The subsequent [contract hardening report](CONTRACT_HARDENING.md) records response projections, domain-specific invalidations, retryable readiness and authorization-provider failures, nullable unknown measurements, persistent partial-update tests and real continuation. Full Go build/tests/lint, focused race checks and React package checks passed. Memory, Badger and SQLite have live storage test evidence; PostgreSQL/MongoDB live continuation and SQLite workload persistence remain gaps. Desktop and narrow health rendering were reviewed against the updated demo.
 
 On 2026-10-08 the Ctrlplane root passed `go build ./...`, `go test ./...` and `golangci-lint run ./...` (zero issues). Contract tests use the real HTTP transport and Badger store. They cover anonymous and missing-scope denial, malformed tenant claims, configured policy refusal and failure, two-tenant isolation, foreign parent reads/writes, TypeID prefixes, secret redaction, route persistence and query invalidation. Badger workload tests reopen the database and exercise filtering, duplicate handling and scoped updates/deletes.
 
