@@ -88,3 +88,22 @@ func TestGuardAuthorityIdentity(t *testing.T) {
 		t.Fatal("same persistence object rejected")
 	}
 }
+
+func TestSameAuthorityRequiresOnePointer(t *testing.T) {
+	configured := &struct{ value int }{value: 1}
+	for _, other := range []any{nil, (*struct{ value int })(nil), &struct{ value int }{value: 1}, struct{ value int }{value: 1}, []int{1}, map[string]int{"value": 1}} {
+		if SameAuthority(configured, other) || SameAuthority(other, configured) {
+			t.Fatalf("different identity accepted: %T", other)
+		}
+	}
+
+	for _, value := range []any{&struct{}{}, nil, (*struct{ value int })(nil), struct{ value int }{value: 1}, []int{1}, map[string]int{"value": 1}} {
+		if SameAuthority(value, value) {
+			t.Fatalf("indeterminate identity accepted: %T", value)
+		}
+	}
+
+	if !SameAuthority(configured, configured) {
+		t.Fatal("same actual pointer refused")
+	}
+}

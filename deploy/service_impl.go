@@ -660,3 +660,8 @@ func (s *service) buildReleaseSnapshot(ctx context.Context, tenantID string, ins
 func (s *service) UsesManagedAuthority(candidate any) bool {
 	return s != nil && s.guard.UsesAuthority(candidate)
 }
+
+// UsesAuthorizationProvider confirms the policy object used for actual mutations.
+func (s *service) UsesAuthorizationProvider(candidate auth.Provider) bool {
+	return s != nil && managed.SameAuthority(s.auth, candidate)
+}

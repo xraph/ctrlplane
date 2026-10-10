@@ -44,12 +44,17 @@ func NewService(store Store, providers *provider.Registry, events event.Bus, aut
 
 // Create provisions a new instance on the resolved provider.
 func (s *service) Create(ctx context.Context, req CreateRequest) (*Instance, error) {
-	entity := ctrlplane.NewEntity(id.PrefixInstance)
-
-	claims, err := auth.RequireAuthorized(ctx, s.auth, "instances.create", entity.ID.String(), "")
+	claims, err := auth.RequireClaims(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("create instance: %w", err)
 	}
+
+	claims, err = auth.RequireAuthorized(ctx, s.auth, "instances.create", claims.TenantID, claims.TenantID)
+	if err != nil {
+		return nil, fmt.Errorf("create instance: %w", err)
+	}
+
+	entity := ctrlplane.NewEntity(id.PrefixInstance)
 
 	if err := s.guard.CheckInstance(ctx, managed.Key{TenantID: claims.TenantID, InstanceID: entity.ID}, "instances.create"); err != nil {
 		return nil, err
@@ -782,4 +787,9 @@ func (s *service) Resources(ctx context.Context, instanceID id.ID) (*provider.Re
 // UsesManagedAuthority confirms the persistence object used by the protection guard.
 func (s *service) UsesManagedAuthority(candidate any) bool {
 	return s != nil && s.guard.UsesAuthority(candidate)
+}
+
+// UsesAuthorizationProvider confirms the policy object used for actual mutations.
+func (s *service) UsesAuthorizationProvider(candidate auth.Provider) bool {
+	return s != nil && managed.SameAuthority(s.auth, candidate)
 }

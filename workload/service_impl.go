@@ -132,6 +132,10 @@ func (s *service) Create(ctx context.Context, req CreateRequest) (*Workload, err
 	w.ReplicaCount = replicas
 	w.State = StateProvisioning
 
+	if err := s.checkReplicaCandidates(ctx, w, 0, replicas); err != nil {
+		return nil, err
+	}
+
 	if err := s.store.InsertWorkload(ctx, w); err != nil {
 		return nil, fmt.Errorf("create workload: insert: %w", err)
 	}
@@ -811,22 +815,14 @@ func (s *service) spawnReplica(ctx context.Context, w *Workload, replicaIndex in
 	labels["ctrlplane.replica_index"] = strconv.Itoa(replicaIndex)
 
 	name := fmt.Sprintf("%s-%d", w.Slug, replicaIndex)
-	slug := slugify(name)
 
-	if existing, err := s.instances.GetBySlug(ctx, slug); err == nil && existing != nil {
-		ownerID := existing.Labels["ctrlplane.workload"]
-		// Empty ownerID covers legacy rows from before labels were
-		// persisted — those are ours by construction (no other
-		// workload could have produced this slug under our tenant)
-		// so we adopt them.
-		if ownerID == "" || ownerID == w.ID.String() {
-			return existing, nil
-		}
+	existing, found, err := s.replicaCandidate(ctx, w, replicaIndex)
+	if err != nil {
+		return nil, err
+	}
 
-		return nil, fmt.Errorf("spawn replica %d: slug %q already owned by workload %s",
-			replicaIndex, slug, ownerID)
-	} else if err != nil && !errors.Is(err, ctrlplane.ErrNotFound) {
-		return nil, fmt.Errorf("spawn replica %d: dedupe lookup: %w", replicaIndex, err)
+	if found {
+		return existing, nil
 	}
 
 	inst, err := s.instances.Create(ctx, instance.CreateRequest{
@@ -871,6 +867,41 @@ func (s *service) spawnReplica(ctx context.Context, w *Workload, replicaIndex in
 	}
 
 	return inst, nil
+}
+
+// replicaCandidate validates the exact slug match before reuse, including unlabeled rows.
+func (s *service) replicaCandidate(ctx context.Context, w *Workload, replicaIndex int) (*instance.Instance, bool, error) {
+	slug := slugify(fmt.Sprintf("%s-%d", w.Slug, replicaIndex))
+	if existing, err := s.instances.GetBySlug(ctx, slug); err == nil && existing != nil {
+		if existing.TenantID != w.TenantID {
+			return nil, false, ctrlplane.ErrForbidden
+		}
+
+		if err := s.guard.CheckInstance(ctx, managed.Key{TenantID: w.TenantID, InstanceID: existing.ID}, "instances.create"); err != nil {
+			return nil, false, err
+		}
+
+		ownerID := existing.Labels["ctrlplane.workload"]
+		if ownerID == "" || ownerID == w.ID.String() {
+			return existing, true, nil
+		}
+
+		return nil, false, fmt.Errorf("spawn replica %d: slug %q already owned by workload %s", replicaIndex, slug, ownerID)
+	} else if err != nil && !errors.Is(err, ctrlplane.ErrNotFound) {
+		return nil, false, fmt.Errorf("spawn replica %d: dedupe lookup: %w", replicaIndex, err)
+	}
+
+	return nil, false, nil
+}
+
+func (s *service) checkReplicaCandidates(ctx context.Context, w *Workload, start, count int) error {
+	for offset := range count {
+		if _, _, err := s.replicaCandidate(ctx, w, start+offset); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // nextReplicaIndex returns one past the highest existing ReplicaIndex
@@ -981,7 +1012,22 @@ func (s *service) checkMutation(ctx context.Context, workloadID id.ID, action st
 	}
 
 	if action == "workloads.scale" && len(targetCount) == 1 && targetCount[0] > len(replicas) {
+		if s.deploys != nil {
+			if err := s.checkDeployAuthority(action); err != nil {
+				return err
+			}
+		}
+
 		if _, err := auth.RequireAuthorized(ctx, s.auth, "instances.create", claims.TenantID, claims.TenantID); err != nil {
+			return err
+		}
+
+		w, err := s.Get(ctx, workloadID)
+		if err != nil {
+			return err
+		}
+
+		if err := s.checkReplicaCandidates(ctx, w, nextReplicaIndex(replicas), targetCount[0]-len(replicas)); err != nil {
 			return err
 		}
 	}
@@ -1016,11 +1062,31 @@ func (s *service) checkAuthority(action string) error {
 		return &managed.RefusalError{Action: action, Operation: "replacement", Cause: managed.ErrAuthority}
 	}
 
-	if action == "workloads.deploy" {
-		releaseReader, ok := s.deploys.(interface{ UsesManagedAuthority(candidate any) bool })
-		if !ok || !releaseReader.UsesManagedAuthority(s.store) {
-			return &managed.RefusalError{Action: action, Operation: "replacement", Cause: managed.ErrAuthority}
-		}
+	policyReader, ok := s.instances.(interface {
+		UsesAuthorizationProvider(candidate auth.Provider) bool
+	})
+	if !ok || !policyReader.UsesAuthorizationProvider(s.auth) {
+		return &managed.RefusalError{Action: action, Operation: "replacement", Cause: managed.ErrAuthority}
+	}
+
+	if action == "workloads.deploy" || (action == "workloads.create" && s.deploys != nil) {
+		return s.checkDeployAuthority(action)
+	}
+
+	return nil
+}
+
+func (s *service) checkDeployAuthority(action string) error {
+	reader, ok := s.deploys.(interface{ UsesManagedAuthority(candidate any) bool })
+	if !ok || !reader.UsesManagedAuthority(s.store) {
+		return &managed.RefusalError{Action: action, Operation: "replacement", Cause: managed.ErrAuthority}
+	}
+
+	policy, ok := s.deploys.(interface {
+		UsesAuthorizationProvider(candidate auth.Provider) bool
+	})
+	if !ok || !policy.UsesAuthorizationProvider(s.auth) {
+		return &managed.RefusalError{Action: action, Operation: "replacement", Cause: managed.ErrAuthority}
 	}
 
 	return nil

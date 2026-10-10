@@ -8,9 +8,11 @@ import (
 	"testing"
 
 	ctrlplane "github.com/xraph/ctrlplane"
+	"github.com/xraph/ctrlplane/auth"
 	"github.com/xraph/ctrlplane/event"
 	"github.com/xraph/ctrlplane/id"
 	"github.com/xraph/ctrlplane/instance"
+	"github.com/xraph/ctrlplane/managed"
 	"github.com/xraph/ctrlplane/provider"
 )
 
@@ -31,8 +33,9 @@ func TestSpawnReplica_ReusesOwnOrphan(t *testing.T) {
 	// scale.
 	orphanSlug := "test-workload-0"
 	orphan := &instance.Instance{
-		Entity: ctrlplane.NewEntity(id.PrefixInstance),
-		Slug:   orphanSlug,
+		Entity:   ctrlplane.NewEntity(id.PrefixInstance),
+		TenantID: "test-tenant",
+		Slug:     orphanSlug,
 		Labels: map[string]string{
 			"ctrlplane.workload":      wid.String(),
 			"ctrlplane.replica_index": "0",
@@ -42,7 +45,7 @@ func TestSpawnReplica_ReusesOwnOrphan(t *testing.T) {
 	insts := &spawnFakeInstances{
 		bySlug: map[string]*instance.Instance{orphanSlug: orphan},
 	}
-	svc := &service{instances: insts, events: event.NewInMemoryBus()}
+	svc := newSpawnFixtureService(insts)
 
 	got, err := svc.spawnReplica(context.Background(), w, 0)
 	if err != nil {
@@ -72,14 +75,15 @@ func TestSpawnReplica_AdoptsLabellessLegacyOrphan(t *testing.T) {
 	w := seedWorkload(wid, 1)
 
 	orphan := &instance.Instance{
-		Entity: ctrlplane.NewEntity(id.PrefixInstance),
-		Slug:   "test-workload-0",
-		Labels: nil, // simulates row from before label persistence
+		Entity:   ctrlplane.NewEntity(id.PrefixInstance),
+		TenantID: "test-tenant",
+		Slug:     "test-workload-0",
+		Labels:   nil, // simulates row from before label persistence
 	}
 	insts := &spawnFakeInstances{
 		bySlug: map[string]*instance.Instance{"test-workload-0": orphan},
 	}
-	svc := &service{instances: insts, events: event.NewInMemoryBus()}
+	svc := newSpawnFixtureService(insts)
 
 	got, err := svc.spawnReplica(context.Background(), w, 0)
 	if err != nil {
@@ -104,8 +108,9 @@ func TestSpawnReplica_RejectsAlienOwner(t *testing.T) {
 	w := seedWorkload(myWid, 1)
 
 	alien := &instance.Instance{
-		Entity: ctrlplane.NewEntity(id.PrefixInstance),
-		Slug:   "test-workload-0",
+		Entity:   ctrlplane.NewEntity(id.PrefixInstance),
+		TenantID: "test-tenant",
+		Slug:     "test-workload-0",
 		Labels: map[string]string{
 			"ctrlplane.workload": otherWid.String(),
 		},
@@ -113,7 +118,7 @@ func TestSpawnReplica_RejectsAlienOwner(t *testing.T) {
 	insts := &spawnFakeInstances{
 		bySlug: map[string]*instance.Instance{"test-workload-0": alien},
 	}
-	svc := &service{instances: insts, events: event.NewInMemoryBus()}
+	svc := newSpawnFixtureService(insts)
 
 	_, err := svc.spawnReplica(context.Background(), w, 0)
 	if err == nil {
@@ -134,7 +139,7 @@ func TestSpawnReplica_NoCollisionFreshCreate(t *testing.T) {
 	w := seedWorkload(wid, 1)
 
 	insts := &spawnFakeInstances{}
-	svc := &service{instances: insts, events: event.NewInMemoryBus()}
+	svc := newSpawnFixtureService(insts)
 
 	got, err := svc.spawnReplica(context.Background(), w, 0)
 	if err != nil {
@@ -154,6 +159,9 @@ func TestSpawnReplica_NoCollisionFreshCreate(t *testing.T) {
 // spawnReplica tests. Tracks Create call count and answers
 // GetBySlug from a slug→instance map.
 type spawnFakeInstances struct {
+	*restartFakeStore
+
+	policy  auth.Provider
 	bySlug  map[string]*instance.Instance
 	creates int
 }
@@ -170,10 +178,11 @@ func (f *spawnFakeInstances) Create(_ context.Context, req instance.CreateReques
 	f.creates++
 
 	return &instance.Instance{
-		Entity: ctrlplane.NewEntity(id.PrefixInstance),
-		Slug:   slugify(req.Name),
-		Name:   req.Name,
-		Labels: req.Labels,
+		Entity:   ctrlplane.NewEntity(id.PrefixInstance),
+		TenantID: "test-tenant",
+		Slug:     slugify(req.Name),
+		Name:     req.Name,
+		Labels:   req.Labels,
 	}, nil
 }
 
@@ -210,3 +219,28 @@ var _ instance.Service = (*spawnFakeInstances)(nil)
 
 // silence unused import warning when only one branch fires.
 var _ = errors.Is
+
+func newSpawnFixtureService(insts *spawnFakeInstances) *service {
+	insts.restartFakeStore = newRestartFakeStore()
+	insts.policy = &workloadAuthorizer{}
+
+	return NewService(insts, insts, nil, nil, nil, nil, nil, event.NewInMemoryBus(), insts.policy)
+}
+
+func (f *spawnFakeInstances) UsesManagedAuthority(candidate any) bool {
+	return managed.NewGuard(f).UsesAuthority(candidate)
+}
+func (f *spawnFakeInstances) UsesAuthorizationProvider(candidate auth.Provider) bool {
+	return managed.SameAuthority(f.policy, candidate)
+}
+
+func TestSpawnReplicaRejectsForeignTenant(t *testing.T) {
+	w := seedWorkload(id.New(id.PrefixWorkload), 1)
+	candidate := &instance.Instance{Entity: ctrlplane.NewEntity(id.PrefixInstance), TenantID: "foreign", Slug: "test-workload-0"}
+	instances := &spawnFakeInstances{bySlug: map[string]*instance.Instance{candidate.Slug: candidate}}
+
+	svc := newSpawnFixtureService(instances)
+	if _, err := svc.spawnReplica(t.Context(), w, 0); !errors.Is(err, ctrlplane.ErrForbidden) || instances.creates != 0 {
+		t.Fatalf("foreign adoption: %v creates=%d", err, instances.creates)
+	}
+}

@@ -31,7 +31,8 @@ func TestWorkloadRestart_PerReplicaInstanceRestart(t *testing.T) {
 	store.put(seedWorkload(wid, 3))
 
 	insts.authority = store
-	svc := NewService(store, insts, nil, nil, nil, nil, nil, event.NewInMemoryBus(), &workloadAuthorizer{})
+	insts.policy = &workloadAuthorizer{}
+	svc := NewService(store, insts, nil, nil, nil, nil, nil, event.NewInMemoryBus(), insts.policy)
 
 	if err := svc.Restart(adminCtxRestart(), wid); err != nil {
 		t.Fatalf("Restart: %v", err)
@@ -75,7 +76,8 @@ func TestWorkloadRestart_FailsFastOnReplicaError(t *testing.T) {
 	store.put(seedWorkload(wid, 3))
 
 	insts.authority = store
-	svc := NewService(store, insts, nil, nil, nil, nil, nil, event.NewInMemoryBus(), &workloadAuthorizer{})
+	insts.policy = &workloadAuthorizer{}
+	svc := NewService(store, insts, nil, nil, nil, nil, nil, event.NewInMemoryBus(), insts.policy)
 
 	err := svc.Restart(adminCtxRestart(), wid)
 	if err == nil {
@@ -103,7 +105,8 @@ func TestPauseResume_RoundTripsReplicaCount(t *testing.T) {
 	store.put(seedWorkload(wid, 3))
 
 	insts.authority = store
-	svc := NewService(store, insts, nil, nil, nil, nil, nil, event.NewInMemoryBus(), &workloadAuthorizer{})
+	insts.policy = &workloadAuthorizer{}
+	svc := NewService(store, insts, nil, nil, nil, nil, nil, event.NewInMemoryBus(), insts.policy)
 
 	if err := svc.Pause(adminCtxRestart(), wid); err != nil {
 		t.Fatalf("Pause: %v", err)
@@ -225,6 +228,7 @@ func (s *restartFakeStore) DeleteWorkload(_ context.Context, _ string, wid id.ID
 // restartFakeInstances tracks per-method call counts and simulates
 // a replica set that grows / shrinks via Create / Delete.
 type restartFakeInstances struct {
+	policy            auth.Provider
 	authority         *restartFakeStore
 	wid               id.ID
 	restarts          atomic.Int32
@@ -338,4 +342,8 @@ func (p *workloadAuthorizer) Authorize(_ context.Context, request auth.AuthzRequ
 
 func (f *restartFakeInstances) UsesManagedAuthority(candidate any) bool {
 	return managed.NewGuard(f.authority).UsesAuthority(candidate)
+}
+
+func (f *restartFakeInstances) UsesAuthorizationProvider(candidate auth.Provider) bool {
+	return managed.SameAuthority(f.policy, candidate)
 }

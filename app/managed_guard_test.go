@@ -339,3 +339,100 @@ func TestSameAuthorityOrdinaryWorkloadDeploy(t *testing.T) {
 		t.Fatalf("parent result: %+v %v", got, err)
 	}
 }
+
+func TestWorkloadAdoptionChecksManagedCandidatesBeforeParentWrites(t *testing.T) {
+	for _, op := range []string{"create", "scale", "resume"} {
+		for _, protected := range []bool{true, false} {
+			t.Run(op+map[bool]string{true: "/protected", false: "/unmanaged"}[protected], func(t *testing.T) {
+				s := memory.New()
+				ctx := guardContext(t)
+				policy := &guardPolicy{}
+
+				cp, err := app.New(app.WithStore(s), app.WithAuth(policy))
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				runtime := &ordinaryDeployProvider{}
+				cp.Providers().Register("fixture", runtime)
+
+				w := workload.NewWorkload()
+				w.TenantID, w.Slug, w.Name, w.State, w.ProviderName = "tenant", "worker", "worker", workload.StateActive, "fixture"
+
+				w.Services = []provider.ServiceSpec{{Name: "worker", Image: "before", Role: provider.RoleMain}}
+				if op != "create" {
+					if err := s.InsertWorkload(ctx, w); err != nil {
+						t.Fatal(err)
+					}
+				}
+
+				identity := guardIdentity(id.ID{})
+				candidate := &instance.Instance{Entity: ctrlplane.NewEntity(id.PrefixInstance), TenantID: "tenant", Name: "worker-0", Slug: "worker-0", State: provider.StateRunning, ProviderName: "fixture", Services: w.Services}
+
+				candidate.ID = identity.InstanceID
+				if err := s.Insert(ctx, candidate); err != nil {
+					t.Fatal(err)
+				}
+
+				if protected {
+					if _, err := s.CreateManagedTarget(ctx, identity); err != nil {
+						t.Fatal(err)
+					}
+				}
+
+				switch op {
+				case "create":
+					_, err = cp.Workloads.Create(ctx, workload.CreateRequest{Name: "worker", ProviderName: "fixture", Services: w.Services, Replicas: 1})
+				case "scale":
+					_, err = cp.Workloads.Scale(ctx, w.ID, 1)
+				case "resume":
+					err = cp.Workloads.Resume(ctx, w.ID)
+				}
+
+				if protected && !errors.Is(err, managed.ErrBlocked) {
+					t.Fatalf("protected adoption: %v", err)
+				}
+
+				if !protected && err != nil {
+					t.Fatalf("ordinary adoption: %v", err)
+				}
+
+				parents, err := s.ListWorkloads(ctx, "tenant", workload.ListOptions{})
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				if protected {
+					if op == "create" && len(parents.Items) != 0 {
+						t.Fatalf("parent inserted: %+v", parents)
+					}
+
+					if op != "create" && (len(parents.Items) != 1 || !reflect.DeepEqual(w, parents.Items[0])) {
+						t.Fatalf("parent changed: %+v", parents)
+					}
+				} else if len(parents.Items) != 1 || parents.Items[0].ReplicaCount != 1 {
+					t.Fatalf("ordinary parent: %+v", parents)
+				}
+
+				children, err := s.List(ctx, "tenant", instance.ListOptions{})
+				if err != nil || len(children.Items) != 1 || !reflect.DeepEqual(children.Items[0], candidate) {
+					t.Fatalf("candidate changed: %+v %v", children, err)
+				}
+
+				releases, err := s.ListReleases(ctx, "tenant", candidate.ID, deploy.ListOptions{})
+				if err != nil || len(releases.Items) != 0 {
+					t.Fatalf("release writes: %+v %v", releases, err)
+				}
+
+				deployments, err := s.ListDeployments(ctx, "tenant", candidate.ID, deploy.ListOptions{})
+				if err != nil || len(deployments.Items) != 0 {
+					t.Fatalf("deployment writes: %+v %v", deployments, err)
+				}
+
+				if runtime.calls != 0 {
+					t.Fatalf("runtime calls: %d", runtime.calls)
+				}
+			})
+		}
+	}
+}

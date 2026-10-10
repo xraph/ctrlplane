@@ -156,11 +156,17 @@ func (g *Guard) CheckTenant(ctx context.Context, tenantID string) error {
 // UsesAuthority proves identity of the actual persistence object without exposing it.
 // Value-shaped, nil and otherwise indeterminate authorities cannot prove identity.
 func (g *Guard) UsesAuthority(candidate any) bool {
-	if g == nil || g.err != nil || candidate == nil || g.authority == nil {
+	return g != nil && g.err == nil && SameAuthority(g.authority, candidate)
+}
+
+// SameAuthority proves that two configurations reference the same nonnil object.
+// Equal values and indeterminate identities cannot establish shared authority.
+func SameAuthority(configured, candidate any) bool {
+	if configured == nil || candidate == nil {
 		return false
 	}
 
-	actual, wanted := reflect.ValueOf(g.authority), reflect.ValueOf(candidate)
+	actual, wanted := reflect.ValueOf(configured), reflect.ValueOf(candidate)
 
-	return actual.Kind() == reflect.Pointer && wanted.Kind() == reflect.Pointer && !actual.IsNil() && !wanted.IsNil() && actual.Type() == wanted.Type() && actual.Pointer() == wanted.Pointer()
+	return actual.Kind() == reflect.Pointer && wanted.Kind() == reflect.Pointer && !actual.IsNil() && !wanted.IsNil() && actual.Type() == wanted.Type() && actual.Type().Elem().Size() != 0 && actual.Pointer() == wanted.Pointer()
 }

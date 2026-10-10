@@ -94,3 +94,79 @@ func TestInstanceGuardNoMutation(t *testing.T) {
 		})
 	}
 }
+
+type creationScopePolicy struct {
+	auth.NoopProvider
+
+	allowTenant bool
+	requests    []auth.AuthzRequest
+}
+
+func (p *creationScopePolicy) Authorize(_ context.Context, request auth.AuthzRequest) (bool, error) {
+	p.requests = append(p.requests, request)
+	if request.Action == "instances.create" {
+		return (request.ResourceID == request.TenantID) == p.allowTenant, nil
+	}
+
+	return true, nil
+}
+
+type creationProvider struct {
+	provider.Provider
+
+	calls int
+}
+
+func (p *creationProvider) Info() provider.ProviderInfo {
+	return provider.ProviderInfo{Name: "fixture"}
+}
+func (p *creationProvider) Provision(context.Context, provider.ProvisionRequest) (*provider.ProvisionResult, error) {
+	p.calls++
+
+	return &provider.ProvisionResult{ProviderRef: "provisioned"}, nil
+}
+
+func TestInstanceCreateAuthorizesTenantBeforeAllocation(t *testing.T) {
+	for _, allow := range []bool{false, true} {
+		t.Run(map[bool]string{false: "deny tenant allow future ID", true: "allow tenant deny future ID"}[allow], func(t *testing.T) {
+			s := memory.New()
+			policy := &creationScopePolicy{allowTenant: allow}
+			runtime := &creationProvider{}
+			registry := provider.NewRegistry()
+			registry.Register("fixture", runtime)
+			svc := instance.NewService(s, registry, event.NewInMemoryBus(), policy, nil)
+			ctx := auth.WithClaims(t.Context(), &auth.Claims{SubjectID: "operator", TenantID: "tenant"})
+
+			inst, err := svc.Create(ctx, instance.CreateRequest{Name: "worker", ProviderName: "fixture", Services: []provider.ServiceSpec{{Name: "worker", Image: "image", Role: provider.RoleMain}}})
+			if allow {
+				if err != nil || inst.ID.Prefix() != id.PrefixInstance || runtime.calls != 1 {
+					t.Fatalf("create: %+v %v calls=%d", inst, err, runtime.calls)
+				}
+			} else if !errors.Is(err, ctrlplane.ErrForbidden) || inst != nil || runtime.calls != 0 {
+				t.Fatalf("refusal: %+v %v calls=%d", inst, err, runtime.calls)
+			}
+
+			want := []auth.AuthzRequest{{SubjectID: "operator", TenantID: "tenant", Resource: "ctrlplane", Action: "instances.create", ResourceID: "tenant"}}
+			if !reflect.DeepEqual(policy.requests, want) {
+				t.Fatalf("creation scope: %+v", policy.requests)
+			}
+
+			rows, err := s.List(ctx, "tenant", instance.ListOptions{})
+			if err != nil || len(rows.Items) != runtime.calls {
+				t.Fatalf("instance writes: %+v %v", rows, err)
+			}
+
+			if allow {
+				name := "changed"
+				if _, err := svc.Update(ctx, inst.ID, instance.UpdateRequest{Name: &name}); err != nil {
+					t.Fatal(err)
+				}
+
+				last := policy.requests[len(policy.requests)-1]
+				if last.Action != "instances.update" || last.ResourceID != inst.ID.String() {
+					t.Fatalf("existing instance scope: %+v", last)
+				}
+			}
+		})
+	}
+}
