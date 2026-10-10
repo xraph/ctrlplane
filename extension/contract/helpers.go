@@ -10,6 +10,7 @@ import (
 
 	"github.com/xraph/ctrlplane/admin"
 	"github.com/xraph/ctrlplane/app"
+	"github.com/xraph/ctrlplane/auth"
 	"github.com/xraph/ctrlplane/bootstrap"
 	"github.com/xraph/ctrlplane/datacenter"
 	"github.com/xraph/ctrlplane/event"
@@ -155,6 +156,15 @@ func purgeProvider(ctx context.Context, cp *app.CtrlPlane, name string) (any, er
 
 	if _, err := cp.Providers().Get(name); err != nil {
 		return nil, err
+	}
+
+	claims, err := auth.RequireAuthorized(ctx, cp.Auth(), "providers.purge", name, "")
+	if err != nil {
+		return nil, err
+	}
+
+	if !claims.IsSystemAdmin() {
+		return nil, &dash.Error{Code: dash.CodePermissionDenied, Message: "System administrator required."}
 	}
 
 	summary := purgeSummary{Failures: []string{}}

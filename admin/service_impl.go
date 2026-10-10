@@ -11,6 +11,7 @@ import (
 	"github.com/xraph/ctrlplane/event"
 	"github.com/xraph/ctrlplane/id"
 	"github.com/xraph/ctrlplane/instance"
+	"github.com/xraph/ctrlplane/managed"
 	"github.com/xraph/ctrlplane/network"
 	"github.com/xraph/ctrlplane/provider"
 	"github.com/xraph/ctrlplane/secrets"
@@ -37,6 +38,7 @@ type ProviderHealthSnapshot struct {
 
 // service implements the Service interface.
 type service struct {
+	guard          *managed.Guard
 	store          Store
 	instStore      instance.Store
 	netStore       network.Store
@@ -58,6 +60,7 @@ func NewService(
 	auth auth.Provider,
 ) Service {
 	return &service{
+		guard:     managed.NewGuard(instStore),
 		store:     store,
 		instStore: instStore,
 		netStore:  netStore,
@@ -275,13 +278,17 @@ func (s *service) UnsuspendTenant(ctx context.Context, tenantID string) error {
 
 // DeleteTenant removes a tenant.
 func (s *service) DeleteTenant(ctx context.Context, tenantID string) error {
-	claims, err := auth.RequireClaims(ctx)
+	claims, err := auth.RequireAuthorized(ctx, s.auth, "tenants.delete", tenantID, tenantID)
 	if err != nil {
 		return fmt.Errorf("delete tenant: %w", err)
 	}
 
 	if !claims.IsSystemAdmin() {
 		return fmt.Errorf("delete tenant: %w", ctrlplane.ErrForbidden)
+	}
+
+	if err := s.guard.CheckTenant(ctx, tenantID); err != nil {
+		return err
 	}
 
 	if err := s.store.DeleteTenant(ctx, tenantID); err != nil {

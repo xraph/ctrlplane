@@ -10,12 +10,14 @@ import (
 	"github.com/xraph/ctrlplane/event"
 	"github.com/xraph/ctrlplane/id"
 	"github.com/xraph/ctrlplane/instance"
+	"github.com/xraph/ctrlplane/managed"
 	"github.com/xraph/ctrlplane/provider"
 	"github.com/xraph/ctrlplane/secrets"
 )
 
 // service is the concrete implementation of Service.
 type service struct {
+	guard      *managed.Guard
 	store      Store
 	instStore  instance.Store
 	providers  *provider.Registry
@@ -35,6 +37,7 @@ func NewService(
 	vault secrets.Vault,
 ) *service {
 	return &service{
+		guard:      managed.NewGuard(instStore),
 		store:      store,
 		instStore:  instStore,
 		providers:  providers,
@@ -57,9 +60,13 @@ func (s *service) RegisterStrategy(st Strategy) {
 
 // Deploy creates a new release and deploys it to the instance.
 func (s *service) Deploy(ctx context.Context, req DeployRequest) (*Deployment, error) {
-	claims, err := auth.RequireClaims(ctx)
+	claims, err := auth.RequireAuthorized(ctx, s.auth, "deployments.create", req.InstanceID.String(), "")
 	if err != nil {
 		return nil, fmt.Errorf("deploy: authenticate: %w", err)
+	}
+
+	if err := s.guard.CheckInstance(ctx, managed.Key{TenantID: claims.TenantID, InstanceID: req.InstanceID}, "deployments.create"); err != nil {
+		return nil, err
 	}
 
 	// Verify the instance exists.
@@ -254,9 +261,13 @@ func (s *service) Deploy(ctx context.Context, req DeployRequest) (*Deployment, e
 // container is already running, there is no rollout to drive,
 // the row exists purely for audit and rollback continuity.
 func (s *service) RecordInitial(ctx context.Context, instanceID id.ID) (*Release, error) {
-	claims, err := auth.RequireClaims(ctx)
+	claims, err := auth.RequireAuthorized(ctx, s.auth, "deployments.create", instanceID.String(), "")
 	if err != nil {
 		return nil, fmt.Errorf("record initial release: authenticate: %w", err)
+	}
+
+	if err := s.guard.CheckInstance(ctx, managed.Key{TenantID: claims.TenantID, InstanceID: instanceID}, "deployments.create"); err != nil {
+		return nil, err
 	}
 
 	inst, err := s.instStore.GetByID(ctx, claims.TenantID, instanceID)
@@ -364,9 +375,13 @@ func (s *service) RecordInitial(ctx context.Context, instanceID id.ID) (*Release
 
 // Rollback reverts to a specific release by creating a new deployment.
 func (s *service) Rollback(ctx context.Context, instanceID id.ID, releaseID id.ID) (*Deployment, error) {
-	claims, err := auth.RequireClaims(ctx)
+	claims, err := auth.RequireAuthorized(ctx, s.auth, "deployments.rollback", instanceID.String(), "")
 	if err != nil {
 		return nil, fmt.Errorf("rollback: authenticate: %w", err)
+	}
+
+	if err := s.guard.CheckInstance(ctx, managed.Key{TenantID: claims.TenantID, InstanceID: instanceID}, "deployments.rollback"); err != nil {
+		return nil, err
 	}
 
 	// Verify the instance exists.
@@ -379,6 +394,10 @@ func (s *service) Rollback(ctx context.Context, instanceID id.ID, releaseID id.I
 	rel, err := s.store.GetRelease(ctx, claims.TenantID, releaseID)
 	if err != nil {
 		return nil, fmt.Errorf("rollback: get release %s: %w", releaseID, err)
+	}
+
+	if rel.TenantID != claims.TenantID || rel.InstanceID != instanceID {
+		return nil, ctrlplane.ErrForbidden
 	}
 
 	// Rollback restores every service in the target Release —
@@ -504,7 +523,7 @@ func (s *service) Rollback(ctx context.Context, instanceID id.ID, releaseID id.I
 
 // Cancel aborts an in-progress deployment.
 func (s *service) Cancel(ctx context.Context, deploymentID id.ID) error {
-	claims, err := auth.RequireClaims(ctx)
+	claims, err := auth.RequireAuthorized(ctx, s.auth, "deployments.cancel", deploymentID.String(), "")
 	if err != nil {
 		return fmt.Errorf("cancel: authenticate: %w", err)
 	}
@@ -512,6 +531,14 @@ func (s *service) Cancel(ctx context.Context, deploymentID id.ID) error {
 	dep, err := s.store.GetDeployment(ctx, claims.TenantID, deploymentID)
 	if err != nil {
 		return fmt.Errorf("cancel: get deployment %s: %w", deploymentID, err)
+	}
+
+	if dep.TenantID != claims.TenantID {
+		return ctrlplane.ErrForbidden
+	}
+
+	if err := s.guard.CheckInstance(ctx, managed.Key{TenantID: claims.TenantID, InstanceID: dep.InstanceID}, "deployments.cancel"); err != nil {
+		return err
 	}
 
 	if dep.State != DeployPending && dep.State != DeployRunning {
@@ -627,4 +654,9 @@ func (s *service) buildReleaseSnapshot(ctx context.Context, tenantID string, ins
 	}
 
 	return out, nil
+}
+
+// UsesManagedAuthority confirms the persistence object used by the protection guard.
+func (s *service) UsesManagedAuthority(candidate any) bool {
+	return s != nil && s.guard.UsesAuthority(candidate)
 }

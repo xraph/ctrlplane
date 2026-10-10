@@ -84,7 +84,7 @@ func TestCreate_ManifestsSource_DispatchesToEngine(t *testing.T) {
 	registry := provider.NewRegistry()
 	registry.Register("kubernetes", prov)
 
-	svc := NewService(store, registry, event.NewInMemoryBus(), nil, nil)
+	svc := NewService(store, registry, event.NewInMemoryBus(), &guardAuthorizer{}, nil)
 
 	inst, err := svc.Create(srcCtx(), CreateRequest{
 		Name:         "raw",

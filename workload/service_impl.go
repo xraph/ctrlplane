@@ -16,6 +16,7 @@ import (
 	"github.com/xraph/ctrlplane/health"
 	"github.com/xraph/ctrlplane/id"
 	"github.com/xraph/ctrlplane/instance"
+	"github.com/xraph/ctrlplane/managed"
 	"github.com/xraph/ctrlplane/metrics"
 	"github.com/xraph/ctrlplane/network"
 	"github.com/xraph/ctrlplane/provider"
@@ -27,6 +28,7 @@ import (
 // (workload-level) cascades into per-replica Provision/Deprovision
 // (instance-level).
 type service struct {
+	guard     *managed.Guard
 	store     Store
 	instances instance.Service
 	deploys   deploy.Service
@@ -47,6 +49,7 @@ type service struct {
 // service can fork from existing workloads.
 func NewService(store Store, instances instance.Service, deploys deploy.Service, templates template.Service, healthSvc health.Service, metricsSvc metrics.Service, networkSvc network.Service, events event.Bus, authProvider auth.Provider) *service { //nolint:revive // unexported return matches deploy.NewService
 	return &service{
+		guard:     managed.NewGuard(store),
 		store:     store,
 		instances: instances,
 		deploys:   deploys,
@@ -66,9 +69,23 @@ func NewService(store Store, instances instance.Service, deploys deploy.Service,
 // StateFailed and the caller can retry Scale to reach the desired
 // count.
 func (s *service) Create(ctx context.Context, req CreateRequest) (*Workload, error) {
-	claims, err := auth.RequireClaims(ctx)
+	w := NewWorkload()
+
+	claims, err := auth.RequireAuthorized(ctx, s.auth, "workloads.create", w.ID.String(), "")
 	if err != nil {
 		return nil, fmt.Errorf("create workload: %w", err)
+	}
+
+	if err := s.checkAuthority("workloads.create"); err != nil {
+		return nil, err
+	}
+
+	if err := s.guard.CheckOwner(ctx, managed.OwnerKey{TenantID: claims.TenantID, OwnerID: w.ID}, "workloads.create"); err != nil {
+		return nil, err
+	}
+
+	if _, err := auth.RequireAuthorized(ctx, s.auth, "instances.create", claims.TenantID, claims.TenantID); err != nil {
+		return nil, err
 	}
 
 	if strings.TrimSpace(req.Name) == "" {
@@ -102,7 +119,6 @@ func (s *service) Create(ctx context.Context, req CreateRequest) (*Workload, err
 		replicas = 1
 	}
 
-	w := NewWorkload()
 	w.TenantID = claims.TenantID
 	w.Name = req.Name
 	w.Slug = slugify(req.Name)
@@ -257,6 +273,10 @@ func (s *service) List(ctx context.Context, opts ListOptions) (*ListResult, erro
 // Deploy, not Update, so callers that want to roll out a new image
 // build a DeployRequest with the changed Services.
 func (s *service) Update(ctx context.Context, workloadID id.ID, req UpdateRequest) (*Workload, error) {
+	if err := s.checkMutation(ctx, workloadID, "workloads.update"); err != nil {
+		return nil, err
+	}
+
 	w, err := s.Get(ctx, workloadID)
 	if err != nil {
 		return nil, err
@@ -307,6 +327,10 @@ func (s *service) Update(ctx context.Context, workloadID id.ID, req UpdateReques
 // Shrinking deprovisions the highest-indexed Instances first
 // (LIFO — newest replicas removed first, oldest preserved).
 func (s *service) Scale(ctx context.Context, workloadID id.ID, replicas int) (*Workload, error) {
+	if err := s.checkMutation(ctx, workloadID, "workloads.scale", replicas); err != nil {
+		return nil, err
+	}
+
 	if replicas < 0 {
 		return nil, errors.New("scale workload: replicas must be >= 0")
 	}
@@ -414,6 +438,10 @@ func (s *service) Scale(ctx context.Context, workloadID id.ID, replicas int) (*W
 // PreviousReplicas would otherwise get clobbered with 0 and a
 // future Resume would lose the original intent.
 func (s *service) Pause(ctx context.Context, workloadID id.ID) error {
+	if err := s.checkMutation(ctx, workloadID, "workloads.pause"); err != nil {
+		return err
+	}
+
 	w, err := s.Get(ctx, workloadID)
 	if err != nil {
 		return err
@@ -435,6 +463,10 @@ func (s *service) Pause(ctx context.Context, workloadID id.ID) error {
 // back to the current ReplicaCount (handles workloads that were
 // never paused or had Pause stamp zero), then to 1.
 func (s *service) Resume(ctx context.Context, workloadID id.ID) error {
+	if err := s.checkMutation(ctx, workloadID, "workloads.resume"); err != nil {
+		return err
+	}
+
 	w, err := s.Get(ctx, workloadID)
 	if err != nil {
 		return err
@@ -463,6 +495,10 @@ func (s *service) Resume(ctx context.Context, workloadID id.ID) error {
 // failure rather than a half-restarted workload — the workload
 // stays in StateActive throughout, so the caller can retry.
 func (s *service) Restart(ctx context.Context, workloadID id.ID) error {
+	if err := s.checkMutation(ctx, workloadID, "workloads.restart"); err != nil {
+		return err
+	}
+
 	w, err := s.Get(ctx, workloadID)
 	if err != nil {
 		return err
@@ -505,6 +541,10 @@ func (s *service) Restart(ctx context.Context, workloadID id.ID) error {
 // the targeted services so subsequent reads (and any newly-spawned
 // replicas) see the post-deploy spec.
 func (s *service) Deploy(ctx context.Context, workloadID id.ID, req DeployRequest) (*deploy.Deployment, error) {
+	if err := s.checkMutation(ctx, workloadID, "workloads.deploy"); err != nil {
+		return nil, err
+	}
+
 	if len(req.Services) == 0 {
 		return nil, errors.New("deploy workload: at least one service required")
 	}
@@ -636,6 +676,10 @@ func (s *service) Deploy(ctx context.Context, workloadID id.ID, req DeployReques
 // Workload row gone — there was no handle to clean them up by.
 // Don't reintroduce the swallow.
 func (s *service) Delete(ctx context.Context, workloadID id.ID) error {
+	if err := s.checkMutation(ctx, workloadID, "workloads.delete"); err != nil {
+		return err
+	}
+
 	w, err := s.Get(ctx, workloadID)
 	if err != nil {
 		return err
@@ -898,3 +942,86 @@ var _ = ctrlplane.ErrNotFound
 // Compile-time hint to keep provider import live; ResourceSpec is
 // used in Workload but goimports may mark it indirect.
 var _ provider.ResourceSpec
+
+// checkMutation verifies parent and replica policy before any parent fields change.
+func (s *service) checkMutation(ctx context.Context, workloadID id.ID, action string, targetCount ...int) error {
+	claims, err := auth.RequireAuthorized(ctx, s.auth, action, workloadID.String(), "")
+	if err != nil {
+		return err
+	}
+
+	if err := s.checkAuthority(action); err != nil {
+		return err
+	}
+
+	if err := s.guard.CheckOwner(ctx, managed.OwnerKey{TenantID: claims.TenantID, OwnerID: workloadID}, action); err != nil {
+		return err
+	}
+
+	if action == "workloads.pause" || action == "workloads.resume" {
+		if _, err := auth.RequireAuthorized(ctx, s.auth, "workloads.scale", workloadID.String(), claims.TenantID); err != nil {
+			return err
+		}
+	}
+
+	replicas, err := s.ListInstances(ctx, workloadID)
+	if err != nil {
+		return err
+	}
+
+	childAction := ""
+
+	switch action {
+	case "workloads.delete", "workloads.pause":
+		childAction = "instances.delete"
+	case "workloads.restart":
+		childAction = "instances.restart"
+	case "workloads.deploy":
+		childAction = "deployments.create"
+	}
+
+	if action == "workloads.scale" && len(targetCount) == 1 && targetCount[0] > len(replicas) {
+		if _, err := auth.RequireAuthorized(ctx, s.auth, "instances.create", claims.TenantID, claims.TenantID); err != nil {
+			return err
+		}
+	}
+
+	for index, replica := range replicas {
+		actualAction := childAction
+		if action == "workloads.scale" && len(targetCount) == 1 && index >= targetCount[0] {
+			actualAction = "instances.delete"
+		}
+
+		if replica.TenantID != claims.TenantID {
+			return ctrlplane.ErrForbidden
+		}
+
+		if err := s.guard.CheckInstance(ctx, managed.Key{TenantID: claims.TenantID, InstanceID: replica.ID}, action); err != nil {
+			return err
+		}
+
+		if actualAction != "" {
+			if _, err := auth.RequireAuthorized(ctx, s.auth, actualAction, replica.ID.String(), claims.TenantID); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+func (s *service) checkAuthority(action string) error {
+	reader, ok := s.instances.(interface{ UsesManagedAuthority(candidate any) bool })
+	if !ok || !reader.UsesManagedAuthority(s.store) {
+		return &managed.RefusalError{Action: action, Operation: "replacement", Cause: managed.ErrAuthority}
+	}
+
+	if action == "workloads.deploy" {
+		releaseReader, ok := s.deploys.(interface{ UsesManagedAuthority(candidate any) bool })
+		if !ok || !releaseReader.UsesManagedAuthority(s.store) {
+			return &managed.RefusalError{Action: action, Operation: "replacement", Cause: managed.ErrAuthority}
+		}
+	}
+
+	return nil
+}

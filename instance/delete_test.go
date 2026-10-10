@@ -12,6 +12,7 @@ import (
 	"github.com/xraph/ctrlplane/auth"
 	"github.com/xraph/ctrlplane/event"
 	"github.com/xraph/ctrlplane/id"
+	"github.com/xraph/ctrlplane/managed"
 	"github.com/xraph/ctrlplane/provider"
 )
 
@@ -38,7 +39,7 @@ func TestDelete_AlreadyDestroyed_SkipsDeprovision(t *testing.T) {
 	}
 	store.put(inst)
 
-	svc := NewService(store, registry, event.NewInMemoryBus(), nil, nil)
+	svc := NewService(store, registry, event.NewInMemoryBus(), &guardAuthorizer{}, nil)
 
 	if err := svc.Delete(adminCtx(), inst.ID); err != nil {
 		t.Fatalf("Delete: %v", err)
@@ -76,7 +77,7 @@ func TestDelete_ProviderResourcesAlreadyGone_Succeeds(t *testing.T) {
 	}
 	store.put(inst)
 
-	svc := NewService(store, registry, event.NewInMemoryBus(), nil, nil)
+	svc := NewService(store, registry, event.NewInMemoryBus(), &guardAuthorizer{}, nil)
 
 	if err := svc.Delete(adminCtx(), inst.ID); err != nil {
 		t.Fatalf("Delete: %v", err)
@@ -122,7 +123,7 @@ func TestDelete_MidProvision_Succeeds(t *testing.T) {
 			}
 			store.put(inst)
 
-			svc := NewService(store, registry, event.NewInMemoryBus(), nil, nil)
+			svc := NewService(store, registry, event.NewInMemoryBus(), &guardAuthorizer{}, nil)
 
 			if err := svc.Delete(adminCtx(), inst.ID); err != nil {
 				t.Fatalf("Delete from %s: %v", state, err)
@@ -160,7 +161,7 @@ func TestDelete_ProviderDeconfigured_DropsRow(t *testing.T) {
 	}
 	store.put(inst)
 
-	svc := NewService(store, registry, event.NewInMemoryBus(), nil, nil)
+	svc := NewService(store, registry, event.NewInMemoryBus(), &guardAuthorizer{}, nil)
 
 	if err := svc.Delete(adminCtx(), inst.ID); err != nil {
 		t.Fatalf("Delete: %v", err)
@@ -195,7 +196,7 @@ func TestDelete_DeprovisionRealFailure_LeavesFailedRow(t *testing.T) {
 	}
 	store.put(inst)
 
-	svc := NewService(store, registry, event.NewInMemoryBus(), nil, nil)
+	svc := NewService(store, registry, event.NewInMemoryBus(), &guardAuthorizer{}, nil)
 
 	err := svc.Delete(adminCtx(), inst.ID)
 	if err == nil {
@@ -335,4 +336,34 @@ func (p *delProvider) Logs(context.Context, id.ID, provider.LogOptions) (io.Read
 
 func (p *delProvider) Exec(context.Context, id.ID, provider.ExecRequest) (*provider.ExecResult, error) {
 	return &provider.ExecResult{}, nil
+}
+
+// These ordinary fixtures own no managed records in their persistence authority.
+func (s *delStore) InspectManagedProtection(_ context.Context, key managed.Key) (managed.Protection, error) {
+	if key.TenantID == "" || key.InstanceID.Prefix() != id.PrefixInstance {
+		return managed.Protection{}, managed.ErrInvalid
+	}
+
+	return managed.Protection{}, nil
+}
+func (s *delStore) HasManagedObligations(_ context.Context, tenant string) (bool, error) {
+	if tenant == "" {
+		return false, managed.ErrInvalid
+	}
+
+	return false, nil
+}
+
+type guardAuthorizer struct{ requests []auth.AuthzRequest }
+
+func (p *guardAuthorizer) Authenticate(context.Context, string) (*auth.Claims, error) {
+	return nil, auth.ErrUnauthorized
+}
+func (p *guardAuthorizer) GetTenantID(ctx context.Context) string {
+	return auth.ClaimsFrom(ctx).TenantID
+}
+func (p *guardAuthorizer) Authorize(_ context.Context, request auth.AuthzRequest) (bool, error) {
+	p.requests = append(p.requests, request)
+
+	return true, nil
 }

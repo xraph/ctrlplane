@@ -13,6 +13,7 @@ import (
 	"github.com/xraph/ctrlplane/dispatch"
 	"github.com/xraph/ctrlplane/event"
 	"github.com/xraph/ctrlplane/id"
+	"github.com/xraph/ctrlplane/managed"
 	"github.com/xraph/ctrlplane/provider"
 	"github.com/xraph/ctrlplane/render"
 	"github.com/xraph/ctrlplane/vars"
@@ -20,6 +21,7 @@ import (
 
 // service implements the Service interface.
 type service struct {
+	guard       *managed.Guard
 	store       Store
 	providers   *provider.Registry
 	datacenters DatacenterResolver
@@ -31,6 +33,7 @@ type service struct {
 // The dcResolver parameter is optional and may be nil when datacenters are not in use.
 func NewService(store Store, providers *provider.Registry, events event.Bus, auth auth.Provider, dcResolver DatacenterResolver) Service {
 	return &service{
+		guard:       managed.NewGuard(store),
 		store:       store,
 		providers:   providers,
 		datacenters: dcResolver,
@@ -41,9 +44,15 @@ func NewService(store Store, providers *provider.Registry, events event.Bus, aut
 
 // Create provisions a new instance on the resolved provider.
 func (s *service) Create(ctx context.Context, req CreateRequest) (*Instance, error) {
-	claims, err := auth.RequireClaims(ctx)
+	entity := ctrlplane.NewEntity(id.PrefixInstance)
+
+	claims, err := auth.RequireAuthorized(ctx, s.auth, "instances.create", entity.ID.String(), "")
 	if err != nil {
 		return nil, fmt.Errorf("create instance: %w", err)
+	}
+
+	if err := s.guard.CheckInstance(ctx, managed.Key{TenantID: claims.TenantID, InstanceID: entity.ID}, "instances.create"); err != nil {
+		return nil, err
 	}
 
 	// Resolve the provider: datacenter → explicit name → default.
@@ -92,7 +101,7 @@ func (s *service) Create(ctx context.Context, req CreateRequest) (*Instance, err
 
 	info := p.Info()
 	inst := &Instance{
-		Entity:       ctrlplane.NewEntity(id.PrefixInstance),
+		Entity:       entity,
 		TenantID:     claims.TenantID,
 		Name:         req.Name,
 		Slug:         slugify(req.Name),
@@ -238,14 +247,22 @@ func (s *service) List(ctx context.Context, opts ListOptions) (*ListResult, erro
 
 // Update modifies mutable fields on an instance (name, env, labels).
 func (s *service) Update(ctx context.Context, instanceID id.ID, req UpdateRequest) (*Instance, error) {
-	claims, err := auth.RequireClaims(ctx)
+	claims, err := auth.RequireAuthorized(ctx, s.auth, "instances.update", instanceID.String(), "")
 	if err != nil {
 		return nil, fmt.Errorf("update instance: %w", err)
+	}
+
+	if err := s.guard.CheckInstance(ctx, managed.Key{TenantID: claims.TenantID, InstanceID: instanceID}, "instances.update"); err != nil {
+		return nil, err
 	}
 
 	inst, err := s.store.GetByID(ctx, claims.TenantID, instanceID)
 	if err != nil {
 		return nil, fmt.Errorf("update instance: %w", err)
+	}
+
+	if inst.TenantID != claims.TenantID {
+		return nil, ctrlplane.ErrForbidden
 	}
 
 	if req.Name != nil {
@@ -291,14 +308,22 @@ func (s *service) Update(ctx context.Context, instanceID id.ID, req UpdateReques
 //     pointing at a vanished provider is worse than the operator
 //     having to reap any orphaned runtime resources by hand.
 func (s *service) Delete(ctx context.Context, instanceID id.ID) error {
-	claims, err := auth.RequireClaims(ctx)
+	claims, err := auth.RequireAuthorized(ctx, s.auth, "instances.delete", instanceID.String(), "")
 	if err != nil {
 		return fmt.Errorf("delete instance: %w", err)
+	}
+
+	if err := s.guard.CheckInstance(ctx, managed.Key{TenantID: claims.TenantID, InstanceID: instanceID}, "instances.delete"); err != nil {
+		return err
 	}
 
 	inst, err := s.store.GetByID(ctx, claims.TenantID, instanceID)
 	if err != nil {
 		return fmt.Errorf("delete instance: %w", err)
+	}
+
+	if inst.TenantID != claims.TenantID {
+		return ctrlplane.ErrForbidden
 	}
 
 	wasDestroyed := inst.State == provider.StateDestroyed
@@ -351,14 +376,22 @@ func (s *service) Delete(ctx context.Context, instanceID id.ID) error {
 
 // Start starts a stopped instance.
 func (s *service) Start(ctx context.Context, instanceID id.ID) error {
-	claims, err := auth.RequireClaims(ctx)
+	claims, err := auth.RequireAuthorized(ctx, s.auth, "instances.start", instanceID.String(), "")
 	if err != nil {
 		return fmt.Errorf("start instance: %w", err)
+	}
+
+	if err := s.guard.CheckInstance(ctx, managed.Key{TenantID: claims.TenantID, InstanceID: instanceID}, "instances.start"); err != nil {
+		return err
 	}
 
 	inst, err := s.store.GetByID(ctx, claims.TenantID, instanceID)
 	if err != nil {
 		return fmt.Errorf("start instance: %w", err)
+	}
+
+	if inst.TenantID != claims.TenantID {
+		return ctrlplane.ErrForbidden
 	}
 
 	if err := ValidateTransition(inst.State, provider.StateStarting); err != nil {
@@ -402,14 +435,22 @@ func (s *service) Start(ctx context.Context, instanceID id.ID) error {
 
 // Stop gracefully stops a running instance.
 func (s *service) Stop(ctx context.Context, instanceID id.ID) error {
-	claims, err := auth.RequireClaims(ctx)
+	claims, err := auth.RequireAuthorized(ctx, s.auth, "instances.stop", instanceID.String(), "")
 	if err != nil {
 		return fmt.Errorf("stop instance: %w", err)
+	}
+
+	if err := s.guard.CheckInstance(ctx, managed.Key{TenantID: claims.TenantID, InstanceID: instanceID}, "instances.stop"); err != nil {
+		return err
 	}
 
 	inst, err := s.store.GetByID(ctx, claims.TenantID, instanceID)
 	if err != nil {
 		return fmt.Errorf("stop instance: %w", err)
+	}
+
+	if inst.TenantID != claims.TenantID {
+		return ctrlplane.ErrForbidden
 	}
 
 	if err := ValidateTransition(inst.State, provider.StateStopping); err != nil {
@@ -453,14 +494,22 @@ func (s *service) Stop(ctx context.Context, instanceID id.ID) error {
 
 // Restart performs a stop+start cycle on the instance.
 func (s *service) Restart(ctx context.Context, instanceID id.ID) error {
-	claims, err := auth.RequireClaims(ctx)
+	claims, err := auth.RequireAuthorized(ctx, s.auth, "instances.restart", instanceID.String(), "")
 	if err != nil {
 		return fmt.Errorf("restart instance: %w", err)
+	}
+
+	if err := s.guard.CheckInstance(ctx, managed.Key{TenantID: claims.TenantID, InstanceID: instanceID}, "instances.restart"); err != nil {
+		return err
 	}
 
 	inst, err := s.store.GetByID(ctx, claims.TenantID, instanceID)
 	if err != nil {
 		return fmt.Errorf("restart instance: %w", err)
+	}
+
+	if inst.TenantID != claims.TenantID {
+		return ctrlplane.ErrForbidden
 	}
 
 	p, err := s.providers.Get(inst.ProviderName)
@@ -493,14 +542,22 @@ func (s *service) Restart(ctx context.Context, instanceID id.ID) error {
 
 // Scale adjusts the resource allocation for an instance.
 func (s *service) Scale(ctx context.Context, instanceID id.ID, req ScaleRequest) error {
-	claims, err := auth.RequireClaims(ctx)
+	claims, err := auth.RequireAuthorized(ctx, s.auth, "instances.scale", instanceID.String(), "")
 	if err != nil {
 		return fmt.Errorf("scale instance: %w", err)
+	}
+
+	if err := s.guard.CheckInstance(ctx, managed.Key{TenantID: claims.TenantID, InstanceID: instanceID}, "instances.scale"); err != nil {
+		return err
 	}
 
 	inst, err := s.store.GetByID(ctx, claims.TenantID, instanceID)
 	if err != nil {
 		return fmt.Errorf("scale instance: %w", err)
+	}
+
+	if inst.TenantID != claims.TenantID {
+		return ctrlplane.ErrForbidden
 	}
 
 	// Scale targets the Main service's resources — the per-service
@@ -556,14 +613,22 @@ func (s *service) Scale(ctx context.Context, instanceID id.ID, req ScaleRequest)
 
 // Suspend marks an instance as suspended and stops it.
 func (s *service) Suspend(ctx context.Context, instanceID id.ID, reason string) error {
-	claims, err := auth.RequireClaims(ctx)
+	claims, err := auth.RequireAuthorized(ctx, s.auth, "instances.suspend", instanceID.String(), "")
 	if err != nil {
 		return fmt.Errorf("suspend instance: %w", err)
+	}
+
+	if err := s.guard.CheckInstance(ctx, managed.Key{TenantID: claims.TenantID, InstanceID: instanceID}, "instances.suspend"); err != nil {
+		return err
 	}
 
 	inst, err := s.store.GetByID(ctx, claims.TenantID, instanceID)
 	if err != nil {
 		return fmt.Errorf("suspend instance: %w", err)
+	}
+
+	if inst.TenantID != claims.TenantID {
+		return ctrlplane.ErrForbidden
 	}
 
 	now := time.Now().UTC()
@@ -598,14 +663,22 @@ func (s *service) Suspend(ctx context.Context, instanceID id.ID, reason string) 
 
 // Unsuspend restores a suspended instance and starts it.
 func (s *service) Unsuspend(ctx context.Context, instanceID id.ID) error {
-	claims, err := auth.RequireClaims(ctx)
+	claims, err := auth.RequireAuthorized(ctx, s.auth, "instances.unsuspend", instanceID.String(), "")
 	if err != nil {
 		return fmt.Errorf("unsuspend instance: %w", err)
+	}
+
+	if err := s.guard.CheckInstance(ctx, managed.Key{TenantID: claims.TenantID, InstanceID: instanceID}, "instances.unsuspend"); err != nil {
+		return err
 	}
 
 	inst, err := s.store.GetByID(ctx, claims.TenantID, instanceID)
 	if err != nil {
 		return fmt.Errorf("unsuspend instance: %w", err)
+	}
+
+	if inst.TenantID != claims.TenantID {
+		return ctrlplane.ErrForbidden
 	}
 
 	inst.SuspendedAt = nil
@@ -704,4 +777,9 @@ func (s *service) Resources(ctx context.Context, instanceID id.ID) (*provider.Re
 	}
 
 	return usage, nil
+}
+
+// UsesManagedAuthority confirms the persistence object used by the protection guard.
+func (s *service) UsesManagedAuthority(candidate any) bool {
+	return s != nil && s.guard.UsesAuthority(candidate)
 }

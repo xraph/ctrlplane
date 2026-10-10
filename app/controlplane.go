@@ -89,6 +89,8 @@ func New(opts ...Option) (*CtrlPlane, error) {
 
 	cp.pendingExts = nil
 
+	// Service constructors resolve protection from cp.store before dependent services capture them.
+	// Controller options and lifecycle ports never determine whether protection is installed.
 	cp.wireServices()
 
 	return cp, nil

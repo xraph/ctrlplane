@@ -10,9 +10,11 @@ import (
 	"testing"
 
 	ctrlplane "github.com/xraph/ctrlplane"
+	"github.com/xraph/ctrlplane/auth"
 	"github.com/xraph/ctrlplane/event"
 	"github.com/xraph/ctrlplane/id"
 	"github.com/xraph/ctrlplane/instance"
+	"github.com/xraph/ctrlplane/managed"
 	"github.com/xraph/ctrlplane/provider"
 )
 
@@ -28,7 +30,8 @@ func TestWorkloadRestart_PerReplicaInstanceRestart(t *testing.T) {
 	store := newRestartFakeStore()
 	store.put(seedWorkload(wid, 3))
 
-	svc := &service{store: store, instances: insts, events: event.NewInMemoryBus()}
+	insts.authority = store
+	svc := NewService(store, insts, nil, nil, nil, nil, nil, event.NewInMemoryBus(), &workloadAuthorizer{})
 
 	if err := svc.Restart(adminCtxRestart(), wid); err != nil {
 		t.Fatalf("Restart: %v", err)
@@ -71,7 +74,8 @@ func TestWorkloadRestart_FailsFastOnReplicaError(t *testing.T) {
 	store := newRestartFakeStore()
 	store.put(seedWorkload(wid, 3))
 
-	svc := &service{store: store, instances: insts, events: event.NewInMemoryBus()}
+	insts.authority = store
+	svc := NewService(store, insts, nil, nil, nil, nil, nil, event.NewInMemoryBus(), &workloadAuthorizer{})
 
 	err := svc.Restart(adminCtxRestart(), wid)
 	if err == nil {
@@ -98,7 +102,8 @@ func TestPauseResume_RoundTripsReplicaCount(t *testing.T) {
 	store := newRestartFakeStore()
 	store.put(seedWorkload(wid, 3))
 
-	svc := &service{store: store, instances: insts, events: event.NewInMemoryBus()}
+	insts.authority = store
+	svc := NewService(store, insts, nil, nil, nil, nil, nil, event.NewInMemoryBus(), &workloadAuthorizer{})
 
 	if err := svc.Pause(adminCtxRestart(), wid); err != nil {
 		t.Fatalf("Pause: %v", err)
@@ -220,6 +225,7 @@ func (s *restartFakeStore) DeleteWorkload(_ context.Context, _ string, wid id.ID
 // restartFakeInstances tracks per-method call counts and simulates
 // a replica set that grows / shrinks via Create / Delete.
 type restartFakeInstances struct {
+	authority         *restartFakeStore
 	wid               id.ID
 	restarts          atomic.Int32
 	deletes           atomic.Int32
@@ -249,7 +255,9 @@ func (f *restartFakeInstances) List(_ context.Context, _ instance.ListOptions) (
 
 	out := make([]*instance.Instance, 0, n)
 	for i := range n {
-		out = append(out, newReplica(f.wid, int(i)))
+		replica := newReplica(f.wid, int(i))
+		replica.TenantID = "test-tenant"
+		out = append(out, replica)
 	}
 
 	return &instance.ListResult{Items: out, Total: len(out)}, nil
@@ -293,4 +301,41 @@ func (f *restartFakeInstances) ResolveProvider(context.Context, id.ID) (string, 
 }
 func (f *restartFakeInstances) Resources(context.Context, id.ID) (*provider.ResourceUsage, error) {
 	return nil, nil
+}
+
+// The restart fixture has an authoritative empty managed target set.
+func (s *restartFakeStore) InspectManagedProtection(_ context.Context, key managed.Key) (managed.Protection, error) {
+	if key.TenantID == "" || key.InstanceID.Prefix() != id.PrefixInstance {
+		return managed.Protection{}, managed.ErrInvalid
+	}
+
+	return managed.Protection{}, nil
+}
+func (s *restartFakeStore) InspectManagedOwnerProtection(_ context.Context, key managed.OwnerKey) (managed.Protection, error) {
+	return managed.Protection{}, key.Validate()
+}
+func (s *restartFakeStore) HasManagedObligations(_ context.Context, tenant string) (bool, error) {
+	if tenant == "" {
+		return false, managed.ErrInvalid
+	}
+
+	return false, nil
+}
+
+type workloadAuthorizer struct{ requests []auth.AuthzRequest }
+
+func (p *workloadAuthorizer) Authenticate(context.Context, string) (*auth.Claims, error) {
+	return nil, auth.ErrUnauthorized
+}
+func (p *workloadAuthorizer) GetTenantID(ctx context.Context) string {
+	return auth.ClaimsFrom(ctx).TenantID
+}
+func (p *workloadAuthorizer) Authorize(_ context.Context, request auth.AuthzRequest) (bool, error) {
+	p.requests = append(p.requests, request)
+
+	return true, nil
+}
+
+func (f *restartFakeInstances) UsesManagedAuthority(candidate any) bool {
+	return managed.NewGuard(f.authority).UsesAuthority(candidate)
 }
