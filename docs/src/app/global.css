@@ -2,6 +2,19 @@
 @import "fumadocs-ui/css/neutral.css";
 @import "fumadocs-ui/css/preset.css";
 
+/* Fumadocs 16.8 uses Tailwind 4.2 names. Keep logical positioning on 4.1. */
+@utility inset-s-* {
+  inset-inline-start: --spacing(--value(number));
+}
+
+@utility -inset-s-* {
+  inset-inline-start: --spacing(--value(number) * -1);
+}
+
+@utility inset-e-* {
+  inset-inline-end: --spacing(--value(number));
+}
+
 @layer utilities {
   .bg-grid {
     background-image:
