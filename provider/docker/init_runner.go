@@ -5,7 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 
 	"github.com/xraph/ctrlplane/provider"
 )
@@ -67,13 +68,13 @@ func (p *Provider) runOneInit(ctx context.Context, req provider.ProvisionRequest
 		return err
 	}
 
-	created, err := p.cli.ContainerCreate(ctx, cfg, hostCfg, netCfg, nil, name)
+	created, err := p.cli.ContainerCreate(ctx, client.ContainerCreateOptions{Config: cfg, HostConfig: hostCfg, NetworkingConfig: netCfg, Name: name})
 	if err != nil {
 		return fmt.Errorf("create init: %w", err)
 	}
 
-	if err := p.cli.ContainerStart(ctx, created.ID, container.StartOptions{}); err != nil {
-		_ = p.cli.ContainerRemove(ctx, created.ID, container.RemoveOptions{Force: true})
+	if _, err := p.cli.ContainerStart(ctx, created.ID, client.ContainerStartOptions{}); err != nil {
+		_, _ = p.cli.ContainerRemove(ctx, created.ID, client.ContainerRemoveOptions{Force: true})
 
 		return fmt.Errorf("start init: %w", err)
 	}
@@ -81,15 +82,15 @@ func (p *Provider) runOneInit(ctx context.Context, req provider.ProvisionRequest
 	waitCtx, cancel := context.WithTimeout(ctx, initTimeout)
 	defer cancel()
 
-	statusCh, errCh := p.cli.ContainerWait(waitCtx, created.ID, container.WaitConditionNotRunning)
+	wait := p.cli.ContainerWait(waitCtx, created.ID, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
 
 	select {
-	case err := <-errCh:
+	case err := <-wait.Error:
 		if err != nil {
 			return fmt.Errorf("wait init: %w", err)
 		}
 
-	case status := <-statusCh:
+	case status := <-wait.Result:
 		if status.StatusCode != 0 {
 			return fmt.Errorf("init exited %d", status.StatusCode)
 		}

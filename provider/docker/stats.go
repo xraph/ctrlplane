@@ -5,7 +5,7 @@ import (
 	"io"
 	"math"
 
-	"github.com/docker/docker/api/types/container"
+	"github.com/moby/moby/api/types/container"
 
 	"github.com/xraph/ctrlplane/provider"
 )
@@ -16,10 +16,9 @@ import (
 //	cpu_pct = (cpuΔ / systemΔ) * num_cpus * 100
 //
 // where cpuΔ is the container's CPU time delta and systemΔ is the
-// host's CPU time delta over the same window. The non-streaming
-// stats endpoint includes a "PreCPUStats" snapshot taken just before
-// the current one — the deltas are computed off that pair, so a
-// single one-shot read is enough.
+// host's CPU time delta over the same window. We request an immediate
+// one-shot sample without asking the daemon to collect a previous sample.
+// CPU deltas use PreCPUStats only when the response supplies it.
 //
 // Memory: docker reports `usage` and `limit` in bytes; we convert
 // to MB to match provider.ResourceUsage's contract.

@@ -17,19 +17,89 @@ permissions:
 
 jobs:
   # ─── Go Build & Test ────────────────────────────────────────────────
-  # test, lint, verify and security via the shared workflow. The Makefile has
-  # no test/lint/vet targets, so its probe falls back to the plain go commands
-  # this job used to run directly.
+  # The shared workflow runs the repository Make targets and blocks findings.
   ci:
     uses: xraph/workflows/.github/workflows/go-ci.yml@v1
     with:
-      go-versions: '["1.26"]'
+      go-versions: '["1.26.9"]'
+      primary-go-version: "1.26.9"
       os: '["ubuntu-latest"]'
-      # GO-2026-5932 in golang.org/x/crypto has no published fix ("Fixed in:
-      # N/A"), so a blocking govulncheck would keep CI red indefinitely.
-      # Findings are still scanned and reported in the run summary.
-      # Flip back to true once upstream ships a patch.
-      govulncheck-fail-on-findings: false
+      govulncheck-version: "v1.6.0"
+
+  dependency-security:
+    name: Complete Go dependency security
+    runs-on: ubuntu-latest
+    env:
+      GOTOOLCHAIN: go1.26.9
+      GOWORK: "off"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.26.9"
+          cache: true
+          cache-dependency-path: go.sum
+      - name: Inventory standalone module and executable graphs
+        run: |
+          mkdir -p dependency-evidence
+          test "$(go env GOVERSION)" = go1.26.9
+          test "$(go env GOWORK)" = off
+          git ls-files '*go.mod' '*go.work*' > dependency-evidence/tracked-modules.txt
+          test "$(cat dependency-evidence/tracked-modules.txt)" = go.mod
+          go list -m -json all > dependency-evidence/modules.json
+          python3 - <<'PYCODE'
+          import json
+          from pathlib import Path
+          data = Path("dependency-evidence/modules.json").read_text()
+          decoder = json.JSONDecoder()
+          while data.strip():
+              module, offset = decoder.raw_decode(data.lstrip())
+              if module.get("Replace"):
+                  raise SystemExit("effective replacement: " + module["Path"])
+              data = data.lstrip()[offset:]
+          PYCODE
+          go list -deps -test -json ./... > dependency-evidence/imports-tests.json
+          go list -deps -json ./cmd/controlplane > dependency-evidence/program.json
+          go build -o dependency-evidence/controlplane ./cmd/controlplane
+          go version -m dependency-evidence/controlplane > dependency-evidence/binary-build.txt
+      - name: Install pinned scanner
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
+      - name: Scan imports, tests, program and actual binary
+        run: |
+          govulncheck -test -json ./... > dependency-evidence/imports-tests-vuln.json
+          govulncheck -json ./cmd/controlplane > dependency-evidence/program-vuln.json
+          govulncheck -mode=binary -json dependency-evidence/controlplane > dependency-evidence/binary-vuln.json
+          python3 - <<'PYCODE'
+          import json
+          from pathlib import Path
+          decoder = json.JSONDecoder()
+          called = []
+          for path in sorted(Path("dependency-evidence").glob("*-vuln.json")):
+              data = path.read_text()
+              records = 0
+              while data.strip():
+                  record, offset = decoder.raw_decode(data.lstrip())
+                  data = data.lstrip()[offset:]
+                  records += 1
+                  finding = record.get("finding")
+                  if finding:
+                      print(path.name, json.dumps(finding, sort_keys=True))
+                      if any(frame.get("function") for frame in finding.get("trace", [])):
+                          called.append((path.name, finding["osv"]))
+              if not records:
+                  raise SystemExit("empty scanner output: " + str(path))
+          if called:
+              raise SystemExit("called vulnerable symbols: " + repr(called))
+          PYCODE
+      - name: Retain complete dependency evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: dependency-security-evidence
+          path: dependency-evidence/
+          if-no-files-found: error
 
   persistence:
     name: Persistent store contracts
@@ -58,6 +128,8 @@ jobs:
           --health-timeout 5s
           --health-retries 12
     env:
+      GOTOOLCHAIN: go1.26.9
+      GOWORK: "off"
       CTRLPLANE_TEST_POSTGRES_DSN: postgres://ctrlplane_test:ctrlplane_local_test@127.0.0.1:5432/ctrlplane_test?sslmode=disable
       CTRLPLANE_TEST_MONGO_URI: mongodb://127.0.0.1:27017
     steps:
@@ -66,7 +138,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: "1.26"
+          go-version: "1.26.9"
           cache: true
           cache-dependency-path: go.sum
       - name: Verify persistent stores and HTTP contracts
@@ -76,6 +148,9 @@ jobs:
   format:
     name: Format
     runs-on: ubuntu-latest
+    env:
+      GOTOOLCHAIN: go1.26.9
+      GOWORK: "off"
 
     steps:
       - name: Checkout

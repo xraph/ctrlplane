@@ -5,15 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/netip"
 	"strconv"
 	"time"
 
 	cerrdefs "github.com/containerd/errdefs"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/client"
-	"github.com/docker/go-connections/nat"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/client"
 
 	"github.com/xraph/ctrlplane/id"
 	"github.com/xraph/ctrlplane/provider"
@@ -36,7 +35,7 @@ var (
 // daemon) rather than docker info / version which load more state.
 func (p *Provider) HealthCheck(ctx context.Context) (*provider.HealthStatus, error) {
 	start := time.Now()
-	_, err := p.cli.Ping(ctx)
+	_, err := p.cli.Ping(ctx, client.PingOptions{})
 	latency := time.Since(start)
 
 	now := time.Now().UTC()
@@ -81,12 +80,12 @@ func New(opts ...Option) (*Provider, error) {
 		}
 	}
 
-	cliOpts := []client.Opt{client.FromEnv, client.WithAPIVersionNegotiation()}
+	cliOpts := []client.Opt{client.FromEnv}
 	if p.cfg.Host != "" {
 		cliOpts = append(cliOpts, client.WithHost(p.cfg.Host))
 	}
 
-	cli, err := client.NewClientWithOpts(cliOpts...)
+	cli, err := client.New(cliOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("docker: client init: %w", err)
 	}
@@ -171,7 +170,7 @@ func (p *Provider) Deprovision(ctx context.Context, instanceID id.ID) error {
 	}
 
 	for _, c := range containers {
-		if rmErr := p.cli.ContainerRemove(ctx, c.ID, container.RemoveOptions{
+		if _, rmErr := p.cli.ContainerRemove(ctx, c.ID, client.ContainerRemoveOptions{
 			Force:         true,
 			RemoveVolumes: true,
 		}); rmErr != nil && !cerrdefs.IsNotFound(rmErr) {
@@ -182,14 +181,14 @@ func (p *Provider) Deprovision(ctx context.Context, instanceID id.ID) error {
 	// Remove the project network. NotFound is fine — leftover network
 	// without containers is the same end-state we want.
 	netName := projectNetwork(instanceID)
-	if rmErr := p.cli.NetworkRemove(ctx, netName); rmErr != nil && !cerrdefs.IsNotFound(rmErr) {
+	if _, rmErr := p.cli.NetworkRemove(ctx, netName, client.NetworkRemoveOptions{}); rmErr != nil && !cerrdefs.IsNotFound(rmErr) {
 		return fmt.Errorf("docker: remove network %s: %w", netName, rmErr)
 	}
 
 	// Drop the legacy single-container `cp-<instanceID>` if it exists
 	// — covers re-provisions of pre-Phase-2 instances that were
 	// created with the flat naming scheme.
-	_ = p.cli.ContainerRemove(ctx, containerName(instanceID), container.RemoveOptions{
+	_, _ = p.cli.ContainerRemove(ctx, containerName(instanceID), client.ContainerRemoveOptions{
 		Force:         true,
 		RemoveVolumes: true,
 	})
@@ -210,7 +209,7 @@ func (p *Provider) Start(ctx context.Context, instanceID id.ID) error {
 			continue
 		}
 
-		if startErr := p.cli.ContainerStart(ctx, c.ID, container.StartOptions{}); startErr != nil {
+		if _, startErr := p.cli.ContainerStart(ctx, c.ID, client.ContainerStartOptions{}); startErr != nil {
 			return fmt.Errorf("docker: start %s: %w", c.Name, startErr)
 		}
 	}
@@ -231,7 +230,7 @@ func (p *Provider) Stop(ctx context.Context, instanceID id.ID) error {
 			continue
 		}
 
-		if stopErr := p.cli.ContainerStop(ctx, c.ID, container.StopOptions{}); stopErr != nil {
+		if _, stopErr := p.cli.ContainerStop(ctx, c.ID, client.ContainerStopOptions{}); stopErr != nil {
 			return fmt.Errorf("docker: stop %s: %w", c.Name, stopErr)
 		}
 	}
@@ -253,7 +252,7 @@ func (p *Provider) Restart(ctx context.Context, instanceID id.ID) error {
 			continue
 		}
 
-		if rstErr := p.cli.ContainerRestart(ctx, c.ID, container.StopOptions{}); rstErr != nil {
+		if _, rstErr := p.cli.ContainerRestart(ctx, c.ID, client.ContainerRestartOptions{}); rstErr != nil {
 			return fmt.Errorf("docker: restart %s: %w", c.Name, rstErr)
 		}
 	}
@@ -287,7 +286,7 @@ func (p *Provider) Status(ctx context.Context, instanceID id.ID) (*provider.Inst
 	)
 
 	for _, c := range containers {
-		inspect, ierr := p.cli.ContainerInspect(ctx, c.ID)
+		result, ierr := p.cli.ContainerInspect(ctx, c.ID, client.ContainerInspectOptions{})
 		if ierr != nil {
 			if cerrdefs.IsNotFound(ierr) {
 				continue
@@ -295,6 +294,8 @@ func (p *Provider) Status(ctx context.Context, instanceID id.ID) (*provider.Inst
 
 			return nil, fmt.Errorf("docker: inspect %s: %w", c.Name, ierr)
 		}
+
+		inspect := result.Container
 
 		svcState := provider.StateStopped
 
@@ -419,10 +420,12 @@ func (p *Provider) Deploy(ctx context.Context, req provider.DeployRequest) (*pro
 // the spec (ports, volumes, command, etc.) by inspecting the running
 // container before removal.
 func (p *Provider) recreateServiceContainer(ctx context.Context, req provider.DeployRequest, target provider.ServiceDeploySpec, current projectContainer) error {
-	inspect, err := p.cli.ContainerInspect(ctx, current.ID)
+	result, err := p.cli.ContainerInspect(ctx, current.ID, client.ContainerInspectOptions{})
 	if err != nil {
 		return fmt.Errorf("inspect %s: %w", current.Name, err)
 	}
+
+	inspect := result.Container
 
 	// Skip recreate when the image already matches — saves a noisy
 	// stop+start on every Deploy that follows immediate Provision.
@@ -432,7 +435,7 @@ func (p *Provider) recreateServiceContainer(ctx context.Context, req provider.De
 
 	_ = p.pullImage(ctx, target.Image)
 
-	if err := p.cli.ContainerRemove(ctx, current.ID, container.RemoveOptions{Force: true}); err != nil && !cerrdefs.IsNotFound(err) {
+	if _, err := p.cli.ContainerRemove(ctx, current.ID, client.ContainerRemoveOptions{Force: true}); err != nil && !cerrdefs.IsNotFound(err) {
 		return fmt.Errorf("remove old %s: %w", current.Name, err)
 	}
 
@@ -462,16 +465,16 @@ func (p *Provider) recreateServiceContainer(ctx context.Context, req provider.De
 		}
 	}
 
-	created, err := p.cli.ContainerCreate(ctx, cfg, hostCfg, &network.NetworkingConfig{
+	created, err := p.cli.ContainerCreate(ctx, client.ContainerCreateOptions{Config: cfg, HostConfig: hostCfg, NetworkingConfig: &network.NetworkingConfig{
 		EndpointsConfig: map[string]*network.EndpointSettings{
 			projectNetwork(req.InstanceID): {Aliases: []string{current.ServiceName}},
 		},
-	}, nil, current.Name)
+	}, Name: current.Name})
 	if err != nil {
 		return fmt.Errorf("create new %s: %w", current.Name, err)
 	}
 
-	if err := p.cli.ContainerStart(ctx, created.ID, container.StartOptions{}); err != nil {
+	if _, err := p.cli.ContainerStart(ctx, created.ID, client.ContainerStartOptions{}); err != nil {
 		return fmt.Errorf("start new %s: %w", current.Name, err)
 	}
 
@@ -503,7 +506,12 @@ func (p *Provider) Scale(_ context.Context, _ id.ID, _ provider.ResourceSpec) er
 // treats "missing sample" as a gap, not a failure, so transient
 // container-restart windows don't show up as poller errors.
 func (p *Provider) Resources(ctx context.Context, instanceID id.ID) (*provider.ResourceUsage, error) {
-	resp, err := p.cli.ContainerStatsOneShot(ctx, containerName(instanceID))
+	// The SDK can return an API error without handing its body to the caller.
+	// Cancel this request after the sample so capped error bodies release their connection.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	resp, err := p.cli.ContainerStats(ctx, containerName(instanceID), client.ContainerStatsOptions{Stream: false, IncludePreviousSample: false})
 	if err != nil {
 		if cerrdefs.IsNotFound(err) {
 			return &provider.ResourceUsage{}, nil
@@ -526,7 +534,7 @@ func (p *Provider) Resources(ctx context.Context, instanceID id.ID) (*provider.R
 // lines newer than this UTC time), and opts.Follow. Multiplexed
 // docker frames are demuxed by demuxedDockerStream.
 func (p *Provider) Logs(ctx context.Context, instanceID id.ID, opts provider.LogOptions) (io.ReadCloser, error) {
-	dockerOpts := container.LogsOptions{
+	dockerOpts := client.ContainerLogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
 		Follow:     opts.Follow,
@@ -618,7 +626,7 @@ func containerName(instanceID id.ID) string {
 // to callers but the docker provider treats them as soft failures
 // (cached image often suffices for re-provisioning).
 func (p *Provider) pullImage(ctx context.Context, ref string) error {
-	body, err := p.cli.ImagePull(ctx, ref, image.PullOptions{})
+	body, err := p.cli.ImagePull(ctx, ref, client.ImagePullOptions{})
 	if err != nil {
 		return fmt.Errorf("docker: pull %s: %w", ref, err)
 	}
@@ -632,7 +640,7 @@ func (p *Provider) pullImage(ctx context.Context, ref string) error {
 // removeIfExists drops the named container and treats NotFound as
 // success. Used before create to make Provision/Deploy idempotent.
 func (p *Provider) removeIfExists(ctx context.Context, name string) error {
-	err := p.cli.ContainerRemove(ctx, name, container.RemoveOptions{Force: true})
+	_, err := p.cli.ContainerRemove(ctx, name, client.ContainerRemoveOptions{Force: true})
 	if err != nil && !cerrdefs.IsNotFound(err) {
 		return fmt.Errorf("docker: remove pre-existing %s: %w", name, err)
 	}
@@ -645,25 +653,25 @@ func (p *Provider) removeIfExists(ctx context.Context, name string) error {
 // the same shape via endpointsFromInspect once it has the inspect
 // result in hand.
 func (p *Provider) endpointsFor(ctx context.Context, containerID, name string) ([]provider.Endpoint, error) {
-	inspect, err := p.cli.ContainerInspect(ctx, containerID)
+	result, err := p.cli.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
 	if err != nil {
 		return nil, err
 	}
 
-	return endpointsFromInspect(name, inspect.NetworkSettings.Ports), nil
+	return endpointsFromInspect(name, result.Container.NetworkSettings.Ports), nil
 }
 
 // endpointsFromInspect builds the dual-flavour endpoint list from a
 // container's port-binding map. Pure function so it's testable
 // independently of a running docker daemon.
-func endpointsFromInspect(name string, ports nat.PortMap) []provider.Endpoint {
+func endpointsFromInspect(name string, ports network.PortMap) []provider.Endpoint {
 	out := make([]provider.Endpoint, 0, len(ports)*2)
 	for natPort, bindings := range ports {
 		if natPort.Proto() != "tcp" {
 			continue
 		}
 
-		port := natPort.Int()
+		port := int(natPort.Num())
 
 		// In-network address: http://cp-<id>:<containerPort>. Other
 		// containers on the same docker network reach us here; this
@@ -702,9 +710,9 @@ func endpointsFromInspect(name string, ports nat.PortMap) []provider.Endpoint {
 // docker daemon assigns a random ephemeral port — we read it back
 // from the inspect after start. Defaults protocol to "tcp" when the
 // caller leaves it blank.
-func buildPortConfig(ports []provider.PortSpec) (nat.PortSet, nat.PortMap, error) {
-	exposed := nat.PortSet{}
-	bindings := nat.PortMap{}
+func buildPortConfig(ports []provider.PortSpec) (network.PortSet, network.PortMap, error) {
+	exposed := network.PortSet{}
+	bindings := network.PortMap{}
 
 	for _, p := range ports {
 		proto := p.Protocol
@@ -712,7 +720,7 @@ func buildPortConfig(ports []provider.PortSpec) (nat.PortSet, nat.PortMap, error
 			proto = "tcp"
 		}
 
-		port, err := nat.NewPort(proto, strconv.Itoa(p.Container))
+		port, err := network.ParsePort(strconv.Itoa(p.Container) + "/" + proto)
 		if err != nil {
 			return nil, nil, fmt.Errorf("docker: parse port %d/%s: %w", p.Container, proto, err)
 		}
@@ -724,7 +732,7 @@ func buildPortConfig(ports []provider.PortSpec) (nat.PortSet, nat.PortMap, error
 			hostPort = strconv.Itoa(p.Host)
 		}
 
-		bindings[port] = []nat.PortBinding{{HostIP: "0.0.0.0", HostPort: hostPort}}
+		bindings[port] = []network.PortBinding{{HostIP: netip.AddrFrom4([4]byte{}), HostPort: hostPort}}
 	}
 
 	return exposed, bindings, nil

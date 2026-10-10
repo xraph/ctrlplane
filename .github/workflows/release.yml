@@ -18,6 +18,9 @@ jobs:
   release:
     name: Release
     runs-on: ubuntu-latest
+    env:
+      GOTOOLCHAIN: go1.26.9
+      GOWORK: "off"
 
     steps:
       - name: Checkout

@@ -25,9 +25,9 @@ import (
 	"sort"
 
 	cerrdefs "github.com/containerd/errdefs"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/api/types/network"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/client"
 
 	"github.com/xraph/ctrlplane/id"
 	"github.com/xraph/ctrlplane/provider"
@@ -180,7 +180,7 @@ func sortByDeps(services []provider.ServiceSpec) {
 func (p *Provider) ensureProjectNetwork(ctx context.Context, instanceID id.ID, tenantID string, extraLabels map[string]string) error {
 	name := projectNetwork(instanceID)
 
-	if _, err := p.cli.NetworkInspect(ctx, name, network.InspectOptions{}); err == nil {
+	if _, err := p.cli.NetworkInspect(ctx, name, client.NetworkInspectOptions{}); err == nil {
 		return nil
 	} else if !cerrdefs.IsNotFound(err) {
 		return fmt.Errorf("docker: inspect network %s: %w", name, err)
@@ -188,7 +188,7 @@ func (p *Provider) ensureProjectNetwork(ctx context.Context, instanceID id.ID, t
 
 	labels := projectLabels(instanceID, tenantID, "", "", extraLabels)
 
-	if _, err := p.cli.NetworkCreate(ctx, name, network.CreateOptions{
+	if _, err := p.cli.NetworkCreate(ctx, name, client.NetworkCreateOptions{
 		Driver: "bridge",
 		Labels: labels,
 	}); err != nil {
@@ -214,14 +214,14 @@ func (p *Provider) createServiceContainer(ctx context.Context, req provider.Prov
 		return "", nil, err
 	}
 
-	created, err := p.cli.ContainerCreate(ctx, cfg, hostCfg, netCfg, nil, name)
+	created, err := p.cli.ContainerCreate(ctx, client.ContainerCreateOptions{Config: cfg, HostConfig: hostCfg, NetworkingConfig: netCfg, Name: name})
 	if err != nil {
 		return "", nil, fmt.Errorf("create container %s: %w", name, err)
 	}
 
-	if err := p.cli.ContainerStart(ctx, created.ID, container.StartOptions{}); err != nil {
+	if _, err := p.cli.ContainerStart(ctx, created.ID, client.ContainerStartOptions{}); err != nil {
 		// Best-effort cleanup so retries don't trip the unique-name check.
-		_ = p.cli.ContainerRemove(ctx, created.ID, container.RemoveOptions{Force: true})
+		_, _ = p.cli.ContainerRemove(ctx, created.ID, client.ContainerRemoveOptions{Force: true})
 
 		return "", nil, fmt.Errorf("start container %s: %w", name, err)
 	}
@@ -306,10 +306,10 @@ func mergeStringMaps(a, b map[string]string) map[string]string {
 // need to know the current ServiceSpec slice (which may have changed
 // since provision).
 func (p *Provider) listProjectContainers(ctx context.Context, instanceID id.ID) ([]projectContainer, error) {
-	args := filters.NewArgs()
+	args := client.Filters{}
 	args.Add("label", "ctrlplane.project="+projectName(instanceID))
 
-	containers, err := p.cli.ContainerList(ctx, container.ListOptions{
+	containers, err := p.cli.ContainerList(ctx, client.ContainerListOptions{
 		All:     true,
 		Filters: args,
 	})
@@ -317,14 +317,14 @@ func (p *Provider) listProjectContainers(ctx context.Context, instanceID id.ID) 
 		return nil, fmt.Errorf("docker: list project containers: %w", err)
 	}
 
-	out := make([]projectContainer, 0, len(containers))
-	for _, c := range containers {
+	out := make([]projectContainer, 0, len(containers.Items))
+	for _, c := range containers.Items {
 		out = append(out, projectContainer{
 			ID:          c.ID,
 			Name:        firstName(c.Names),
 			ServiceName: c.Labels["ctrlplane.service"],
 			Role:        provider.ServiceRole(c.Labels["ctrlplane.role"]),
-			State:       c.State,
+			State:       string(c.State),
 		})
 	}
 
