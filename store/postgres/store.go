@@ -12,6 +12,7 @@ import (
 	"github.com/xraph/grove/drivers/pgdriver/pgmigrate"
 	"github.com/xraph/grove/migrate"
 
+	"github.com/xraph/ctrlplane/internal/managedstate"
 	"github.com/xraph/ctrlplane/store"
 )
 
@@ -20,16 +21,21 @@ var _ store.Store = (*Store)(nil)
 
 // Store implements store.Store using grove ORM with pgdriver.
 type Store struct {
+	*managedstate.Repository
+
 	db *grove.DB
 	pg *pgdriver.PgDB
 }
 
 // New creates a new PostgreSQL-backed store.
 func New(db *grove.DB) *Store {
-	return &Store{
+	s := &Store{
 		db: db,
 		pg: pgdriver.Unwrap(db),
 	}
+	s.Repository = managedstate.New(managedBackend{store: s})
+
+	return s
 }
 
 // DB returns the underlying grove database for direct access.

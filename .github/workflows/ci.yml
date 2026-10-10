@@ -142,7 +142,7 @@ jobs:
           cache: true
           cache-dependency-path: go.sum
       - name: Verify persistent stores and HTTP contracts
-        run: go test -race -count=1 -v ./extension/contract ./store/sqlite ./store/postgres ./store/mongo
+        run: go test -race -count=1 -v ./extension/contract ./store ./store/sqlite ./store/postgres ./store/mongo
 
   # ─── Format Check ──────────────────────────────────────────────────
   format:
