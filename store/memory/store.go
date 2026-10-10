@@ -25,10 +25,11 @@ import (
 type Store struct {
 	*managedstate.Repository
 
-	managedTargets  map[string]*managed.Target
-	managedPhysical map[string]string
-	managedReceipts map[string]managed.Receipt
-	mu              sync.RWMutex
+	managedTargets           map[string]*managed.Target
+	managedPhysical          map[string]string
+	managedReceipts          map[string]managed.Receipt
+	managedControllerRecords map[string]map[string][]byte
+	mu                       sync.RWMutex
 
 	workloads   map[string]*workload.Workload // keyed by ID string
 	instances   map[string]*instance.Instance // keyed by ID string
@@ -62,23 +63,24 @@ type Store struct {
 // New creates a new in-memory store.
 func New() *Store {
 	s := &Store{
-		managedTargets:  make(map[string]*managed.Target),
-		managedPhysical: make(map[string]string),
-		managedReceipts: make(map[string]managed.Receipt),
-		workloads:       make(map[string]*workload.Workload),
-		instances:       make(map[string]*instance.Instance),
-		deployments:     make(map[string]*deploy.Deployment),
-		releases:        make(map[string]*deploy.Release),
-		healthChecks:    make(map[string]*health.HealthCheck),
-		healthResults:   make(map[string][]health.HealthResult),
-		domains:         make(map[string]*network.Domain),
-		routes:          make(map[string]*network.Route),
-		certificates:    make(map[string]*network.Certificate),
-		secretStore:     make(map[string]*secrets.Secret),
-		templates:       make(map[string]*template.Template),
-		datacenters:     make(map[string]*datacenter.Datacenter),
-		bootstraps:      make(map[string]*bootstrap.BootstrapWorkload),
-		tenants:         make(map[string]*admin.Tenant),
+		managedControllerRecords: make(map[string]map[string][]byte),
+		managedTargets:           make(map[string]*managed.Target),
+		managedPhysical:          make(map[string]string),
+		managedReceipts:          make(map[string]managed.Receipt),
+		workloads:                make(map[string]*workload.Workload),
+		instances:                make(map[string]*instance.Instance),
+		deployments:              make(map[string]*deploy.Deployment),
+		releases:                 make(map[string]*deploy.Release),
+		healthChecks:             make(map[string]*health.HealthCheck),
+		healthResults:            make(map[string][]health.HealthResult),
+		domains:                  make(map[string]*network.Domain),
+		routes:                   make(map[string]*network.Route),
+		certificates:             make(map[string]*network.Certificate),
+		secretStore:              make(map[string]*secrets.Secret),
+		templates:                make(map[string]*template.Template),
+		datacenters:              make(map[string]*datacenter.Datacenter),
+		bootstraps:               make(map[string]*bootstrap.BootstrapWorkload),
+		tenants:                  make(map[string]*admin.Tenant),
 	}
 	s.Repository = managedstate.New(managedBackend{store: s})
 

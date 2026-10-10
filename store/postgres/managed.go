@@ -8,13 +8,53 @@ import (
 	"time"
 
 	"github.com/xraph/grove/driver"
+	"github.com/xraph/grove/drivers/pgdriver"
 
 	"github.com/xraph/ctrlplane/id"
 	"github.com/xraph/ctrlplane/internal/managedstate"
 	"github.com/xraph/ctrlplane/managed"
 )
 
-type managedBackend struct{ store *Store }
+type managedBackend struct {
+	store *Store
+	tx    *pgdriver.PgTx
+}
+
+func (b managedBackend) begin(ctx context.Context) (*pgdriver.PgTx, error) {
+	if b.tx != nil {
+		return b.tx, nil
+	}
+
+	return b.store.pg.BeginTxQuery(ctx, &driver.TxOptions{IsolationLevel: driver.LevelReadCommitted})
+}
+func (b managedBackend) commit(tx *pgdriver.PgTx) error {
+	if b.tx != nil {
+		return nil
+	}
+
+	return tx.Commit()
+}
+func (b managedBackend) rollback(tx *pgdriver.PgTx) {
+	if b.tx == nil {
+		_ = tx.Rollback()
+	}
+}
+func (b managedBackend) raw(query string, args ...any) *pgdriver.RawQuery {
+	if b.tx != nil {
+		return b.tx.NewRaw(query, args...)
+	}
+
+	return b.store.pg.NewRaw(query, args...)
+}
+
+// parentReadQuery reuses locks already taken by the outer controller transaction.
+func (b managedBackend) parentReadQuery() string {
+	if b.tx != nil {
+		return "SELECT data FROM cp_managed_targets WHERE id=$1"
+	}
+
+	return "SELECT data FROM cp_managed_targets WHERE id=$1 FOR UPDATE"
+}
 
 func decodeManaged(body []byte, tenant string) (*managed.Target, error) {
 	var t managed.Target
@@ -37,11 +77,11 @@ func managedConflict(err error) error {
 	return err
 }
 func (b managedBackend) Create(ctx context.Context, t *managed.Target) (*managed.Target, error) {
-	tx, err := b.store.pg.BeginTxQuery(ctx, &driver.TxOptions{IsolationLevel: driver.LevelReadCommitted})
+	tx, err := b.begin(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer b.rollback(tx)
 
 	var micros int64
 	if err = tx.NewRaw("SELECT (extract(epoch FROM clock_timestamp()) * 1000000)::bigint").Scan(ctx, &micros); err != nil {
@@ -61,7 +101,7 @@ func (b managedBackend) Create(ctx context.Context, t *managed.Target) (*managed
 		return nil, managedConflict(err)
 	}
 
-	if err = tx.NewRaw("SELECT data FROM cp_managed_targets WHERE id=$1 FOR UPDATE", t.InstanceID.String()).Scan(ctx, &body); err != nil {
+	if err = tx.NewRaw(b.parentReadQuery(), t.InstanceID.String()).Scan(ctx, &body); err != nil {
 		return nil, err
 	}
 
@@ -74,7 +114,7 @@ func (b managedBackend) Create(ctx context.Context, t *managed.Target) (*managed
 		return nil, managed.ErrConflict
 	}
 
-	if err = tx.Commit(); err != nil {
+	if err = b.commit(tx); err != nil {
 		return nil, err
 	}
 
@@ -83,7 +123,7 @@ func (b managedBackend) Create(ctx context.Context, t *managed.Target) (*managed
 func (b managedBackend) Read(ctx context.Context, k managed.Key) (*managed.Target, error) {
 	var body []byte
 
-	err := b.store.pg.NewRaw("SELECT data FROM cp_managed_targets WHERE id=$1", k.InstanceID.String()).Scan(ctx, &body)
+	err := b.raw("SELECT data FROM cp_managed_targets WHERE id=$1", k.InstanceID.String()).Scan(ctx, &body)
 	if isNoRows(err) {
 		return nil, managed.ErrNotFound
 	}
@@ -107,7 +147,7 @@ type managedSummaryRow struct {
 func (b managedBackend) List(ctx context.Context, q managed.PageRequest, after string) ([]managed.Summary, error) {
 	var rows []managedSummaryRow
 
-	err := b.store.pg.NewRaw(`SELECT id,tenant_id,phase,desired,revision,jsonb_array_length(data->'reservations') AS reservations
+	err := b.raw(`SELECT id,tenant_id,phase,desired,revision,jsonb_array_length(data->'reservations') AS reservations
  FROM cp_managed_targets WHERE ($1='' OR tenant_id=$1) AND id>$2 ORDER BY id LIMIT $3`, q.TenantID, after, q.Limit+1).Scan(ctx, &rows)
 	if err != nil {
 		return nil, err
@@ -123,19 +163,19 @@ func (b managedBackend) List(ctx context.Context, q managed.PageRequest, after s
 func (b managedBackend) Obligations(ctx context.Context, tenant string) (bool, error) {
 	var exists bool
 
-	err := b.store.pg.NewRaw("SELECT EXISTS(SELECT 1 FROM cp_managed_targets WHERE tenant_id=$1 AND phase<>$2)", tenant, string(managed.Deleted)).Scan(ctx, &exists)
+	err := b.raw("SELECT EXISTS(SELECT 1 FROM cp_managed_targets WHERE tenant_id=$1 AND phase<>$2)", tenant, string(managed.Deleted)).Scan(ctx, &exists)
 
 	return exists, err
 }
 func (b managedBackend) Atomic(ctx context.Context, k managed.Key, operation id.ID, digest string, fn func(*managed.Target, time.Time) (managed.Receipt, error)) (managed.Receipt, error) {
-	tx, err := b.store.pg.BeginTxQuery(ctx, &driver.TxOptions{IsolationLevel: driver.LevelReadCommitted})
+	tx, err := b.begin(ctx)
 	if err != nil {
 		return managed.Receipt{}, err
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer b.rollback(tx)
 
 	var body []byte
-	if err = tx.NewRaw("SELECT data FROM cp_managed_targets WHERE id=$1 FOR UPDATE", k.InstanceID.String()).Scan(ctx, &body); err != nil {
+	if err = tx.NewRaw(b.parentReadQuery(), k.InstanceID.String()).Scan(ctx, &body); err != nil {
 		if isNoRows(err) {
 			return managed.Receipt{}, managed.ErrNotFound
 		}
@@ -202,7 +242,7 @@ func (b managedBackend) Atomic(ctx context.Context, k managed.Key, operation id.
 		return managed.Receipt{}, err
 	}
 
-	if err = tx.Commit(); err != nil {
+	if err = b.commit(tx); err != nil {
 		return managed.Receipt{}, err
 	}
 

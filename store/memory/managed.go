@@ -11,12 +11,41 @@ import (
 	"github.com/xraph/ctrlplane/managed"
 )
 
-type managedBackend struct{ store *Store }
+type managedBackend struct {
+	store *Store
+	held  bool
+	clock time.Time
+}
+
+func (b managedBackend) lock() func() {
+	if b.held {
+		return func() {}
+	}
+
+	b.store.mu.Lock()
+
+	return b.store.mu.Unlock
+}
+func (b managedBackend) readLock() func() {
+	if b.held {
+		return func() {}
+	}
+
+	b.store.mu.RLock()
+
+	return b.store.mu.RUnlock
+}
+func (b managedBackend) timestamp() time.Time {
+	if b.held {
+		return b.clock
+	}
+
+	return now()
+}
 
 func (b managedBackend) Create(ctx context.Context, t *managed.Target) (*managed.Target, error) {
 	s := b.store
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer b.lock()()
 
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -45,7 +74,7 @@ func (b managedBackend) Create(ctx context.Context, t *managed.Target) (*managed
 		return nil, err
 	}
 
-	cloned.CreatedAt = now()
+	cloned.CreatedAt = b.timestamp()
 	s.managedTargets[k] = cloned
 	s.managedPhysical[physical] = k
 
@@ -54,8 +83,7 @@ func (b managedBackend) Create(ctx context.Context, t *managed.Target) (*managed
 func (b managedBackend) Read(ctx context.Context, k managed.Key) (*managed.Target, error) {
 	s := b.store
 
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	defer b.readLock()()
 
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -75,8 +103,7 @@ func (b managedBackend) Read(ctx context.Context, k managed.Key) (*managed.Targe
 func (b managedBackend) List(ctx context.Context, q managed.PageRequest, after string) ([]managed.Summary, error) {
 	s := b.store
 
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	defer b.readLock()()
 
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -101,8 +128,7 @@ func (b managedBackend) List(ctx context.Context, q managed.PageRequest, after s
 func (b managedBackend) Obligations(ctx context.Context, tenant string) (bool, error) {
 	s := b.store
 
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	defer b.readLock()()
 
 	if err := ctx.Err(); err != nil {
 		return false, err
@@ -118,8 +144,7 @@ func (b managedBackend) Obligations(ctx context.Context, tenant string) (bool, e
 }
 func (b managedBackend) Atomic(ctx context.Context, k managed.Key, operation id.ID, digest string, fn func(*managed.Target, time.Time) (managed.Receipt, error)) (managed.Receipt, error) {
 	s := b.store
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer b.lock()()
 
 	if err := ctx.Err(); err != nil {
 		return managed.Receipt{}, err
@@ -148,7 +173,7 @@ func (b managedBackend) Atomic(ctx context.Context, k managed.Key, operation id.
 		return managed.Receipt{}, err
 	}
 
-	result, err := fn(t, now())
+	result, err := fn(t, b.timestamp())
 	if err != nil {
 		return managed.Receipt{}, err
 	}

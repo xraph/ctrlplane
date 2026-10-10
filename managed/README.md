@@ -115,3 +115,74 @@ skips database cases. The optional restart test has separate seed and verify pha
 around an externally managed restart of an owned fixture. Normal test runs do not
 restart databases. Service authorization, remote workers and Docker qualification
 remain separate integration work.
+
+## Controller persistence
+
+Use `ControllerStore` to accept a managed action, its reserved identities,
+immutable receipt and pending audit intent in one authority transaction. Access
+attempts use the same outbox without changing desired state. Tenant, authorized
+global and configured denial scopes are explicit. Exact replay preserves original
+source identity, occurrence time and command digests. It does not authorize the
+current caller or prove delivery to an external audit sink.
+
+Memory stages the complete change under its existing mutex. PostgreSQL takes one
+controller advisory transaction lock, then physical parent locks in sorted instance
+order, then reads database time. Nested lifecycle operations share that transaction
+and only the outer operation commits. The advisory lock serializes controller
+reads and writes across tenants. This is a throughput limit; remote calls never run while
+these locks are held. Direct lifecycle operations take only their parent lock and
+never acquire the controller lock in reverse order.
+
+The progress journal and persisted continuation are recovery state. They grant no
+provider permission. Each finite provider step validates the accepted action,
+audit, immutable release association, projected rows, current parent revision and
+lease, plus the full removal closure when applicable. A committed permission marks
+possible issuance. Only a newly committed grant permits the first send; replay
+returns the original permission for inspection and cannot authorize another send.
+Result recording retains uncertainty and definitive responses separately from the
+target document. A missing result remains unresolved.
+
+Projection derives a pending Instance, an optional reserved Workload and an immutable
+Release from accepted facts. It creates no successful Deployment or route. Owner
+reuse needs retained managed provenance. Generic owners, identity collisions and
+missing projected rows refuse; replay does not recreate them. Direct store access
+remains a trusted embedding capability.
+
+New actions use the strict `ctrlplane.managed.v1` envelope inside the existing
+4096-byte Spec. Roles stay in member order. Every service pins a nonsecret startup
+binding ID, generation and digest alongside its immutable image and positive
+resource limits. This publication validates and preserves those references. It does
+not resolve credentials, start processes or attest a runtime. Legacy opaque Specs
+keep their original bytes and protection obligations and cannot gain new managed
+issue permission through this controller profile.
+
+`ValidateRoleBinding` checks an exact target/member/reservation mapping and refuses
+contradictory roles sharing a RuntimeID. This is a leaf contract, not a change to
+raw lifecycle reservation admission. The later secured service must validate the
+current snapshot and bind issuance to that same revision, then refetch after
+contention. Activation must reject contradictory persisted bindings, including
+bindings admitted by trusted raw store callers. Every incarnation still counts.
+
+Leaf transport values encode integer counters as canonical decimal strings,
+including nested identities, fences, receipts and provider steps. Checked wire
+conversions preserve original bytes and stored digests; they never rehash historical
+commands during translation. Lifecycle and routing values carry bounded proofs and
+explicit command schema versions. Your trusted adapter must validate these values and
+authenticate their source before using them as evidence.
+
+New retained action, operation and association rows are limited to 256 KiB; audit
+rows to 32 KiB; provider step rows to 16 KiB; continuation rows to 32 KiB. Each opaque
+proof or command is at most 4096 bytes, tokens are at most 256 ASCII bytes, cursors
+are at most 1024 bytes, and controller pages and pending continuation keys are at
+most 64 entries. The first profile permits at most 32 services and 98 distinct
+steps: one network create, service creates and starts, service removals, and one
+network removal. The Spec byte limit can reduce the number of representable
+services. Separate history and receipt rows preserve completion headroom without
+changing the existing 8 MiB target bound. Retained rows have no reclamation policy.
+
+Controller persistence supplies no running controller, provider executor, public
+managed endpoint, Chronicle publisher or protected disclosure adapter. Your secured
+composition must close raw routes, supply machine authorization and durable
+access recording, and privately resolve pinned startup configuration. The historical
+settlement reader is a leaf interface for those consumers; this slice supplies no
+new continuation generations or invented provider evidence.
