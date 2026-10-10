@@ -496,3 +496,245 @@ func TestWorkloadCreationUsesTenantScopeBeforeMutation(t *testing.T) {
 		}
 	}
 }
+
+// candidateFaultStore preserves one real persistence authority for every service.
+// Only the selected candidate read is altered; other reads and all writes use Memory.
+type candidateFaultStore struct {
+	*memory.Store
+
+	mode            string
+	candidateID     id.ID
+	candidateSlug   string
+	fault           error
+	lookups         []string
+	candidateReads  int
+	protectionReads int
+	writes          []string
+}
+
+func (s *candidateFaultStore) GetBySlug(ctx context.Context, tenantID, slug string) (*instance.Instance, error) {
+	s.lookups = append(s.lookups, tenantID+"/"+slug)
+
+	candidate, err := s.Store.GetBySlug(ctx, tenantID, slug)
+	if err != nil || slug != s.candidateSlug {
+		return candidate, err
+	}
+
+	s.candidateReads++
+
+	switch s.mode {
+	case "wrong tenant":
+		candidate.TenantID = "foreign"
+	case "lookup failure":
+		return nil, s.fault
+	}
+
+	return candidate, nil
+}
+
+func (s *candidateFaultStore) InspectManagedProtection(ctx context.Context, key managed.Key) (managed.Protection, error) {
+	if key.InstanceID != s.candidateID {
+		return s.Store.InspectManagedProtection(ctx, key)
+	}
+
+	s.protectionReads++
+
+	if key.TenantID != "tenant" {
+		return managed.Protection{}, managed.ErrInvalid
+	}
+
+	switch s.mode {
+	case "protection read failure":
+		return managed.Protection{}, s.fault
+	case "malformed protection phase":
+		return managed.Protection{Phase: managed.Deleted}, nil
+	case "malformed protection revision":
+		return managed.Protection{Revision: 1}, nil
+	}
+
+	return s.Store.InspectManagedProtection(ctx, key)
+}
+
+func (s *candidateFaultStore) InsertWorkload(ctx context.Context, w *workload.Workload) error {
+	s.writes = append(s.writes, "insert workload")
+
+	return s.Store.InsertWorkload(ctx, w)
+}
+
+func (s *candidateFaultStore) UpdateWorkload(ctx context.Context, w *workload.Workload) error {
+	s.writes = append(s.writes, "update workload")
+
+	return s.Store.UpdateWorkload(ctx, w)
+}
+
+func (s *candidateFaultStore) DeleteWorkload(ctx context.Context, tenantID string, workloadID id.ID) error {
+	s.writes = append(s.writes, "delete workload")
+
+	return s.Store.DeleteWorkload(ctx, tenantID, workloadID)
+}
+
+func (s *candidateFaultStore) Insert(ctx context.Context, inst *instance.Instance) error {
+	s.writes = append(s.writes, "insert instance")
+
+	return s.Store.Insert(ctx, inst)
+}
+
+func (s *candidateFaultStore) Update(ctx context.Context, inst *instance.Instance) error {
+	s.writes = append(s.writes, "update instance")
+
+	return s.Store.Update(ctx, inst)
+}
+
+func (s *candidateFaultStore) Delete(ctx context.Context, tenantID string, instanceID id.ID) error {
+	s.writes = append(s.writes, "delete instance")
+
+	return s.Store.Delete(ctx, tenantID, instanceID)
+}
+
+func (s *candidateFaultStore) InsertRelease(ctx context.Context, release *deploy.Release) error {
+	s.writes = append(s.writes, "insert release")
+
+	return s.Store.InsertRelease(ctx, release)
+}
+
+func (s *candidateFaultStore) InsertDeployment(ctx context.Context, deployment *deploy.Deployment) error {
+	s.writes = append(s.writes, "insert deployment")
+
+	return s.Store.InsertDeployment(ctx, deployment)
+}
+
+func (s *candidateFaultStore) UpdateDeployment(ctx context.Context, deployment *deploy.Deployment) error {
+	s.writes = append(s.writes, "update deployment")
+
+	return s.Store.UpdateDeployment(ctx, deployment)
+}
+
+func TestWorkloadCandidateFailuresPreserveAllState(t *testing.T) {
+	for _, op := range []string{"create", "scale", "resume"} {
+		for _, mode := range []string{"wrong tenant", "nil instance ID", "wrong ID prefix", "lookup failure", "protection read failure", "malformed protection phase", "malformed protection revision"} {
+			t.Run(op+"/"+mode, func(t *testing.T) {
+				backing := memory.New()
+				s := &candidateFaultStore{Store: backing, mode: mode, fault: errors.New("candidate read failed")}
+				policy := &creationPolicy{allowTenant: true}
+				ctx := auth.WithClaims(t.Context(), &auth.Claims{SubjectID: "operator", TenantID: "tenant"})
+				runtime := &mutationProvider{}
+				registry := provider.NewRegistry()
+				registry.Register("fixture", runtime)
+
+				bus := event.NewInMemoryBus()
+				instances := instance.NewService(s, registry, bus, policy, nil)
+				deployments := deploy.NewService(s, s, registry, bus, policy, nil)
+				svc := workload.NewService(s, instances, deployments, nil, nil, nil, nil, bus, policy)
+				w := workload.NewWorkload()
+				w.TenantID, w.Slug, w.Name, w.ProviderName = "tenant", "worker", "worker", "fixture"
+				w.State, w.ReplicaCount, w.PreviousReplicas = workload.StateActive, 1, 3
+				w.Services = []provider.ServiceSpec{{Name: "worker", Image: "before", Role: provider.RoleMain}}
+				candidate := &instance.Instance{Entity: ctrlplane.NewEntity(id.PrefixInstance), TenantID: "tenant", Name: "candidate", Slug: "worker-1", State: provider.StateRunning, ProviderName: "fixture", Services: w.Services}
+				wantLookups := []string{"tenant/worker-0", "tenant/worker-1"}
+
+				if op != "create" {
+					if op == "resume" {
+						w.State = workload.StatePaused
+					}
+
+					if err := backing.InsertWorkload(ctx, w); err != nil {
+						t.Fatal(err)
+					}
+
+					existing := &instance.Instance{Entity: ctrlplane.NewEntity(id.PrefixInstance), TenantID: "tenant", Name: "existing", Slug: "worker-3", State: provider.StateRunning, ProviderName: "fixture", Services: w.Services, Labels: map[string]string{"ctrlplane.workload": w.ID.String(), "ctrlplane.replica_index": "3"}}
+					if err := backing.Insert(ctx, existing); err != nil {
+						t.Fatal(err)
+					}
+
+					candidate.Slug = "worker-5"
+					wantLookups = []string{"tenant/worker-4", "tenant/worker-5"}
+				}
+
+				switch mode {
+				case "nil instance ID":
+					candidate.ID = id.ID{}
+				case "wrong ID prefix":
+					candidate.ID = id.New(id.PrefixWorkload)
+				}
+
+				if err := backing.Insert(ctx, candidate); err != nil {
+					t.Fatal(err)
+				}
+
+				s.candidateID, s.candidateSlug = candidate.ID, candidate.Slug
+
+				beforeParents, err := backing.ListWorkloads(ctx, "tenant", workload.ListOptions{})
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				beforeChildren, err := backing.List(ctx, "tenant", instance.ListOptions{})
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				switch op {
+				case "create":
+					_, err = svc.Create(ctx, workload.CreateRequest{Name: "worker", ProviderName: "fixture", Services: w.Services, Replicas: 2})
+				case "scale":
+					_, err = svc.Scale(ctx, w.ID, 3)
+				case "resume":
+					err = svc.Resume(ctx, w.ID)
+				}
+
+				wantErr, wantProtectionReads, wantRefusal := managed.ErrAuthority, 1, true
+
+				switch mode {
+				case "wrong tenant":
+					wantErr, wantProtectionReads, wantRefusal = ctrlplane.ErrForbidden, 0, false
+				case "nil instance ID", "wrong ID prefix":
+					wantErr, wantProtectionReads = managed.ErrInvalid, 0
+				case "lookup failure":
+					wantErr, wantProtectionReads, wantRefusal = s.fault, 0, false
+				case "protection read failure":
+					wantErr = managed.ErrUnavailable
+
+					if !errors.Is(err, s.fault) {
+						t.Fatalf("protection read cause lost: %v", err)
+					}
+				}
+
+				if !errors.Is(err, wantErr) {
+					t.Fatalf("candidate refusal: %v want %v", err, wantErr)
+				}
+
+				var refusal *managed.RefusalError
+
+				if errors.As(err, &refusal) != wantRefusal {
+					t.Fatalf("wrong refusal type: %T %v", err, err)
+				}
+
+				if wantRefusal && (refusal.Action != "instances.create" || refusal.Operation != "replacement") {
+					t.Fatalf("wrong refusal action: %+v", refusal)
+				}
+
+				if !reflect.DeepEqual(s.lookups, wantLookups) || s.candidateReads != 1 || s.protectionReads != wantProtectionReads {
+					t.Fatalf("wrong candidate branch: lookups=%v candidate=%d protection=%d", s.lookups, s.candidateReads, s.protectionReads)
+				}
+
+				if len(s.writes) != 0 || runtime.calls != 0 {
+					t.Fatalf("refusal mutated state: writes=%v runtime=%d", s.writes, runtime.calls)
+				}
+
+				afterParents, err := backing.ListWorkloads(ctx, "tenant", workload.ListOptions{})
+				if err != nil || !reflect.DeepEqual(beforeParents, afterParents) {
+					t.Fatalf("parents changed: %+v %v", afterParents, err)
+				}
+
+				afterChildren, err := backing.List(ctx, "tenant", instance.ListOptions{})
+				if err != nil || !reflect.DeepEqual(beforeChildren, afterChildren) {
+					t.Fatalf("children changed: %+v %v", afterChildren, err)
+				}
+
+				for _, child := range beforeChildren.Items {
+					assertNoReleaseWrites(t, backing, child.ID)
+				}
+			})
+		}
+	}
+}
