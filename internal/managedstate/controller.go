@@ -539,8 +539,12 @@ func (r *Repository) ProjectManagedRows(ctx context.Context, q managed.Projectio
 
 		saved, readErr := controllerRead[managed.ProjectionReceipt](ctx, tx, "projection", q.TenantID, q.ActionID.String())
 		if readErr == nil {
-			if saved.Digest != fingerprint {
+			if saved.ID != q.ID || saved.Digest != fingerprint {
 				return managed.ErrConflict
+			}
+
+			if err = projectionAssociations(ctx, tx, target.Identity, operation, saved); err != nil {
+				return err
 			}
 
 			if err = tx.ProjectRows(ctx, target.Identity, operation.Receipt, true); err != nil {
@@ -594,6 +598,39 @@ func (r *Repository) ProjectManagedRows(ctx context.Context, q managed.Projectio
 	}
 
 	return out, nil
+}
+
+// projectionAssociations recovers every retained association without repairing history.
+func projectionAssociations(ctx context.Context, tx ControllerTransaction, target managed.Identity, operation managed.OperationState, receipt managed.ProjectionReceipt) error {
+	owner, err := managed.ProjectionOwner(target)
+	if err != nil {
+		return err
+	}
+
+	if operation.Submission.NewTarget == nil || !EqualIdentity(*operation.Submission.NewTarget, target) || receipt.Target != target.Key || receipt.ActionID != operation.Key.ActionID || receipt.ReleaseID != operation.Receipt.ReleaseID || receipt.OwnerID != owner || receipt.SpecDigest != target.Manifest.SpecDigest || receipt.Stage != managed.ProjectionPending {
+		return managed.ErrConflict
+	}
+
+	binding, err := controllerRead[managed.ReleaseBinding](ctx, tx, "release", target.TenantID, receipt.ReleaseID.String())
+	if err != nil {
+		return err
+	}
+
+	expected := managed.ReleaseBinding{Key: managed.ReleaseKey{TenantID: target.TenantID, ReleaseID: receipt.ReleaseID}, Target: target.Key, ActionID: receipt.ActionID, Manifest: target.Manifest, Version: 1, AcceptedAt: operation.Receipt.AcceptedAt}
+	if !reflect.DeepEqual(binding, expected) {
+		return managed.ErrConflict
+	}
+
+	saved, err := controllerRead[managed.ProjectionReceipt](ctx, tx, "target_projection", target.TenantID, target.InstanceID.String())
+	if err != nil {
+		return err
+	}
+
+	if !reflect.DeepEqual(saved, receipt) {
+		return managed.ErrConflict
+	}
+
+	return nil
 }
 
 // ReadManagedRelease reads an immutable accepted manifest association in tenant scope.
@@ -809,6 +846,40 @@ func ProjectionOwnerOrigin(ctx context.Context, tx ControllerTransaction, target
 	origin, err := tx.Read(ctx, saved.Origin)
 	if err != nil {
 		return managed.Identity{}, err
+	}
+
+	originOwner, err := managed.ProjectionOwner(origin.Identity)
+	if err != nil {
+		return managed.Identity{}, err
+	}
+
+	if saved.OwnerID != owner || originOwner != owner {
+		return managed.Identity{}, managed.ErrAuthority
+	}
+
+	if origin.Key != target.Key {
+		projection, err := controllerRead[managed.ProjectionReceipt](ctx, tx, "target_projection", origin.TenantID, origin.InstanceID.String())
+		if err != nil {
+			return managed.Identity{}, err
+		}
+
+		operation, err := acceptedOperation(ctx, tx, managed.OperationKey{Key: origin.Key, ActionID: projection.ActionID})
+		if err != nil {
+			return managed.Identity{}, err
+		}
+
+		savedProjection, err := controllerRead[managed.ProjectionReceipt](ctx, tx, "projection", origin.TenantID, projection.ActionID.String())
+		if err != nil {
+			return managed.Identity{}, err
+		}
+
+		if !reflect.DeepEqual(projection, savedProjection) {
+			return managed.Identity{}, managed.ErrConflict
+		}
+
+		if err = projectionAssociations(ctx, tx, origin.Identity, operation, projection); err != nil {
+			return managed.Identity{}, err
+		}
 	}
 
 	return origin.Identity, nil

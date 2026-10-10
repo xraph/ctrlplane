@@ -13,6 +13,7 @@ import (
 	ctrlplane "github.com/xraph/ctrlplane"
 	"github.com/xraph/ctrlplane/id"
 	"github.com/xraph/ctrlplane/instance"
+	"github.com/xraph/ctrlplane/internal/managedstate"
 	"github.com/xraph/ctrlplane/managed"
 	"github.com/xraph/ctrlplane/managedservice"
 	"github.com/xraph/ctrlplane/store"
@@ -491,8 +492,8 @@ func TestManagedControllerWireIntegers(t *testing.T) {
 		t.Fatalf("receipt round trip: %v", err)
 	}
 
-	permission := managed.ProviderStepPermission{Step: managed.ProviderStepKey{OperationKey: managed.OperationKey{Key: q.Key, ActionID: q.ID}, ProviderOperationID: q.NewTarget.ProvisionOperationID, Kind: managed.StepCreateNetwork}, CommandID: q.ID, Digest: q.CanonicalDigest, SpecDigest: q.NewTarget.Manifest.SpecDigest, Seal: 9007199254740993, Revision: 1<<63 - 1}
-	step := managed.ProviderStepRecord{Permission: permission, Result: &managed.ProviderStepResult{Permission: permission, Evidence: []byte("original-result"), Outcome: managed.PortTerminal, ResourceID: "network"}}
+	permission := managed.ProviderStepPermission{Step: managed.ProviderStepKey{OperationKey: managed.OperationKey{Key: q.Key, ActionID: q.ID}, ProviderOperationID: q.NewTarget.ProvisionOperationID, Kind: managed.StepCreateNetwork}, CommandID: q.ID, Digest: q.CanonicalDigest, SpecDigest: q.NewTarget.Manifest.SpecDigest, CreateProfile: "ctrlplane.managed.create.v1", Physical: q.NewTarget.Physical, IssuedAt: q.OccurredAt, Seal: 9007199254740993, Revision: 1<<63 - 1}
+	step := managed.ProviderStepRecord{Permission: permission, Result: &managed.ProviderStepResult{Permission: permission, Evidence: []byte("original-result"), Outcome: managed.PortTerminal, ResourceID: "network", ObservedAt: q.OccurredAt}}
 	wireStep := managed.ProviderStepWire(step)
 
 	restoredStep, err := wireStep.Value()
@@ -684,8 +685,181 @@ func TestManagedControllerPortBounds(t *testing.T) {
 		t.Fatal("wire expansion exceeds result bound")
 	}
 
+	if restored, conversionErr := wire.Value(); conversionErr != nil || !reflect.DeepEqual(restored, record) {
+		t.Fatalf("maximum wire result rejected or changed: %v", conversionErr)
+	}
+
 	wire.Result.Evidence = append(wire.Result.Evidence, 'x')
 	if _, err = wire.Value(); !errors.Is(err, managed.ErrCapacity) {
 		t.Fatalf("oversized wire proof: %v", err)
+	}
+}
+
+func TestManagedProjectionOccupiedReservedOwner(t *testing.T) {
+	for _, backend := range []string{"memory", "postgres"} {
+		t.Run(backend, func(t *testing.T) {
+			authority := controllerStore(t, backend)
+			s := authority.(store.Store)
+			q, f, request := acceptedController(t, authority)
+
+			operation, err := authority.ReadManagedOperation(t.Context(), managed.OperationKey{Key: q.Key, ActionID: q.ID})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			_, owner, _, err := managedstate.ProjectionEntities(*q.NewTarget, operation.Receipt, *q.NewTarget)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			owner.Name = "generic-owner"
+			owner.Slug = "generic-owner"
+
+			owner.Labels = map[string]string{"generic": "true"}
+			if err = s.InsertWorkload(t.Context(), owner); err != nil {
+				t.Fatal(err)
+			}
+
+			before := f.target()
+
+			receipt, err := authority.ProjectManagedRows(t.Context(), request)
+			if !errors.Is(err, managed.ErrConflict) || !receipt.ID.IsNil() {
+				t.Fatalf("adopted occupied reservation: %v", err)
+			}
+
+			if !reflect.DeepEqual(before, f.target()) {
+				t.Fatal("failed projection changed managed target")
+			}
+
+			if _, err = s.GetByID(t.Context(), q.TenantID, q.InstanceID); !errors.Is(err, ctrlplane.ErrNotFound) {
+				t.Fatalf("partial instance: %v", err)
+			}
+
+			if _, err = s.GetRelease(t.Context(), q.TenantID, q.ReleaseID); !errors.Is(err, ctrlplane.ErrNotFound) {
+				t.Fatalf("partial release: %v", err)
+			}
+
+			if _, err = authority.ReadManagedRelease(t.Context(), managed.ReleaseKey{TenantID: q.TenantID, ReleaseID: q.ReleaseID}); !errors.Is(err, managed.ErrNotFound) {
+				t.Fatalf("partial association: %v", err)
+			}
+
+			recovered, err := s.GetWorkloadByID(t.Context(), q.TenantID, owner.ID)
+			if err != nil || recovered.Name != owner.Name || recovered.Labels["generic"] != "true" {
+				t.Fatalf("generic owner rewritten: %v", err)
+			}
+		})
+	}
+}
+
+func TestManagedControllerNestedPortValidation(t *testing.T) {
+	q := controllerAction(t)
+	permission := managed.ProviderStepPermission{Step: managed.ProviderStepKey{OperationKey: managed.OperationKey{Key: q.Key, ActionID: q.ID}, ProviderOperationID: q.NewTarget.ProvisionOperationID, Kind: managed.StepRemoveContainer, Service: "api"}, CommandID: q.ID, Digest: q.CanonicalDigest, SpecDigest: q.NewTarget.Manifest.SpecDigest, CreateProfile: "ctrlplane.managed.create.v1", Physical: q.NewTarget.Physical, Seal: 1<<63 - 1, FenceDigest: strings.Repeat("f", 64), ResourceID: "container", IssuedAt: q.OccurredAt, Revision: 1<<63 - 1}
+	record := managed.ProviderStepRecord{Permission: permission, Result: &managed.ProviderStepResult{Permission: permission, Outcome: managed.PortTerminal, ResourceID: "container", Evidence: []byte{0, 255, 1, 128}, ObservedAt: q.OccurredAt}}
+	valid := managed.ProviderStepWire(record)
+	historyRequest := managed.HistoricalSettlementRequest{Key: q.Key, SchemaVersion: "1", Installation: q.Installation, Authority: q.Authority, ManifestDigest: q.NewTarget.Manifest.SpecDigest, Seal: "9223372036854775807", AttemptID: q.ID, AttemptGeneration: "1", ProviderOperationID: q.NewTarget.ProvisionOperationID, FenceDigest: permission.FenceDigest}
+
+	for _, outer := range []string{"execution", "history"} {
+		validate := func(t *testing.T, wire managed.WireProviderStepRecord) error {
+			t.Helper()
+
+			if outer == "execution" {
+				value := managed.ProviderExecutionResult{SchemaVersion: "1", Outcome: managed.PortTerminal, OperationID: q.NewTarget.ProvisionOperationID, Steps: []managed.WireProviderStepRecord{wire}}
+
+				raw, err := json.Marshal(value)
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				var decoded managed.ProviderExecutionResult
+				if err = json.Unmarshal(raw, &decoded); err != nil {
+					t.Fatal(err)
+				}
+
+				return decoded.Validate()
+			}
+
+			value := managed.HistoricalSettlement{Request: historyRequest, Physical: q.NewTarget.Physical, Steps: []managed.WireProviderStepRecord{wire}, Receipt: managed.ReceiptWire(managed.Receipt{ID: q.ID, Digest: q.CanonicalDigest, Revision: 1, LeaseEpoch: 1})}
+
+			raw, err := json.Marshal(value)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			var decoded managed.HistoricalSettlement
+			if err = json.Unmarshal(raw, &decoded); err != nil {
+				t.Fatal(err)
+			}
+
+			return decoded.Validate()
+		}
+		t.Run(outer, func(t *testing.T) {
+			if err := validate(t, valid); err != nil {
+				t.Fatalf("valid baseline: %v", err)
+			}
+
+			tests := []struct {
+				name   string
+				change func(*managed.WireProviderStepRecord)
+			}{
+				{"permission_resource_257", func(w *managed.WireProviderStepRecord) { w.Permission.ResourceID = strings.Repeat("r", 257) }},
+				{"result_resource_257", func(w *managed.WireProviderStepRecord) { w.Result.ResourceID = strings.Repeat("r", 257) }},
+				{"physical_token_257", func(w *managed.WireProviderStepRecord) { w.Permission.Physical.Project = strings.Repeat("p", 257) }},
+				{"tenant_token_257", func(w *managed.WireProviderStepRecord) { w.Permission.Step.TenantID = strings.Repeat("t", 257) }},
+				{"service_257", func(w *managed.WireProviderStepRecord) { w.Permission.Step.Service = strings.Repeat("s", 257) }},
+				{"digest_syntax", func(w *managed.WireProviderStepRecord) { w.Permission.Digest = strings.Repeat("g", 64) }},
+				{"spec_digest_syntax", func(w *managed.WireProviderStepRecord) { w.Permission.SpecDigest = "invalid" }},
+				{"fence_digest_syntax", func(w *managed.WireProviderStepRecord) { w.Permission.FenceDigest = "invalid" }},
+				{"command_prefix", func(w *managed.WireProviderStepRecord) { w.Permission.CommandID = id.New(id.PrefixInstance) }},
+				{"step_kind", func(w *managed.WireProviderStepRecord) { w.Permission.Step.Kind = "arbitrary" }},
+				{"profile", func(w *managed.WireProviderStepRecord) { w.Permission.CreateProfile = "arbitrary" }},
+				{"oversized_step", func(w *managed.WireProviderStepRecord) {
+					w.Result.ResourceID = strings.Repeat("r", managed.MaxProviderStep+1)
+				}},
+				{"permission_copy", func(w *managed.WireProviderStepRecord) {
+					w.Result.Permission.CommandID = id.New(managed.PrefixOperation)
+				}},
+				{"seal_domain", func(w *managed.WireProviderStepRecord) { w.Permission.Seal = "9223372036854775808" }},
+				{"result_permission_token", func(w *managed.WireProviderStepRecord) {
+					w.Result.Permission.Physical.Provider = strings.Repeat("p", 257)
+				}},
+			}
+			for _, test := range tests {
+				t.Run(test.name, func(t *testing.T) {
+					wire := managed.ProviderStepWire(record)
+					test.change(&wire)
+
+					if err := validate(t, wire); err == nil {
+						t.Fatal("invalid nested payload accepted")
+					}
+				})
+			}
+		})
+	}
+
+	restored, err := valid.Value()
+	if err != nil || !reflect.DeepEqual(restored, record) {
+		t.Fatalf("opaque bytes or stored permission digest changed: %v", err)
+	}
+
+	request := historyRequest
+
+	request.Seal = "9223372036854775808"
+	if err = request.Validate(); !errors.Is(err, managed.ErrInvalid) {
+		t.Fatalf("historical seal domain: %v", err)
+	}
+
+	command := managed.PortCommand{SchemaVersion: "1", OperationID: q.ID, RequestID: "request", Original: []byte("original"), Native: []byte("translated")}
+	command.OriginalDigest = managed.Digest(command.Original)
+	command.NativeDigest = managed.Digest(command.Native)
+	member := q.NewTarget.Manifest.Members[0]
+
+	binding := managed.RemovalBinding{LifecycleRequest: managed.LifecycleRequest{Command: command, Binding: managed.RoleBinding{Target: managed.IdentityWire(*q.NewTarget), MemberIndex: "0", MemberName: member.Name, Role: managed.Polling, ReservationID: id.New(managed.PrefixReservation), ReservationVersion: "1", RuntimeID: "runtime", InstanceID: "native", HostID: "host", NativeBuild: member.Build, ConfigurationDigest: member.ConfigurationDigest, EnrollmentEvidence: []byte("enrolled")}}, AttemptID: q.ID, AttemptGeneration: "1", ProviderOperationID: q.NewTarget.ProvisionOperationID, Seal: "9223372036854775807", Fence: managed.FenceWire(managed.Fence{Epoch: ^uint64(0), Evidence: []byte("fence"), CompatibilityEvidence: []byte("compatibility"), Digest: permission.FenceDigest}), SurvivorProof: []byte("survivors")}
+	if err = binding.Validate(); err != nil {
+		t.Fatalf("valid removal baseline: %v", err)
+	}
+
+	binding.Seal = "9223372036854775808"
+	if err = binding.Validate(); !errors.Is(err, managed.ErrInvalid) {
+		t.Fatalf("removal seal domain: %v", err)
 	}
 }

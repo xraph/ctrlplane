@@ -75,7 +75,7 @@ func (t managedControllerTransaction) ProjectRows(ctx context.Context, target ma
 
 		err = t.tx.NewSelect(&wm).Where("id=$1", owner.ID.String()).Scan(ctx)
 		if err == nil {
-			if !managedstate.EqualProjectedOwner(fromWorkloadModel(&wm), owner) {
+			if !replay && origin.Key == target.Key || !managedstate.EqualProjectedOwner(fromWorkloadModel(&wm), owner) {
 				return managed.ErrConflict
 			}
 		} else {

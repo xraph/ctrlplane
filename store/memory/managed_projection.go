@@ -49,7 +49,7 @@ func (t managedControllerTransaction) ProjectRows(ctx context.Context, target ma
 	if owner != nil {
 		oldOwner := t.store.workloads[owner.ID.String()]
 		if oldOwner != nil {
-			if !managedstate.EqualProjectedOwner(oldOwner, owner) {
+			if !replay && origin.Key == target.Key || !managedstate.EqualProjectedOwner(oldOwner, owner) {
 				return managed.ErrConflict
 			}
 		} else {

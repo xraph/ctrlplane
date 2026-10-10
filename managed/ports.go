@@ -571,9 +571,9 @@ func ProviderPermissionWire(v ProviderStepPermission) WireProviderStepPermission
 	return WireProviderStepPermission{Step: v.Step, CommandID: v.CommandID, Digest: v.Digest, SpecDigest: v.SpecDigest, CreateProfile: v.CreateProfile, Physical: v.Physical, Seal: Decimal(strconv.FormatUint(v.Seal, 10)), FenceDigest: v.FenceDigest, ResourceID: v.ResourceID, IssuedAt: v.IssuedAt, Revision: Decimal(strconv.FormatUint(v.Revision, 10))}
 }
 
-// Value checks canonical counters before restoring a stored permission.
+// Value checks the complete bounded permission before restoring its stored value.
 func (w WireProviderStepPermission) Value() (ProviderStepPermission, error) {
-	seal, err := w.Seal.Uint64()
+	seal, err := wireSeal(w.Seal)
 	if err != nil {
 		return ProviderStepPermission{}, err
 	}
@@ -583,7 +583,32 @@ func (w WireProviderStepPermission) Value() (ProviderStepPermission, error) {
 		return ProviderStepPermission{}, err
 	}
 
-	if revision == 0 || revision > 1<<63-1 || seal > 1<<63-1 {
+	if revision == 0 || revision > 1<<63-1 {
+		return ProviderStepPermission{}, ErrInvalid
+	}
+
+	if !wireToken(w.Step.TenantID) || w.Step.InstanceID.Prefix() != id.PrefixInstance || w.Step.ActionID.Prefix() != PrefixOperation || w.Step.ProviderOperationID.Prefix() != PrefixOperation || w.CommandID.Prefix() != PrefixOperation || !hexDigest(w.Digest) || !hexDigest(w.SpecDigest) || w.CreateProfile != "ctrlplane.managed.create.v1" || !wireToken(w.Physical.Provider) || !wireToken(w.Physical.Placement) || !wireToken(w.Physical.Project) || !wireToken(w.Physical.Generation) || w.ResourceID != "" && !wireToken(w.ResourceID) || w.IssuedAt.IsZero() {
+		return ProviderStepPermission{}, ErrInvalid
+	}
+
+	switch w.Step.Kind {
+	case StepCreateNetwork, StepRemoveNetwork:
+		if w.Step.Service != "" {
+			return ProviderStepPermission{}, ErrInvalid
+		}
+	case StepCreateContainer, StepStartContainer, StepRemoveContainer:
+		if !wireToken(w.Step.Service) {
+			return ProviderStepPermission{}, ErrInvalid
+		}
+	default:
+		return ProviderStepPermission{}, ErrInvalid
+	}
+
+	if w.Step.Kind == StepRemoveContainer || w.Step.Kind == StepRemoveNetwork {
+		if seal == 0 || !hexDigest(w.FenceDigest) || !wireToken(w.ResourceID) {
+			return ProviderStepPermission{}, ErrInvalid
+		}
+	} else if w.FenceDigest != "" {
 		return ProviderStepPermission{}, ErrInvalid
 	}
 
@@ -601,7 +626,7 @@ func ProviderStepWire(v ProviderStepRecord) WireProviderStepRecord {
 	return w
 }
 
-// Value validates both permission copies and the individual response bound.
+// Value validates matching permission copies and the complete encoded step bound.
 func (w WireProviderStepRecord) Value() (ProviderStepRecord, error) {
 	permission, err := w.Permission.Value()
 	if err != nil {
@@ -622,10 +647,36 @@ func (w WireProviderStepRecord) Value() (ProviderStepRecord, error) {
 			return ProviderStepRecord{}, ErrCapacity
 		}
 
+		if p != permission {
+			return ProviderStepRecord{}, ErrConflict
+		}
+
+		if r.ResourceID != "" && !wireToken(r.ResourceID) || r.Diagnostic != "" && !wireToken(r.Diagnostic) || r.Outcome != PortTerminal && r.Outcome != PortUnavailable || r.ObservedAt.IsZero() || r.ObservedAt.Before(permission.IssuedAt) {
+			return ProviderStepRecord{}, ErrInvalid
+		}
+
 		v.Result = &ProviderStepResult{Permission: p, Outcome: r.Outcome, ResourceID: r.ResourceID, Evidence: append([]byte(nil), r.Evidence...), ObservedAt: r.ObservedAt, Diagnostic: r.Diagnostic}
 	}
 
+	raw, err := json.Marshal(w)
+	if err != nil {
+		return ProviderStepRecord{}, err
+	}
+
+	if len(raw) > MaxProviderStep {
+		return ProviderStepRecord{}, ErrCapacity
+	}
+
 	return v, nil
+}
+
+func wireSeal(value Decimal) (uint64, error) {
+	seal, err := value.Uint64()
+	if err != nil || seal > 1<<63-1 {
+		return 0, ErrInvalid
+	}
+
+	return seal, nil
 }
 
 // Validate checks the frozen command envelopes without translating their digest domains.
@@ -758,7 +809,11 @@ func (q RemovalBinding) Validate() error {
 		return err
 	}
 
-	if q.AttemptID.Prefix() != PrefixOperation || q.ProviderOperationID.Prefix() != PrefixOperation || !wireDecimals(q.AttemptGeneration, q.Seal) || q.AttemptGeneration == "0" || q.Seal == "0" || !wireProof(q.SurvivorProof) {
+	if _, err := wireSeal(q.Seal); err != nil {
+		return err
+	}
+
+	if q.AttemptID.Prefix() != PrefixOperation || q.ProviderOperationID.Prefix() != PrefixOperation || !wireDecimals(q.AttemptGeneration) || q.AttemptGeneration == "0" || q.Seal == "0" || !wireProof(q.SurvivorProof) {
 		return ErrInvalid
 	}
 
@@ -900,7 +955,11 @@ func (q RemovalPlan) Validate() error {
 
 // Validate checks the historical request without accepting a caller-selected verifier.
 func (q HistoricalSettlementRequest) Validate() error {
-	if q.SchemaVersion != "1" || !wireToken(q.TenantID) || q.InstanceID.Prefix() != id.PrefixInstance || !wireToken(q.Installation) || !wireToken(q.Authority) || !hexDigest(q.ManifestDigest) || !wireDecimals(q.Seal, q.AttemptGeneration) || q.Seal == "0" || q.AttemptGeneration == "0" || q.AttemptID.Prefix() != PrefixOperation || q.ProviderOperationID.Prefix() != PrefixOperation || !hexDigest(q.FenceDigest) {
+	if _, err := wireSeal(q.Seal); err != nil {
+		return err
+	}
+
+	if q.SchemaVersion != "1" || !wireToken(q.TenantID) || q.InstanceID.Prefix() != id.PrefixInstance || !wireToken(q.Installation) || !wireToken(q.Authority) || !hexDigest(q.ManifestDigest) || !wireDecimals(q.AttemptGeneration) || q.Seal == "0" || q.AttemptGeneration == "0" || q.AttemptID.Prefix() != PrefixOperation || q.ProviderOperationID.Prefix() != PrefixOperation || !hexDigest(q.FenceDigest) {
 		return ErrInvalid
 	}
 
