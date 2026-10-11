@@ -23,6 +23,10 @@ import (
 func quiescenceClock(t *testing.T, s managed.ControllerStore) time.Time {
 	t.Helper()
 
+	if action, ok := s.(*quiescenceActionStore); ok {
+		return quiescenceClock(t, action.Authority)
+	}
+
 	if pg, ok := s.(*postgres.Store); ok {
 		var micros int64
 		if err := pgdriver.Unwrap(pg.DB()).NewRaw("SELECT (extract(epoch FROM clock_timestamp())*1000000)::bigint").Scan(t.Context(), &micros); err != nil {
@@ -1001,6 +1005,82 @@ func TestManagedQuiescenceLastIncarnation(t *testing.T) {
 			target, err := s.ReadManagedTarget(t.Context(), a.Command.Key)
 			if err != nil || len(target.Reservations) != 64 || !target.Reservations[63].Unknown || target.Deletion != nil {
 				t.Fatal("full set fixture lost unresolved obligation", err)
+			}
+		})
+	}
+}
+
+func TestManagedQuiescencePostgresHistoricalReplayCorruption(t *testing.T) {
+	for _, failure := range []string{"newer-history", "newer-receipt"} {
+		t.Run(failure, func(t *testing.T) {
+			s, _ := managedPG(t)
+			a, _ := acceptOriginalPair(t, s)
+
+			d := originalDrain(t, s, a)
+			if _, err := s.RecordManagedOriginalDrain(t.Context(), d); err != nil {
+				t.Fatal(err)
+			}
+
+			older := quiescenceRequest(t, s, a, d, false)
+			if _, err := s.AcceptManagedQuiescence(t.Context(), older); err != nil {
+				t.Fatal(err)
+			}
+
+			newer := older
+			newer.Command = originalCommand(t, s, a.Command.Key)
+			newer.Command.ReservationID = older.Command.ReservationID
+			newer.Observation.ObservedAt = quiescenceClock(t, s)
+			newer.Observation.ValidUntil = newer.Observation.ObservedAt.Add(time.Minute)
+			newer.Observation.ObservationID = "newer-observation"
+			signQuiescence(t, &newer.Observation)
+
+			if _, err := s.AcceptManagedQuiescence(t.Context(), newer); err != nil {
+				t.Fatal(err)
+			}
+
+			if _, err := s.AcceptManagedQuiescence(t.Context(), older); err != nil {
+				t.Fatal("valid historical replay", err)
+			}
+
+			pg := pgdriver.Unwrap(s.DB())
+
+			scope, err := managed.QuiescenceScope(older.Command.Key, older.Command.ReservationID)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if failure == "newer-history" {
+				_, err = pg.Exec(t.Context(), "UPDATE cp_managed_controller_records SET data='{}'::bytea WHERE kind=$1 AND scope=$2 AND key=$3", managed.QuiescenceHistory, scope, newer.Command.ID.String())
+			} else {
+				_, err = pg.Exec(t.Context(), "UPDATE cp_managed_commands SET receipt=jsonb_set(receipt,'{revision}','999') WHERE target_id=$1 AND operation_id=$2", newer.Command.InstanceID.String(), newer.Command.ID.String())
+			}
+
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			snapshot := func() []string {
+				out := []string{}
+
+				for _, table := range []string{"cp_managed_targets", "cp_managed_commands", "cp_managed_controller_records"} {
+					var raw string
+					if e := pg.NewRaw("SELECT COALESCE(jsonb_agg(rowdata ORDER BY rowdata::text),'[]'::jsonb)::text FROM (SELECT to_jsonb(t) AS rowdata FROM "+table+" t) x").Scan(t.Context(), &raw); e != nil {
+						t.Fatal(e)
+					}
+
+					out = append(out, raw)
+				}
+
+				return out
+			}
+			before := snapshot()
+
+			if _, err = s.AcceptManagedQuiescence(t.Context(), older); err == nil {
+				t.Fatal("historical replay ignored corrupt newer selection")
+			}
+
+			if after := snapshot(); !reflect.DeepEqual(after, before) {
+				t.Fatal("historical replay mutated or repaired parent, receipt, history or index")
 			}
 		})
 	}

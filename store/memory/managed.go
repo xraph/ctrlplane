@@ -173,7 +173,8 @@ func (b managedBackend) Atomic(ctx context.Context, k managed.Key, operation id.
 		return managed.Receipt{}, err
 	}
 
-	result, err := fn(t, b.timestamp())
+	// Fresh authority checks use callback time even inside a held controller transaction.
+	result, err := fn(t, now())
 	if err != nil {
 		return managed.Receipt{}, err
 	}
