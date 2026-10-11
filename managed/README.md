@@ -186,3 +186,63 @@ composition must close raw routes, supply machine authorization and durable
 access recording, and privately resolve pinned startup configuration. The historical
 settlement reader is a leaf interface for those consumers; this slice supplies no
 new continuation generations or invented provider evidence.
+
+## Original lifecycle evidence
+
+Use `AcceptManagedOriginalRegistration` and `RecordManagedOriginalDrain` when you
+need to recover the original native receipt together with its local acceptance.
+You supply leaf facts and the exact opaque receipt export. The wrapper computes
+its compact reference and commits that reference, the retained material and the
+local receipt in one authority transaction. `ReadManagedOriginalLifecycle` takes
+the target key, original kind and local operation ID. It resolves that exact row.
+
+Replay checks the original A request digest, saved local receipt and current
+immutable target, reservation and descriptor associations before returning the
+saved result. Current lease ownership and expiry do not invalidate an exact
+accepted replay. Missing history refuses recovery. You cannot backfill a legacy
+receipt or replace an original drain with another local operation ID.
+
+The first drain records process acceptance and permanent admission closure. Its
+saved A drain remains incomplete and nonquiescent, with no completion timestamp.
+Every reservation sharing the runtime must independently resolve its original
+registration and match the same process, configuration and startup descriptor.
+These facts do not grant removal permission or prove a later terminal outcome.
+
+The profile uses fixed typed Go JSON field order and UTC timestamps. Decode and
+re-encode must reproduce the accepted bytes. Required null values, duplicate or
+unknown fields and trailing values refuse. Every adapter-facing counter is a
+canonical decimal string, including the parent CAS and saved receipt projection.
+Parent, descriptor generation and native signed counters retain their signed
+limits. The immutable manifest version retains its uint64 domain; the native
+configuration version stays an opaque token. A's stored bytes do not change.
+
+The digest preimage is the UTF-8 domain, one newline and the fixed typed JSON value:
+
+- `ctrlplane.managed.identity.v1` hashes key, provision operation ID, physical
+  identity and the complete manifest in that order, with manifest version encoded
+  as decimal and spec bytes preserved exactly.
+- `ctrlplane.managed.original-facts.v1` hashes kind and its normalized facts variant.
+- `ctrlplane.managed.original-material.v1` hashes the single material snapshot:
+  original command and reservation, kind, identity digest, facts, raw receipt and
+  its digest. It excludes the reference and local receipt.
+- `ctrlplane.managed.drain-handle.v1` hashes the target identity digest, complete
+  process facts, operation ID and UTC deadline. Runtime ID is inside process facts.
+  This derived profile reference does not add a field to the native handle tuple.
+
+The raw native receipt digest is SHA256 of its exact bytes. Native request and
+operator command digests keep their own domains; the stored registration command
+has a separate digest. You must not substitute one for another.
+
+An original row contains one material snapshot, its computed reference and one
+local receipt projection. Its actual JSON encoding is bounded to 32768 bytes;
+references to 1024 bytes; raw native exports to 4096 bytes; ASCII tokens to 256
+bytes; and TypeIDs to 64 bytes with their required prefixes. The PostgreSQL
+constraint applies only to original record kinds in the existing record table.
+No target column or extra backend map is required.
+
+Your trusted adapter must authenticate the producer, validate the full native
+receipt schema and verify descriptor, role and process provenance before calling
+these methods. The store tests use synthetic receipt bytes and qualify storage
+only. They do not establish that a real full native receipt fits this profile,
+that a process accepted the request, or that the system meets a production SLO.
+Later quiescence observation and removal admission remain separate work.

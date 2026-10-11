@@ -189,6 +189,9 @@ type ProviderStepRecord struct {
 // No method performs a remote call or authenticates a caller on behalf of the host.
 type ControllerStore interface {
 	Store
+	AcceptManagedOriginalRegistration(ctx context.Context, request OriginalRegistrationAcceptanceRequest) (Receipt, error)
+	RecordManagedOriginalDrain(ctx context.Context, request OriginalDrainAcceptanceRequest) (Receipt, error)
+	ReadManagedOriginalLifecycle(ctx context.Context, request OriginalLifecycleKey) (OriginalLifecycleRecord, error)
 	SubmitManagedAction(ctx context.Context, request ActionSubmission) (ActionReceipt, error)
 	RecordManagedAccessAudit(ctx context.Context, request AccessAuditRequest) (AccessAuditReceipt, error)
 	ReadManagedOperation(ctx context.Context, request OperationKey) (OperationState, error)
