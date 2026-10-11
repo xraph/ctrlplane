@@ -1407,7 +1407,7 @@ func (r *Repository) AuthorizeManagedProviderStep(ctx context.Context, q managed
 				return managed.ErrBlocked
 			}
 
-			fence, err := closure(target, tx.Now())
+			fence, err := closure(ctx, tx, target, tx.Now())
 			if err != nil {
 				return err
 			}
@@ -1434,7 +1434,20 @@ func (r *Repository) AuthorizeManagedProviderStep(ctx context.Context, q managed
 				receipt, err = repo.IssueManagedProvision(ctx, q.Command)
 			}
 		} else {
-			receipt, err = repo.apply(ctx, q.Command, "provider_step", q, true, func(*managed.Target, time.Time) error { return nil })
+			receipt, err = repo.apply(ctx, q.Command, "provider_step", q, true, func(current *managed.Target, now time.Time) error {
+				if removal {
+					fence, checkErr := closure(ctx, tx, current, now)
+					if checkErr != nil {
+						return checkErr
+					}
+
+					if current.Deletion == nil || fence != current.Deletion.FenceDigest {
+						return managed.ErrConflict
+					}
+				}
+
+				return nil
+			})
 		}
 
 		if err != nil {

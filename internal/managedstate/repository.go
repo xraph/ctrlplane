@@ -615,7 +615,7 @@ func (r *Repository) RecordManagedDrain(ctx context.Context, q managed.DrainRequ
 		return nil
 	})
 }
-func closure(t *managed.Target, now time.Time) (string, error) {
+func closure(ctx context.Context, tx ControllerTransaction, t *managed.Target, now time.Time) (string, error) {
 	if !t.Provision.Complete && !t.Provision.Revoked {
 		return "", managed.ErrBlocked
 	}
@@ -632,8 +632,14 @@ func closure(t *managed.Target, now time.Time) (string, error) {
 			continue
 		}
 
-		if v.Phase != managed.Accepted || v.Fence == nil || !v.Fence.ValidUntil.After(now) || v.Drain == nil || !v.Drain.Complete || !v.Drain.Quiescent || v.Abort != nil {
+		if v.Phase != managed.Accepted || v.Fence == nil || !v.Fence.ValidUntil.After(now) || v.Drain == nil || v.Abort != nil {
 			return "", managed.ErrBlocked
+		}
+
+		if !v.Drain.Complete || !v.Drain.Quiescent {
+			if err := laterQuiescence(ctx, tx, t, v, now); err != nil {
+				return "", err
+			}
 		}
 
 		fences = append(fences, bindingFence{v.ID, *v.Fence})
@@ -649,48 +655,56 @@ func closure(t *managed.Target, now time.Time) (string, error) {
 
 // AdmitManagedRemoval checks the entire frozen set under the parent lock.
 func (r *Repository) AdmitManagedRemoval(ctx context.Context, q managed.AdmissionRequest) (managed.Receipt, error) {
-	return r.apply(ctx, q.Command, "admit", q, true, func(t *managed.Target, now time.Time) error {
-		if t.Phase != managed.Sealed || t.Deletion != nil {
-			return managed.ErrBlocked
-		}
+	return r.closureAuthority(ctx, q.Key, func(held *Repository) (managed.Receipt, error) {
+		tx, _ := held.backend.(ControllerTransaction)
 
-		if q.OperationID.Prefix() != managed.PrefixOperation || !token(q.Verifier) {
-			return managed.ErrInvalid
-		}
+		return held.apply(ctx, q.Command, "admit", q, true, func(t *managed.Target, now time.Time) error {
+			if t.Phase != managed.Sealed || t.Deletion != nil {
+				return managed.ErrBlocked
+			}
 
-		f, err := closure(t, now)
-		if err != nil {
-			return err
-		}
+			if q.OperationID.Prefix() != managed.PrefixOperation || !token(q.Verifier) {
+				return managed.ErrInvalid
+			}
 
-		t.Deletion = &managed.Deletion{OperationID: q.OperationID, FenceDigest: f, Verifier: q.Verifier}
-		t.Phase = managed.Admitted
+			f, err := closure(ctx, tx, t, now)
+			if err != nil {
+				return err
+			}
 
-		return nil
+			t.Deletion = &managed.Deletion{OperationID: q.OperationID, FenceDigest: f, Verifier: q.Verifier}
+			t.Phase = managed.Admitted
+
+			return nil
+		})
 	})
 }
 
 // IssueManagedDeletion records potential issue; callers must also recheck remote current fences.
 func (r *Repository) IssueManagedDeletion(ctx context.Context, q managed.Command) (managed.Receipt, error) {
-	return r.apply(ctx, q, "issue_delete", q, true, func(t *managed.Target, now time.Time) error {
-		if t.Phase != managed.Admitted || t.Deletion == nil || t.Deletion.Issued || t.Deletion.Settlement != nil {
-			return managed.ErrBlocked
-		}
+	return r.closureAuthority(ctx, q.Key, func(held *Repository) (managed.Receipt, error) {
+		tx, _ := held.backend.(ControllerTransaction)
 
-		f, err := closure(t, now)
-		if err != nil {
-			return err
-		}
+		return held.apply(ctx, q, "issue_delete", q, true, func(t *managed.Target, now time.Time) error {
+			if t.Phase != managed.Admitted || t.Deletion == nil || t.Deletion.Issued || t.Deletion.Settlement != nil {
+				return managed.ErrBlocked
+			}
 
-		if f != t.Deletion.FenceDigest {
-			return managed.ErrConflict
-		}
+			f, err := closure(ctx, tx, t, now)
+			if err != nil {
+				return err
+			}
 
-		t.Deletion.Issued = true
-		t.Deletion.IssuedAt = now
-		t.Phase = managed.DeleteIssued
+			if f != t.Deletion.FenceDigest {
+				return managed.ErrConflict
+			}
 
-		return nil
+			t.Deletion.Issued = true
+			t.Deletion.IssuedAt = now
+			t.Phase = managed.DeleteIssued
+
+			return nil
+		})
 	})
 }
 

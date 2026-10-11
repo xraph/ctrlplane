@@ -42,7 +42,8 @@ tombstone and the exact local command receipt. Missing resources alone never qua
 
 Removal checks the complete bounded obligation set under one lock. Each accepted
 binding needs its current opaque query fence, compatibility/retirement evidence and
-completed quiescent drain. Fence survivors must be off the target instance. The host
+completed quiescent drain or a fresh accepted later observation for that exact
+reservation. Fence survivors must be off the target instance. The host
 must recheck current remote fences immediately before provider execution; a stored
 sample cannot make Docker deletion atomic.
 
@@ -130,8 +131,10 @@ controller advisory transaction lock, then physical parent locks in sorted insta
 order, then reads database time. Nested lifecycle operations share that transaction
 and only the outer operation commits. The advisory lock serializes controller
 reads and writes across tenants. This is a throughput limit; remote calls never run while
-these locks are held. Direct lifecycle operations take only their parent lock and
-never acquire the controller lock in reverse order.
+these locks are held. Removal admission and deletion issuance acquire controller authority before the
+parent lock when the backend supports retained observations. Other direct lifecycle
+operations take only their parent lock. None acquires controller authority from a
+held parent callback.
 
 The progress journal and persisted continuation are recovery state. They grant no
 provider permission. Each finite provider step validates the accepted action,
@@ -245,4 +248,70 @@ receipt schema and verify descriptor, role and process provenance before calling
 these methods. The store tests use synthetic receipt bytes and qualify storage
 only. They do not establish that a real full native receipt fits this profile,
 that a process accepted the request, or that the system meets a production SLO.
-Later quiescence observation and removal admission remain separate work.
+
+## Later quiescence
+
+Use `AcceptManagedQuiescence` after your adapter has authenticated a terminal native
+observation. You can submit terminal success or deadline-incomplete quiescence.
+Both require permanently closed admission, zero active and unknown claims, and an
+exact association with the retained registration and original drain. Other error
+classes refuse. `LifecycleObservation` retains its successful-drain validator.
+
+The observation binds the target identity digest, reservation, member, role, both
+original operation IDs, exact reference-byte and material digests, process facts,
+startup descriptor and native RuntimeID/OperationID/Deadline tuple. It contains no
+full manifest copy. Its challenge digest covers every field of `QuiescenceLeaf`,
+including source times, terminal outcome, claim counts, observation/challenge IDs
+and producer verifier. The attestation is opaque. The optional
+`QuiescenceObservationPort` runs outside storage transactions; the store neither
+calls it nor authenticates its output.
+
+Source `ObservedAt` must be nonzero and no later than the accepting authority time.
+That time must be strictly before `ValidUntil`, with a positive validity interval
+of at most 60 seconds. There is no future-time tolerance. Clock disagreement can
+refuse progress, and the store never substitutes a convenient source timestamp.
+`VerifiedAt` comes from the fresh parent transition callback after locking. There
+is no native completion timestamp in this contract.
+
+Acceptance commits one immutable request snapshot, its local receipt and a current
+index in the same transaction. The original native exports, saved A drain and
+original local receipt stay byte-identical. You cannot use an observation to
+backfill a missing original, extend its deadline or replace its receipt.
+
+Current selection advances only for a strictly newer source time. A distinct equal
+or older observation conflicts. Exact historical replay checks the saved original
+associations, receipt and current history before returning its original result,
+even after lease takeover or expiry. It cannot select the historical value again.
+Missing or corrupt history refuses recovery. When a current index is absent, a
+one-row existence probe in that exact reservation scope distinguishes first
+acceptance from a lost index; it never selects evidence or enumerates obligations.
+
+Removal admission, deletion issuance and each fresh provider removal step resolve
+all reservations from the authoritative target under the same transaction. Each
+binding still needs its fence and every other closure condition. A successful A
+drain remains valid through its existing branch. The later branch requires that
+binding's exact current observation to remain fresh. Fence-set hashing is unchanged.
+A saved permission replay is inspection-only and cannot authorize another send.
+
+The additional digest preimages use UTF-8 domain, newline, then fixed typed JSON:
+
+- `ctrlplane.managed.quiescence-scope.v1` covers `{key, reservation_id}` in that order.
+- `ctrlplane.managed.quiescence-challenge.v1` covers the complete `QuiescenceLeaf`
+  field order. It excludes the challenge digest itself and opaque attestation.
+- `ctrlplane.managed.quiescence-record.v1` covers the final record, including its
+  single request snapshot, verification time and saved local receipt.
+
+History uses the reservation scope and exact original local operation ID. The
+current row uses that scope and key `current`. Its typed value contains the schema,
+reservation, local operation ID, source observation time and final record digest.
+Actual JSON caps are 16384 bytes for each history row and 1024 for each current
+index, with at most 4096 raw attestation bytes. The codec uses canonical decimal
+counters, UTC timestamps and strict accepted-byte round trips, as original evidence
+does. No target column or extra backend map is needed. Retained observation history
+has no total count or lifetime storage bound.
+
+Tests qualify storage admission using synthetic producer bytes. Native receipt
+validation, machine authentication, descriptor provenance and real process
+observations remain requirements for the secured adapter. An independent PostgreSQL
+connection can recover the retained association; that check does not establish
+native process or daemon recovery.
