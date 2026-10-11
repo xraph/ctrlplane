@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/url"
 	"os"
@@ -3260,6 +3261,174 @@ func TestManagedAttemptProviderPermissionCounters(t *testing.T) {
 				if err != nil || !reflect.DeepEqual(after, current) {
 					t.Fatal("replay/result advanced parent", err)
 				}
+			}
+		})
+	}
+}
+
+func TestManagedAttemptPostgresInvalidCommand(t *testing.T) {
+	cases := []struct {
+		name   string
+		change func(*managed.Command)
+		want   error
+	}{
+		{"wrong-prefix", func(c *managed.Command) { c.ID = id.New(managed.PrefixReservation) }, managed.ErrInvalid},
+		{"zero-id", func(c *managed.Command) { c.ID = id.ID{} }, managed.ErrInvalid},
+		{"empty-tenant", func(c *managed.Command) { c.TenantID = "" }, managed.ErrInvalid},
+		{"invalid-tenant", func(c *managed.Command) { c.TenantID = "bad tenant" }, managed.ErrInvalid},
+		{"wrong-instance", func(c *managed.Command) { c.InstanceID = id.New(managed.PrefixReservation) }, managed.ErrInvalid},
+		{"empty-owner", func(c *managed.Command) { c.Owner = "" }, managed.ErrInvalid},
+		{"invalid-owner", func(c *managed.Command) { c.Owner = "bad owner" }, managed.ErrInvalid},
+		{"zero-revision", func(c *managed.Command) { c.Revision = 0 }, managed.ErrInvalid},
+		{"revision-overflow", func(c *managed.Command) { c.Revision = math.MaxInt64 + 1 }, managed.ErrInvalid},
+		{"epoch-overflow", func(c *managed.Command) { c.LeaseEpoch = math.MaxInt64 + 1 }, managed.ErrInvalid},
+		{"maximum-revision", func(c *managed.Command) { c.Revision = math.MaxInt64 }, managed.ErrConflict},
+		{"maximum-epoch", func(c *managed.Command) { c.LeaseEpoch = math.MaxInt64 }, managed.ErrConflict},
+		{"zero-epoch", func(c *managed.Command) { c.LeaseEpoch = 0 }, managed.ErrConflict},
+	}
+
+	for _, entry := range []string{"begin", "revoke", "command", "recovery"} {
+		t.Run(entry, func(t *testing.T) {
+			for _, tc := range cases {
+				t.Run(tc.name, func(t *testing.T) {
+					s := &quiescenceActionStore{Authority: controllerStore(t, "postgres"), t: t}
+					a, b := acceptOriginalPair(t, s)
+
+					drain := originalDrain(t, s, a)
+					if _, err := s.RecordManagedOriginalDrain(t.Context(), drain); err != nil {
+						t.Fatal(err)
+					}
+
+					for _, registration := range []managed.OriginalRegistrationAcceptanceRequest{a, b} {
+						if _, err := s.AcceptManagedQuiescence(t.Context(), quiescenceRequest(t, s, registration, drain, false)); err != nil {
+							t.Fatal(err)
+						}
+					}
+
+					if _, err := s.SealManagedTarget(t.Context(), quiescenceCommand(t, s, a.Command.Key)); err != nil {
+						t.Fatal(err)
+					}
+
+					rid := a.Command.ReservationID
+					start := managed.AttemptStartRequest{Command: quiescenceCommand(t, s, a.Command.Key), ActionID: s.action.ID, AttemptID: id.New(managed.PrefixOperation), ProviderOperationID: id.New(managed.PrefixOperation), VerifierID: "provider"}
+
+					attemptKey := managed.AttemptKey{Key: start.Key, AttemptID: start.AttemptID, Generation: "1"}
+					if entry != "begin" {
+						if _, err := s.BeginManagedRemovalAttempt(t.Context(), start); err != nil {
+							t.Fatal(err)
+						}
+					}
+
+					freshCommand := func() managed.Command { return quiescenceCommand(t, s, a.Command.Key) }
+					raw := []byte("invalid-command-regression")
+					native := managed.AttemptCommandRequest{AttemptRequest: managed.AttemptRequest{Command: freshCommand(), AttemptID: start.AttemptID, Generation: "1"}, ReservationID: rid, Kind: managed.AttemptBegin, ExpectedNativeVersion: "1", NativeCommand: managed.PortCommand{SchemaVersion: "1", OperationID: id.New(managed.PrefixOperation), RequestID: "invalid-command-regression", Original: raw, OriginalDigest: managed.Digest(raw), Native: raw, NativeDigest: managed.Digest(raw)}}
+					recovery := managed.AttemptRecoveryRequest{ReservationID: rid, Kind: managed.AttemptBegin}
+
+					if entry == "recovery" {
+						grant, err := s.AuthorizeManagedAttemptCommand(t.Context(), native)
+						if err != nil || !grant.NewlyIssued {
+							t.Fatal("recovery setup", err)
+						}
+
+						encoded, err := json.Marshal(grant.Command)
+						if err != nil {
+							t.Fatal(err)
+						}
+
+						recovery.CommandDigest = managed.Digest(append([]byte("ctrlplane.managed.attempt-command.v1\n"), encoded...))
+					}
+
+					valid := freshCommand()
+					if entry == "begin" {
+						valid = start.Command
+					}
+
+					if valid.ID == start.AttemptID {
+						t.Fatal("local and attempt identities must be distinct")
+					}
+
+					call := func(command managed.Command) (any, error) {
+						request := managed.AttemptRequest{Command: command, AttemptID: start.AttemptID, Generation: "1"}
+
+						switch entry {
+						case "begin":
+							q := start
+							q.Command = command
+
+							return s.BeginManagedRemovalAttempt(t.Context(), q)
+						case "revoke":
+							return s.RevokeManagedRemovalAttempt(t.Context(), request)
+						case "command":
+							q := native
+							q.AttemptRequest = request
+
+							return s.AuthorizeManagedAttemptCommand(t.Context(), q)
+						default:
+							q := recovery
+							q.AttemptRequest = request
+
+							return s.AuthorizeManagedAttemptRecovery(t.Context(), q)
+						}
+					}
+					invalid := valid
+					tc.change(&invalid)
+
+					before := attemptPostgresSnapshot(t, s.Authority.(*postgres.Store))
+
+					got, err := call(invalid)
+					if !errors.Is(err, tc.want) {
+						t.Errorf("invalid command: got %v, want %v", err, tc.want)
+					}
+
+					if !reflect.DeepEqual(got, reflect.Zero(reflect.TypeOf(got)).Interface()) {
+						t.Error("refused command returned receipt or grant", got)
+					}
+
+					if !reflect.DeepEqual(before, attemptPostgresSnapshot(t, s.Authority.(*postgres.Store))) {
+						t.Error("refused command changed retained state")
+					}
+
+					if t.Failed() {
+						return
+					}
+
+					accepted, err := call(valid)
+					if err != nil {
+						t.Fatal("valid distinct local command", err)
+					}
+
+					switch grant := accepted.(type) {
+					case managed.AttemptCommandGrant:
+						if !grant.NewlyIssued {
+							t.Fatal("fresh native command returned no authority")
+						}
+
+						grant.NewlyIssued = false
+						accepted = grant
+					case managed.AttemptRecoveryGrant:
+						if !grant.NewlyAuthorized {
+							t.Fatal("fresh recovery returned no authority")
+						}
+
+						grant.NewlyAuthorized = false
+						accepted = grant
+					}
+
+					after := attemptPostgresSnapshot(t, s.Authority.(*postgres.Store))
+
+					replay, err := call(valid)
+					if err != nil || !reflect.DeepEqual(accepted, replay) {
+						t.Fatal("exact replay changed", err)
+					}
+
+					if !reflect.DeepEqual(after, attemptPostgresSnapshot(t, s.Authority.(*postgres.Store))) {
+						t.Fatal("exact replay changed retained state")
+					}
+
+					if _, err = s.ReadManagedRemovalAttempt(t.Context(), attemptKey); err != nil {
+						t.Fatal("accepted attempt is unreadable", err)
+					}
+				})
 			}
 		})
 	}

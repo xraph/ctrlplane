@@ -149,6 +149,9 @@ func attemptVersion(k managed.AttemptKey) error {
 
 	return nil
 }
+func validAttemptCommand(c managed.Command) bool {
+	return key(c.Key) && c.ID.Prefix() == managed.PrefixOperation && token(c.Owner) && c.Revision > 0 && c.Revision <= math.MaxInt64 && c.LeaseEpoch <= math.MaxInt64
+}
 func attemptTime(t time.Time) bool {
 	return !t.IsZero() && t.Year() >= 1 && t.Year() <= 9999 && t.Location() == time.UTC
 }
@@ -1035,6 +1038,10 @@ func attemptMutate(ctx context.Context, r *Repository, q managed.AttemptRequest,
 	fresh := false
 
 	var accepted attemptView
+	if !validAttemptCommand(q.Command) {
+		return out, false, accepted, managed.ErrInvalid
+	}
+
 	if err := attemptVersion(attemptLocal(q)); err != nil {
 		return out, false, accepted, err
 	}
@@ -1153,7 +1160,7 @@ func attemptMutate(ctx context.Context, r *Repository, q managed.AttemptRequest,
 // BeginManagedRemovalAttempt atomically anchors the complete original attempt before send.
 func (r *Repository) BeginManagedRemovalAttempt(ctx context.Context, q managed.AttemptStartRequest) (managed.AttemptReceipt, error) {
 	var out managed.AttemptReceipt
-	if q.AttemptID.Prefix() != managed.PrefixOperation || q.ProviderOperationID.Prefix() != managed.PrefixOperation || q.AttemptID == q.ProviderOperationID || !token(q.VerifierID) {
+	if !validAttemptCommand(q.Command) || q.AttemptID.Prefix() != managed.PrefixOperation || q.ProviderOperationID.Prefix() != managed.PrefixOperation || q.AttemptID == q.ProviderOperationID || !token(q.VerifierID) {
 		return out, managed.ErrInvalid
 	}
 
@@ -1556,6 +1563,10 @@ func (r *Repository) AuthorizeManagedAttemptCommand(ctx context.Context, q manag
 // AuthorizeManagedAttemptRecovery grants only the exact retained native request.
 func (r *Repository) AuthorizeManagedAttemptRecovery(ctx context.Context, q managed.AttemptRecoveryRequest) (managed.AttemptRecoveryGrant, error) {
 	var out managed.AttemptRecoveryGrant
+	if !validAttemptCommand(q.Command) {
+		return out, managed.ErrInvalid
+	}
+
 	if err := attemptVersion(attemptLocal(q.AttemptRequest)); err != nil {
 		return out, err
 	}
