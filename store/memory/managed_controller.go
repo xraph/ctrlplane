@@ -2,11 +2,13 @@ package memory
 
 import (
 	"context"
+	"encoding/json"
 	"maps"
 	"slices"
 	"strings"
 	"time"
 
+	"github.com/xraph/ctrlplane/id"
 	"github.com/xraph/ctrlplane/internal/managedstate"
 	"github.com/xraph/ctrlplane/managed"
 )
@@ -117,3 +119,193 @@ func (t managedControllerTransaction) ListRecords(ctx context.Context, kind, sco
 
 	return records, nil
 }
+
+// ReadReceipt requires the caller's validated target under the existing mutex.
+// Reads use the staged maps so writes and removals are immediately visible.
+func (t managedControllerTransaction) ReadReceipt(ctx context.Context, key managed.Key, operation id.ID, digest string) (managed.Receipt, error) {
+	if err := ctx.Err(); err != nil {
+		return managed.Receipt{}, err
+	}
+
+	parent := t.store.managedTargets[key.InstanceID.String()]
+	if parent == nil {
+		return managed.Receipt{}, managed.ErrNotFound
+	}
+
+	if parent.TenantID != key.TenantID {
+		return managed.Receipt{}, managed.ErrAuthority
+	}
+
+	receipt, ok := t.store.managedReceipts[key.InstanceID.String()+":"+operation.String()]
+	if !ok {
+		return managed.Receipt{}, managed.ErrNotFound
+	}
+
+	if receipt.ID != operation {
+		return managed.Receipt{}, managed.ErrUnavailable
+	}
+
+	if receipt.Digest != digest {
+		return managed.Receipt{}, managed.ErrConflict
+	}
+
+	return receipt, nil
+}
+
+// ReadImmutableRecords selects bounded immutable rows from the current staged maps.
+func (t managedControllerTransaction) ReadImmutableRecords(ctx context.Context, keys []managedstate.ControllerRecordKey) ([]managedstate.ControllerRecordResult, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	if err := managedstate.ValidateImmutableRecordKeys(keys); err != nil {
+		return nil, err
+	}
+
+	out := make([]managedstate.ControllerRecordResult, 0, len(keys))
+	for _, selected := range keys {
+		raw, found := t.store.managedControllerRecords[selected.Kind+":"+selected.Scope][selected.Key]
+
+		result := managedstate.ControllerRecordResult{ControllerRecordKey: selected, Found: found, Size: len(raw)}
+		if len(raw) <= managedstate.ImmutableRecordLimit(selected.Kind) {
+			result.Data = slices.Clone(raw)
+		}
+
+		out = append(out, result)
+	}
+
+	return out, ctx.Err()
+}
+
+// ReadImmutableReceipts selects exact unchanged receipts under the held parent lock.
+func (t managedControllerTransaction) ReadImmutableReceipts(ctx context.Context, key managed.Key, operations []id.ID) ([]managedstate.ControllerReceiptResult, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	if err := managedstate.ValidateImmutableReceiptKeys(key, operations); err != nil {
+		return nil, err
+	}
+
+	parent := t.store.managedTargets[key.InstanceID.String()]
+	if parent == nil {
+		return nil, managed.ErrNotFound
+	}
+
+	if parent.TenantID != key.TenantID {
+		return nil, managed.ErrAuthority
+	}
+
+	if parent.Key != key {
+		return nil, managed.ErrUnavailable
+	}
+
+	out := make([]managedstate.ControllerReceiptResult, 0, len(operations))
+	for _, operation := range operations {
+		receipt, found := t.store.managedReceipts[key.InstanceID.String()+":"+operation.String()]
+		if found {
+			raw, err := json.Marshal(receipt)
+			if err != nil || len(raw) > managed.MaxAttemptReceipt || receipt.ID != operation {
+				return nil, managed.ErrUnavailable
+			}
+		}
+
+		out = append(out, managedstate.ControllerReceiptResult{OperationID: operation, Found: found, Receipt: receipt})
+	}
+
+	return out, ctx.Err()
+}
+
+// ApplyQuiescenceObservationBatch uses one bound staging adapter inside controller authority.
+func (t managedControllerTransaction) ApplyQuiescenceObservationBatch(ctx context.Context, q managed.QuiescenceBatchAcceptanceRequest) (managed.QuiescenceBatchReceipt, error) {
+	if !t.held {
+		return managed.QuiescenceBatchReceipt{}, managed.ErrUnsupported
+	}
+
+	revision, err := q.Command.Revision.Uint64()
+	if err != nil {
+		return managed.QuiescenceBatchReceipt{}, err
+	}
+
+	hook := &quiescenceBatchStager{tx: t, key: q.Command.Key, batch: q.Command.ID, revision: revision}
+
+	return managedstate.RunHeldQuiescenceObservationBatch(ctx, t, q, hook)
+}
+
+type quiescenceBatchStager struct {
+	tx       managedControllerTransaction
+	key      managed.Key
+	batch    id.ID
+	revision uint64
+	used     bool
+}
+
+func (h *quiescenceBatchStager) FreshQuiescenceBatchTime(ctx context.Context) (time.Time, error) {
+	if err := ctx.Err(); err != nil {
+		return time.Time{}, err
+	}
+
+	if !h.tx.held || h.used {
+		return time.Time{}, managed.ErrBlocked
+	}
+
+	return now(), nil
+}
+func (h *quiescenceBatchStager) StageQuiescenceBatch(ctx context.Context, c *managedstate.QuiescenceBatchCandidate) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	if !h.tx.held || h.used {
+		return managed.ErrBlocked
+	}
+
+	old := h.tx.store.managedTargets[h.key.InstanceID.String()]
+
+	target, err := c.StageTarget(old)
+	if err != nil {
+		return err
+	}
+
+	stage, err := c.Take(h.key, h.batch, h.revision)
+	if err != nil {
+		return err
+	}
+
+	h.used = true
+
+	receipts := make([]managed.Receipt, 0, len(stage.Children)+1)
+	for _, child := range stage.Children {
+		receipts = append(receipts, child.Receipt)
+	}
+
+	receipts = append(receipts, stage.Receipt)
+	for _, receipt := range receipts {
+		key := h.key.InstanceID.String() + ":" + receipt.ID.String()
+		if _, exists := h.tx.store.managedReceipts[key]; exists {
+			return managed.ErrConflict
+		}
+
+		h.tx.store.managedReceipts[key] = receipt
+	}
+
+	for _, child := range stage.Children {
+		if err = h.tx.WriteRecord(ctx, managed.QuiescenceHistory, child.Scope, child.OperationID.String(), child.History, true); err != nil {
+			return err
+		}
+
+		if err = h.tx.WriteRecord(ctx, managed.QuiescenceCurrent, child.Scope, "current", child.Current, child.First); err != nil {
+			return err
+		}
+	}
+
+	if err = h.tx.WriteRecord(ctx, managed.QuiescenceBatchHistory, stage.Scope, h.batch.String(), stage.Manifest, true); err != nil {
+		return err
+	}
+
+	h.tx.store.managedTargets[h.key.InstanceID.String()] = target
+
+	return ctx.Err()
+}
+
+var _ managed.QuiescenceBatchStore = (*Store)(nil)

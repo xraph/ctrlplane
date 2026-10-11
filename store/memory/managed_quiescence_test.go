@@ -284,7 +284,7 @@ func TestManagedQuiescenceMemoryActualCallbackExpiry(t *testing.T) {
 	signMemoryQuiescence(t, &q)
 	before := projectionSnapshot(t, s)
 	paused := false
-	skipCalls := 1 // Acceptance checks the absent receipt before its fresh transition.
+	skipCalls := 0 // ReadReceipt does not invoke Atomic before the fresh transition.
 
 	repo := managedstate.New(quiescencePauseBackend{managedBackend: managedBackend{store: s}, t: t, operation: q.Command.ID, expiry: q.Observation.ValidUntil, paused: &paused, skipCalls: &skipCalls})
 	if _, err := repo.AcceptManagedQuiescence(t.Context(), q); !errors.Is(err, managed.ErrBlocked) {
@@ -301,6 +301,9 @@ func TestManagedQuiescenceMemoryActualCallbackExpiry(t *testing.T) {
 }
 
 func memoryQuiescenceProvider(t *testing.T) (*Store, managed.ActionSubmission, managed.QuiescenceAcceptanceRequest) {
+	return memoryQuiescenceProviderSetup(t, true)
+}
+func memoryQuiescenceProviderSetup(t *testing.T, withAttempt bool) (*Store, managed.ActionSubmission, managed.QuiescenceAcceptanceRequest) {
 	t.Helper()
 	seed, original := memoryOriginal(t)
 
@@ -369,9 +372,8 @@ func memoryQuiescenceProvider(t *testing.T) (*Store, managed.ActionSubmission, m
 		t.Fatal(err)
 	}
 
-	proof := []byte("fence")
-	if _, err = s.RecordManagedFence(t.Context(), managed.FenceRequest{ReservationRequest: managed.ReservationRequest{Command: projectionCommand(t, s, target.Key), ReservationID: registration.ID}, Fence: managed.Fence{Epoch: 1, Evidence: proof, Digest: managed.Digest(proof), CompatibilityEvidence: []byte("retired"), ValidUntil: time.Now().UTC().Add(time.Hour), Survivors: []string{"off-instance"}}}); err != nil {
-		t.Fatal(err)
+	if withAttempt {
+		memoryAttemptStart(t, s, action, registration.ID)
 	}
 
 	q := managed.QuiescenceAcceptanceRequest{Command: memoryOriginalCommand(t, s, target.Key, registration.ID), Observation: managed.QuiescenceObservation{QuiescenceLeaf: managed.QuiescenceLeaf{Reference: ref, AdmissionClosed: true, Quiescent: true, Complete: true, ActiveClaims: "0", UnknownClaims: "0", ObservationID: "observation", ChallengeID: "challenge", VerifierID: ref.Process.ProducerVerifier}, Attestation: []byte("synthetic")}}
@@ -390,12 +392,19 @@ func TestManagedQuiescenceMemoryActualProviderCallbackExpiry(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	admission := managed.AdmissionRequest{Command: projectionCommand(t, s, action.Key), OperationID: id.New(managed.PrefixOperation), Verifier: "provider"}
-	if _, err = s.AdmitManagedRemoval(t.Context(), admission); err != nil {
+	admission := managed.AttemptAdmissionRequest{AttemptRequest: memoryAttemptRequest(t, s, action), VerifierID: "provider"}
+	if _, err = s.AdmitManagedRemovalAttempt(t.Context(), admission); err != nil {
 		t.Fatal(err)
 	}
 
-	first := managed.ProviderStepAuthorization{Command: projectionCommand(t, s, action.Key), Step: managed.ProviderStepKey{OperationKey: managed.OperationKey{Key: action.Key, ActionID: action.ID}, ProviderOperationID: admission.OperationID, Kind: managed.StepRemoveContainer, Service: "api"}}
+	first := managed.ProviderStepAuthorization{Command: projectionCommand(t, s, action.Key), Step: managed.ProviderStepKey{OperationKey: managed.OperationKey{Key: action.Key, ActionID: action.ID}, ProviderOperationID: func() id.ID {
+		record, e := s.ReadManagedRemovalAttempt(t.Context(), managed.AttemptKey{Key: action.Key, AttemptID: admission.AttemptID, Generation: "1"})
+		if e != nil {
+			t.Fatal(e)
+		}
+
+		return record.Descriptor.ProviderOperationID
+	}(), Kind: managed.StepRemoveContainer, Service: "api"}}
 
 	grant, err := s.AuthorizeManagedProviderStep(t.Context(), first)
 	if err != nil || !grant.NewlyIssued {

@@ -30,11 +30,95 @@ type ControllerRecord struct {
 	Data []byte
 }
 
+// ControllerRecordKey selects one immutable retained row.
+type ControllerRecordKey struct{ Kind, Scope, Key string }
+
+// ControllerRecordResult preserves existence independently of payload length.
+type ControllerRecordResult struct {
+	ControllerRecordKey
+
+	Found bool
+	Size  int
+	Data  []byte
+}
+
+// ControllerReceiptResult selects one unchanged A receipt in its supplied parent.
+type ControllerReceiptResult struct {
+	OperationID id.ID
+	Found       bool
+	Receipt     managed.Receipt
+}
+
+// ImmutableRecordLimit returns the existing cap for the finite batch allowlist.
+func ImmutableRecordLimit(kind string) int {
+	switch kind {
+	case managed.OriginalRegistration:
+		return managed.MaxOriginalLifecycleRecord
+	case "removal_command", "removal_abort", "removal_finish":
+		return managed.MaxAttemptCommand
+	case "removal_fence":
+		return managed.MaxAttemptFence
+	case "removal_binding_settlement", "removal_attempt_event":
+		return managed.MaxAttemptFact
+	default:
+		return 0
+	}
+}
+
+// ValidateImmutableRecordKeys bounds exact transport selection without granting authority.
+func ValidateImmutableRecordKeys(keys []ControllerRecordKey) error {
+	if len(keys) == 0 || len(keys) > 64 {
+		return managed.ErrInvalid
+	}
+
+	seen := make(map[ControllerRecordKey]bool, len(keys))
+	for _, selected := range keys {
+		if ImmutableRecordLimit(selected.Kind) == 0 || len(selected.Kind) > 32 || !digest(selected.Scope) || len(selected.Key) == 0 || len(selected.Key) > 64 || seen[selected] {
+			return managed.ErrInvalid
+		}
+
+		if selected.Kind == managed.OriginalRegistration || selected.Kind == "removal_attempt_event" {
+			parsed, err := id.ParseWithPrefix(selected.Key, managed.PrefixOperation)
+			if err != nil || parsed.String() != selected.Key {
+				return managed.ErrInvalid
+			}
+		} else if !digest(selected.Key) {
+			return managed.ErrInvalid
+		}
+
+		seen[selected] = true
+	}
+
+	return nil
+}
+
+// ValidateImmutableReceiptKeys bounds exact parent and receipt identities.
+func ValidateImmutableReceiptKeys(k managed.Key, operations []id.ID) error {
+	if !key(k) || len(k.InstanceID.String()) > 64 || len(operations) == 0 || len(operations) > 64 {
+		return managed.ErrInvalid
+	}
+
+	seen := make(map[id.ID]bool, len(operations))
+	for _, operation := range operations {
+		if operation.Prefix() != managed.PrefixOperation || len(operation.String()) > 64 || seen[operation] {
+			return managed.ErrInvalid
+		}
+
+		seen[operation] = true
+	}
+
+	return nil
+}
+
 // ControllerTransaction supplies A's backend without opening or committing another transaction.
 // It stages all writes and exposes no remote callbacks or caller-controlled row patches.
 type ControllerTransaction interface {
 	Backend
 	Now() time.Time
+	// ReadReceipt reads exact immutable history after the caller validates the held target.
+	ReadReceipt(ctx context.Context, key managed.Key, operation id.ID, digest string) (managed.Receipt, error)
+	ReadImmutableRecords(ctx context.Context, keys []ControllerRecordKey) ([]ControllerRecordResult, error)
+	ReadImmutableReceipts(ctx context.Context, key managed.Key, operations []id.ID) ([]ControllerReceiptResult, error)
 	ReadRecord(ctx context.Context, kind, scope, key string) ([]byte, error)
 	WriteRecord(ctx context.Context, kind, scope, key string, raw []byte, insert bool) error
 	ListRecords(ctx context.Context, kind, scope, after string, limit int) ([]ControllerRecord, error)
@@ -43,6 +127,10 @@ type ControllerTransaction interface {
 }
 
 func (r *Repository) controller(ctx context.Context, serial string, keys []managed.Key, fn func(ControllerTransaction) error) error {
+	if tx, held := r.backend.(ControllerTransaction); held {
+		return fn(tx)
+	}
+
 	b, ok := r.backend.(ControllerBackend)
 	if !ok {
 		return managed.ErrUnsupported
@@ -474,7 +562,7 @@ func (r *Repository) SubmitManagedAction(ctx context.Context, q managed.ActionSu
 	return out, nil
 }
 
-func acceptedOperation(ctx context.Context, tx ControllerTransaction, k managed.OperationKey) (managed.OperationState, error) {
+func acceptedOperationBase(ctx context.Context, tx ControllerTransaction, k managed.OperationKey) (managed.OperationState, error) {
 	state, err := controllerRead[managed.OperationState](ctx, tx, "operation", k.TenantID, k.ActionID.String())
 	if err != nil {
 		return state, err
@@ -505,6 +593,26 @@ func acceptedOperation(ctx context.Context, tx ControllerTransaction, k managed.
 
 	if intent.SourceDigest != receipt.CanonicalDigest || intent.ResourceID != k.InstanceID.String() {
 		return state, managed.ErrConflict
+	}
+
+	return state, nil
+}
+
+func acceptedOperation(ctx context.Context, tx ControllerTransaction, k managed.OperationKey) (managed.OperationState, error) {
+	state, err := acceptedOperationBase(ctx, tx, k)
+	if err != nil {
+		return state, err
+	}
+
+	if state.RemovalAttemptRoot != nil {
+		target, readErr := tx.Read(ctx, k.Key)
+		if readErr != nil {
+			return state, readErr
+		}
+
+		if _, readErr = readAttempt(ctx, tx, target, managed.AttemptKey{Key: k.Key, AttemptID: state.RemovalAttemptRoot.AttemptID, Generation: state.RemovalAttemptRoot.Generation}); readErr != nil {
+			return state, readErr
+		}
 	}
 
 	return state, nil
@@ -919,6 +1027,10 @@ func (r *Repository) AdvanceManagedOperation(ctx context.Context, q managed.Oper
 				return managed.ErrConflict
 			}
 
+			if _, associationErr := acceptedOperation(ctx, tx, managed.OperationKey{Key: q.Key, ActionID: q.ActionID}); associationErr != nil {
+				return associationErr
+			}
+
 			out = saved.State
 
 			return nil
@@ -1308,6 +1420,24 @@ func (r *Repository) AuthorizeManagedProviderStep(ctx context.Context, q managed
 				return managed.ErrConflict
 			}
 
+			if existing.Permission.Step.Kind == managed.StepRemoveContainer || existing.Permission.Step.Kind == managed.StepRemoveNetwork {
+				current, associationErr := tx.Read(ctx, q.Key)
+				if associationErr != nil {
+					return associationErr
+				}
+
+				if fixedAttemptProfile(current) {
+					selected, associationErr := selectedAttempt(ctx, tx, current)
+					if associationErr != nil {
+						return associationErr
+					}
+
+					if selected.descriptor.ProviderOperationID != existing.Permission.Step.ProviderOperationID || selected.descriptor.ActionID != existing.Permission.Step.ActionID {
+						return managed.ErrAuthority
+					}
+				}
+			}
+
 			out = existing.Permission
 
 			return nil
@@ -1322,7 +1452,7 @@ func (r *Repository) AuthorizeManagedProviderStep(ctx context.Context, q managed
 			return err
 		}
 
-		operation, err := acceptedOperation(ctx, tx, q.Step.OperationKey)
+		operation, err := acceptedOperationBase(ctx, tx, q.Step.OperationKey)
 		if err != nil {
 			return err
 		}
@@ -1343,7 +1473,7 @@ func (r *Repository) AuthorizeManagedProviderStep(ctx context.Context, q managed
 			return err
 		}
 
-		projected, err := acceptedOperation(ctx, tx, managed.OperationKey{Key: q.Key, ActionID: projectionAction})
+		projected, err := acceptedOperationBase(ctx, tx, managed.OperationKey{Key: q.Key, ActionID: projectionAction})
 		if err != nil {
 			return err
 		}
@@ -1407,13 +1537,15 @@ func (r *Repository) AuthorizeManagedProviderStep(ctx context.Context, q managed
 				return managed.ErrBlocked
 			}
 
-			fence, err := closure(ctx, tx, target, tx.Now())
-			if err != nil {
-				return err
-			}
+			if !fixedAttemptProfile(target) {
+				fence, err := closure(ctx, tx, target, tx.Now())
+				if err != nil {
+					return err
+				}
 
-			if fence != target.Deletion.FenceDigest {
-				return managed.ErrConflict
+				if fence != target.Deletion.FenceDigest {
+					return managed.ErrConflict
+				}
 			}
 
 			if target.Phase != managed.Admitted && target.Phase != managed.DeleteIssued {
@@ -1423,17 +1555,83 @@ func (r *Repository) AuthorizeManagedProviderStep(ctx context.Context, q managed
 			return managed.ErrBlocked
 		}
 
-		var receipt managed.Receipt
+		var (
+			receipt       managed.Receipt
+			issuedAttempt *attemptView
+		)
 
 		repo := New(tx)
 
-		if index == 0 {
+		switch {
+		case removal && fixedAttemptProfile(target):
+			receipt, err = repo.apply(ctx, q.Command, "provider_step", q, true, func(current *managed.Target, now time.Time) error {
+				selected, checkErr := selectedAttempt(ctx, tx, current)
+				if checkErr != nil {
+					return checkErr
+				}
+
+				if selected.descriptor.ProviderOperationID != q.Step.ProviderOperationID || selected.descriptor.ActionID != q.Step.ActionID || selected.state.RevocationDigest != "" || selected.state.SettlementDigest != "" || selected.state.AdmissionDigest == "" {
+					return managed.ErrBlocked
+				}
+
+				slots, _, _, checkErr := attemptCoverage(ctx, tx, current, selected)
+				if checkErr != nil {
+					return checkErr
+				}
+
+				for _, slot := range slots {
+					if slot.State == "local_no_dispatch" {
+						return managed.ErrBlocked
+					}
+				}
+
+				for _, binding := range current.Reservations {
+					if binding.Phase == managed.Revoked {
+						continue
+					}
+
+					if _, checkErr = attemptFenceRead(ctx, tx, current, selected, attemptBinding(selected, binding.ID)); checkErr != nil {
+						return checkErr
+					}
+				}
+
+				fence, checkErr := closure(ctx, tx, current, now)
+				if checkErr != nil {
+					return checkErr
+				}
+
+				if current.Deletion == nil || fence != current.Deletion.FenceDigest {
+					return managed.ErrConflict
+				}
+
+				if index == 0 {
+					if current.Deletion.Issued {
+						return managed.ErrBlocked
+					}
+
+					current.Deletion.Issued = true
+					current.Deletion.IssuedAt = now
+					current.Phase = managed.DeleteIssued
+					stamp := now.UTC()
+					selected.state.ProviderIssuedAt = &stamp
+					selected.state.Phase = "issued"
+				}
+
+				if checkErr = attemptUpdate(ctx, tx, &selected); checkErr != nil {
+					return checkErr
+				}
+
+				issuedAttempt = &selected
+
+				return nil
+			})
+		case index == 0:
 			if removal {
 				receipt, err = repo.IssueManagedDeletion(ctx, q.Command)
 			} else {
 				receipt, err = repo.IssueManagedProvision(ctx, q.Command)
 			}
-		} else {
+		default:
 			receipt, err = repo.apply(ctx, q.Command, "provider_step", q, true, func(current *managed.Target, now time.Time) error {
 				if removal {
 					fence, checkErr := closure(ctx, tx, current, now)
@@ -1496,6 +1694,25 @@ func (r *Repository) AuthorizeManagedProviderStep(ctx context.Context, q managed
 			out.FenceDigest = target.Deletion.FenceDigest
 		}
 
+		if removal && fixedAttemptProfile(target) {
+			if issuedAttempt == nil {
+				return managed.ErrUnavailable
+			}
+
+			selected := issuedAttempt
+			out.IssuedAt = receipt.AcceptedAt
+
+			raw, marshalErr := json.Marshal(out)
+			if marshalErr != nil {
+				return marshalErr
+			}
+
+			association := attemptProviderSlot{SchemaVersion: "1", AttemptRef: selected.ref, ProviderOperationID: selected.descriptor.ProviderOperationID, Index: managed.Decimal(strconv.Itoa(index)), PermissionDigest: managed.Digest(raw), Receipt: managed.ReceiptWire(receipt)}
+			if err = attemptMaintainProvider(ctx, tx, selected, stepID, index, association, attemptPermissionBit, true); err != nil {
+				return err
+			}
+		}
+
 		if err = controllerWrite(ctx, tx, "step", q.TenantID, stepID, managed.ProviderStepRecord{Permission: out}, true, managed.MaxProviderStep); err != nil {
 			return err
 		}
@@ -1536,8 +1753,70 @@ func (r *Repository) RecordManagedProviderStepResult(ctx context.Context, q mana
 			return managed.ErrConflict
 		}
 
+		var (
+			attempt      *attemptView
+			association  attemptProviderSlot
+			attemptIndex int
+		)
+
+		if q.Permission.Step.Kind == managed.StepRemoveContainer || q.Permission.Step.Kind == managed.StepRemoveNetwork {
+			current, associationErr := tx.Read(ctx, q.Permission.Step.Key)
+			if associationErr != nil {
+				return associationErr
+			}
+
+			if fixedAttemptProfile(current) {
+				selected, associationErr := selectedAttempt(ctx, tx, current)
+				if associationErr != nil {
+					return associationErr
+				}
+
+				if selected.descriptor.ProviderOperationID != q.Permission.Step.ProviderOperationID || selected.descriptor.ActionID != q.Permission.Step.ActionID {
+					return managed.ErrAuthority
+				}
+
+				attemptIndex, associationErr = attemptProviderIndex(current, selected, q.Permission.Step)
+				if associationErr != nil {
+					return associationErr
+				}
+
+				_, association, associationErr = attemptProviderRead(ctx, tx, current, selected, q.Permission.Step, attemptIndex)
+				if associationErr != nil {
+					return associationErr
+				}
+
+				attempt = &selected
+
+				if _, failureErr := tx.ReadRecord(ctx, "step_failure", q.Permission.Step.TenantID, stepID); failureErr == nil && q.Outcome == managed.PortTerminal {
+					return managed.ErrConflict
+				} else if failureErr != nil && !controllerAbsent(failureErr) {
+					return failureErr
+				}
+			}
+		}
+
 		if q.ObservedAt.After(tx.Now()) {
 			return managed.ErrInvalid
+		}
+
+		if attempt != nil && q.Outcome == managed.PortUnavailable {
+			previousID, hashErr := controllerFingerprint(q)
+			if hashErr != nil {
+				return hashErr
+			}
+
+			previous, readErr := controllerRead[managed.ProviderStepResult](ctx, tx, "step_history", q.Permission.Step.TenantID, previousID)
+			if readErr == nil {
+				if !reflect.DeepEqual(previous, q) {
+					return managed.ErrUnavailable
+				}
+
+				return nil
+			}
+
+			if !controllerAbsent(readErr) {
+				return readErr
+			}
 		}
 
 		if record.Result != nil && record.Result.Outcome == managed.PortTerminal {
@@ -1572,6 +1851,26 @@ func (r *Repository) RecordManagedProviderStepResult(ctx context.Context, q mana
 			return readErr
 		}
 
+		if attempt != nil {
+			bit := attemptUncertaintyBit
+
+			if q.Outcome == managed.PortTerminal {
+				raw, marshalErr := json.Marshal(q)
+				if marshalErr != nil {
+					return marshalErr
+				}
+
+				association.PositiveDigest = managed.Digest(raw)
+				bit = attemptPositiveBit
+			} else {
+				association.LastUncertaintyDigest = observationID
+			}
+
+			if err = attemptMaintainProvider(ctx, tx, attempt, stepID, attemptIndex, association, bit, false); err != nil {
+				return err
+			}
+		}
+
 		record.Result = &q
 
 		return controllerWrite(ctx, tx, "step", q.Permission.Step.TenantID, stepID, record, false, managed.MaxProviderStep)
@@ -1591,8 +1890,34 @@ func (r *Repository) ReadManagedProviderStep(ctx context.Context, q managed.Prov
 		var err error
 
 		out, err = controllerRead[managed.ProviderStepRecord](ctx, tx, "step", q.TenantID, stepID)
+		if err != nil {
+			return err
+		}
 
-		return err
+		if q.Kind == managed.StepRemoveContainer || q.Kind == managed.StepRemoveNetwork {
+			target, readErr := tx.Read(ctx, q.Key)
+			if readErr != nil {
+				return readErr
+			}
+
+			if fixedAttemptProfile(target) {
+				selected, readErr := selectedAttempt(ctx, tx, target)
+				if readErr != nil {
+					return readErr
+				}
+
+				index, readErr := attemptProviderIndex(target, selected, q)
+				if readErr != nil {
+					return readErr
+				}
+
+				_, _, readErr = attemptProviderRead(ctx, tx, target, selected, q, index)
+
+				return readErr
+			}
+		}
+
+		return nil
 	})
 
 	return out, err
@@ -1607,4 +1932,9 @@ func providerPermissionDigest(q managed.ProviderStepAuthorization, spec string, 
 		Physical      managed.Physical                  `json:"physical"`
 		CreateProfile string                            `json:"create_profile"`
 	}{q, spec, physical, "ctrlplane.managed.create.v1"})
+}
+
+// QuiescenceBatchTransaction optionally stages a complete observation batch under held authority.
+type QuiescenceBatchTransaction interface {
+	ApplyQuiescenceObservationBatch(ctx context.Context, request managed.QuiescenceBatchAcceptanceRequest) (managed.QuiescenceBatchReceipt, error)
 }

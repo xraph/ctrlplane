@@ -6,8 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
-	"time"
 
+	"github.com/xraph/ctrlplane/id"
 	"github.com/xraph/ctrlplane/managed"
 )
 
@@ -41,8 +41,8 @@ func originalARequest(m managed.OriginalLifecycleMaterial, reference []byte) (ma
 	return c, "drain", managed.DrainRequest{ReservationRequest: selected, Drain: managed.Drain{OperationID: m.Drain.OperationID, Deadline: m.Drain.Deadline, Evidence: reference}}, nil
 }
 
-// originalAReceipt probes exact immutable A history. Its callback always fails so a
-// missing receipt cannot mutate the parent or repair lost history, even with fresh CAS.
+// originalAReceipt reads exact immutable A history in the held transaction.
+// Missing receipts cannot mutate the parent or repair lost history.
 func originalAReceipt(ctx context.Context, tx ControllerTransaction, m managed.OriginalLifecycleMaterial, reference []byte, missing error) (managed.Receipt, error) {
 	c, kind, input, err := originalARequest(m, reference)
 	if err != nil {
@@ -57,10 +57,15 @@ func originalAReceipt(ctx context.Context, tx ControllerTransaction, m managed.O
 		return managed.Receipt{}, err
 	}
 
-	return tx.Atomic(ctx, c.Key, c.ID, managed.Digest(raw), func(*managed.Target, time.Time) (managed.Receipt, error) { return managed.Receipt{}, missing })
+	receipt, err := tx.ReadReceipt(ctx, c.Key, c.ID, managed.Digest(raw))
+	if errors.Is(err, managed.ErrNotFound) {
+		return managed.Receipt{}, missing
+	}
+
+	return receipt, err
 }
 
-func originalRegistrationMatch(t *managed.Target, m managed.OriginalLifecycleMaterial) error {
+func originalRegistrationMatch(ctx context.Context, tx ControllerTransaction, t *managed.Target, m managed.OriginalLifecycleMaterial) error {
 	v, err := reservation(t, m.Command.ReservationID)
 	if err != nil {
 		return err
@@ -71,12 +76,21 @@ func originalRegistrationMatch(t *managed.Target, m managed.OriginalLifecycleMat
 		return managed.ErrAuthority
 	}
 
-	spec, err := managed.ParseProvisionSpec(t.Manifest)
-	if err != nil {
-		return err
+	var (
+		spec  managed.ProvisionSpec
+		roles managed.ManagedSpec
+	)
+	if checked, ok := tx.(*attemptCheckedReads); ok {
+		spec, roles, err = checked.parsedManifest(ctx, t)
+	} else {
+		spec, err = managed.ParseProvisionSpec(t.Manifest)
+		if err != nil {
+			return err
+		}
+
+		roles, err = managed.ParseManagedSpec(t.Manifest)
 	}
 
-	roles, err := managed.ParseManagedSpec(t.Manifest)
 	if err != nil {
 		return err
 	}
@@ -134,7 +148,7 @@ func originalRegistrationsForDrain(ctx context.Context, tx ControllerTransaction
 			continue
 		}
 
-		if v.Phase != managed.Accepted || v.Abort != nil {
+		if v.Phase != managed.Accepted {
 			return managed.ErrBlocked
 		}
 
@@ -190,7 +204,7 @@ func originalAssociation(ctx context.Context, tx ControllerTransaction, t *manag
 
 	switch m.Kind {
 	case managed.OriginalRegistration:
-		if err = originalRegistrationMatch(t, m); err != nil {
+		if err = originalRegistrationMatch(ctx, tx, t, m); err != nil {
 			return err
 		}
 
@@ -328,7 +342,7 @@ func (r *Repository) acceptOriginal(ctx context.Context, m managed.OriginalLifec
 				return managed.ErrBlocked
 			}
 
-			if err = originalRegistrationMatch(target, m); err != nil {
+			if err = originalRegistrationMatch(ctx, tx, target, m); err != nil {
 				return err
 			}
 
@@ -337,6 +351,10 @@ func (r *Repository) acceptOriginal(ctx context.Context, m managed.OriginalLifec
 			}
 		} else {
 			if err = originalRegistrationsForDrain(ctx, tx, target, m); err != nil {
+				return err
+			}
+
+			if err = originalDrainFreshEligibility(target, m.Command.ReservationID); err != nil {
 				return err
 			}
 
@@ -427,4 +445,21 @@ func (r *Repository) ReadManagedOriginalLifecycle(ctx context.Context, k managed
 	}
 
 	return out, nil
+}
+
+// originalDrainFreshEligibility checks only mutable eligibility under held authority.
+// Historical association callers deliberately do not apply this current Abort veto.
+func originalDrainFreshEligibility(t *managed.Target, rid id.ID) error {
+	selected, err := reservation(t, rid)
+	if err != nil {
+		return err
+	}
+
+	for _, other := range t.Reservations {
+		if other.RuntimeID == selected.RuntimeID && (other.Phase != managed.Accepted || other.Abort != nil) {
+			return managed.ErrBlocked
+		}
+	}
+
+	return nil
 }

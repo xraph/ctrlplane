@@ -221,7 +221,7 @@ func TestManagedControllerStrictSpec(t *testing.T) {
 		"leading_zero":      strings.Replace(original, `"cpu_millis":"100"`, `"cpu_millis":"0100"`, 1),
 		"overflow":          strings.Replace(original, `"cpu_millis":"100"`, `"cpu_millis":"9223372036854775807"`, 1),
 		"caller_env":        strings.Replace(original, `"version":"1",`, `"version":"1","env":{"secret":"forbidden"},`, 1),
-		"too_big":           original + strings.Repeat(" ", managed.MaxEvidence),
+		"too_big":           original + strings.Repeat(" ", managed.MaxManifestSpec),
 	}
 	for name, raw := range cases {
 		t.Run(name, func(t *testing.T) {

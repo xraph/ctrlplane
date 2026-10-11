@@ -142,7 +142,90 @@ jobs:
           cache: true
           cache-dependency-path: go.sum
       - name: Verify persistent stores and HTTP contracts
-        run: go test -race -count=1 -v ./extension/contract ./store ./store/sqlite ./store/postgres ./store/mongo
+        run: go test -race -count=1 -timeout=30m -v ./extension/contract ./store ./store/sqlite ./store/postgres ./store/mongo
+
+      - name: Qualify maximum individual removal lifecycle
+        env:
+          CTRLPLANE_MANAGED_MAXIMUM: individual
+          GOMAXPROCS: "2"
+          GOFLAGS: -p=1
+        run: |
+          set -euo pipefail
+          test -n "$CTRLPLANE_TEST_POSTGRES_DSN"
+          mkdir -p managed-maximum-evidence
+          go test -json ./store ./store/memory -run '^(TestManagedAttemptFullFiniteSet|TestManagedAttemptPostgresFullFiniteSetNearLimit|TestManagedAttemptMemoryFullFiniteSetNearLimit)$' -count=1 -timeout=30m | tee managed-maximum-evidence/individual-normal.jsonl
+
+      - name: Qualify maximum batch removal lifecycle
+        env:
+          CTRLPLANE_MANAGED_MAXIMUM: batch
+          GOMAXPROCS: "2"
+          GOFLAGS: -p=1
+        run: |
+          set -euo pipefail
+          test -n "$CTRLPLANE_TEST_POSTGRES_DSN"
+          mkdir -p managed-maximum-evidence
+          go test -json ./store ./store/memory -run '^TestManagedQuiescenceBatch(FullFiniteSet|PostgresFullFiniteSetNearLimit|MemoryFullFiniteSetNearLimit)$' -count=1 -timeout=30m | tee managed-maximum-evidence/batch-normal.jsonl
+
+      - name: Qualify maximum batch removal lifecycle under race
+        env:
+          CTRLPLANE_MANAGED_MAXIMUM: batch
+          GOMAXPROCS: "2"
+          GOFLAGS: -p=1
+        run: |
+          set -euo pipefail
+          test -n "$CTRLPLANE_TEST_POSTGRES_DSN"
+          mkdir -p managed-maximum-evidence
+          go test -race -json ./store ./store/memory -run '^TestManagedQuiescenceBatch(FullFiniteSet|PostgresFullFiniteSetNearLimit|MemoryFullFiniteSetNearLimit)$' -count=1 -timeout=30m | tee managed-maximum-evidence/batch-race.jsonl
+
+      - name: Verify maximum campaign coverage
+        run: |
+          python3 - <<'PYCODE'
+          import json
+          from pathlib import Path
+          base = Path("managed-maximum-evidence")
+          expected = {
+              "individual-normal": {
+                  "TestManagedAttemptFullFiniteSet",
+                  "TestManagedAttemptFullFiniteSet/memory",
+                  "TestManagedAttemptFullFiniteSet/postgres",
+                  "TestManagedAttemptPostgresFullFiniteSetNearLimit",
+                  "TestManagedAttemptPostgresFullFiniteSetNearLimit/postgres",
+                  "TestManagedAttemptMemoryFullFiniteSetNearLimit",
+                  "TestManagedAttemptMemoryFullFiniteSetNearLimit/true",
+                  "TestManagedAttemptMemoryFullFiniteSetNearLimit/false",
+              },
+              "batch-normal": {
+                  "TestManagedQuiescenceBatchFullFiniteSet",
+                  "TestManagedQuiescenceBatchFullFiniteSet/memory",
+                  "TestManagedQuiescenceBatchFullFiniteSet/postgres",
+                  "TestManagedQuiescenceBatchPostgresFullFiniteSetNearLimit",
+                  "TestManagedQuiescenceBatchPostgresFullFiniteSetNearLimit/postgres",
+                  "TestManagedQuiescenceBatchMemoryFullFiniteSetNearLimit",
+                  "TestManagedQuiescenceBatchMemoryFullFiniteSetNearLimit/true",
+                  "TestManagedQuiescenceBatchMemoryFullFiniteSetNearLimit/false",
+              },
+          }
+          expected["batch-race"] = expected["batch-normal"]
+          summary = {}
+          for campaign, required in expected.items():
+              rows = [json.loads(line) for line in (base / (campaign + ".jsonl")).read_text().splitlines()]
+              refused = [row for row in rows if row.get("Action") in {"skip", "fail"} or "no tests to run" in row.get("Output", "")]
+              required = {("github.com/xraph/ctrlplane/store/memory" if "MemoryFullFiniteSetNearLimit" in name else "github.com/xraph/ctrlplane/store", name) for name in required}
+              passed = {(row.get("Package"), row.get("Test")) for row in rows if row.get("Action") == "pass"}
+              packages = {row.get("Package") for row in rows if row.get("Action") == "pass" and not row.get("Test")}
+              if refused or required - passed or packages != {"github.com/xraph/ctrlplane/store", "github.com/xraph/ctrlplane/store/memory"}:
+                  raise SystemExit("Incomplete maximum campaign: " + campaign)
+              summary[campaign] = {"required_passes": sorted(required), "packages": sorted(packages)}
+          (base / "coverage-audit.json").write_text(json.dumps(summary, indent=2) + "\n")
+          PYCODE
+
+      - name: Retain maximum campaign evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: managed-maximum-evidence
+          path: managed-maximum-evidence/
+          if-no-files-found: warn
 
   # ─── Format Check ──────────────────────────────────────────────────
   format:

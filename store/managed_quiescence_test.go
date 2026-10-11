@@ -95,7 +95,7 @@ func signQuiescence(t *testing.T, o *managed.QuiescenceObservation) {
 	}
 }
 
-func quiescenceSeal(t *testing.T, s managed.ControllerStore, k managed.Key) {
+func quiescenceSeal(t *testing.T, s *quiescenceActionStore, k managed.Key) *removalFixture {
 	t.Helper()
 
 	if _, err := s.SealManagedTarget(t.Context(), quiescenceCommand(t, s, k)); err != nil {
@@ -107,25 +107,30 @@ func quiescenceSeal(t *testing.T, s managed.ControllerStore, k managed.Key) {
 		t.Fatal(err)
 	}
 
-	for _, v := range target.Reservations {
-		if v.Phase != managed.Accepted {
-			continue
-		}
+	start := managed.AttemptStartRequest{Command: quiescenceCommand(t, s, k), ActionID: s.action.ID, AttemptID: id.New(managed.PrefixOperation), ProviderOperationID: id.New(managed.PrefixOperation), VerifierID: "provider"}
 
-		proof := []byte("fence-" + v.ID.String())
+	receipt, err := s.BeginManagedRemovalAttempt(t.Context(), start)
+	if err != nil {
+		t.Fatal(err)
+	}
 
-		_, err = s.RecordManagedFence(t.Context(), managed.FenceRequest{ReservationRequest: managed.ReservationRequest{Command: quiescenceCommand(t, s, k), ReservationID: v.ID}, Fence: managed.Fence{Epoch: 1, Evidence: proof, Digest: managed.Digest(proof), CompatibilityEvidence: []byte("retired"), ValidUntil: time.Now().UTC().Add(time.Hour), Survivors: []string{"off-instance"}}})
-		if err != nil {
-			t.Fatal(err)
+	f := &removalFixture{t: t, s: s, key: managed.AttemptKey{Key: k, AttemptID: receipt.AttemptID, Generation: "1"}, provider: receipt.ProviderOperationID}
+
+	for _, binding := range target.Reservations {
+		if binding.Phase == managed.Accepted {
+			f.reservations = append(f.reservations, binding.ID)
+			f.fence(binding.ID)
 		}
 	}
+
+	return f
 }
 
 func TestManagedQuiescenceTerminal(t *testing.T) {
 	for _, backend := range []string{"memory", "postgres"} {
 		for _, incomplete := range []bool{false, true} {
 			t.Run(backend+strconv.FormatBool(incomplete), func(t *testing.T) {
-				s := controllerStore(t, backend)
+				s := &quiescenceActionStore{Authority: controllerStore(t, backend), t: t}
 				a, b := acceptOriginalPair(t, s)
 				d := originalDrain(t, s, a)
 				d.Facts.Deadline = quiescenceClock(t, s).Add(3 * time.Second)
@@ -136,7 +141,8 @@ func TestManagedQuiescenceTerminal(t *testing.T) {
 				}
 
 				time.Sleep(time.Until(d.Facts.Deadline) + 10*time.Millisecond)
-				quiescenceSeal(t, s, a.Command.Key)
+
+				f := quiescenceSeal(t, s, a.Command.Key)
 
 				original, err := s.ReadManagedOriginalLifecycle(t.Context(), managed.OriginalLifecycleKey{Key: a.Command.Key, Kind: managed.OriginalDrain, OperationID: d.Command.ID})
 				if err != nil {
@@ -155,8 +161,8 @@ func TestManagedQuiescenceTerminal(t *testing.T) {
 					t.Fatal(err)
 				}
 
-				admitted := managed.AdmissionRequest{Command: quiescenceCommand(t, s, a.Command.Key), OperationID: id.New(managed.PrefixOperation), Verifier: "provider"}
-				if _, err = s.AdmitManagedRemoval(t.Context(), admitted); !errors.Is(err, managed.ErrBlocked) {
+				admitted := managed.AttemptAdmissionRequest{AttemptRequest: f.request(), VerifierID: "provider"}
+				if _, err = s.AdmitManagedRemovalAttempt(t.Context(), admitted); !errors.Is(err, managed.ErrBlocked) {
 					t.Fatal("unobserved sibling must remain blocked", err)
 				}
 
@@ -186,14 +192,11 @@ func TestManagedQuiescenceTerminal(t *testing.T) {
 				}
 
 				admitted.Command = quiescenceCommand(t, s, a.Command.Key)
-				if _, err = s.AdmitManagedRemoval(t.Context(), admitted); err != nil {
+				if _, err = s.AdmitManagedRemovalAttempt(t.Context(), admitted); err != nil {
 					t.Fatal(err)
 				}
 
-				issued := quiescenceCommand(t, s, a.Command.Key)
-				if _, err = s.IssueManagedDeletion(t.Context(), issued); err != nil {
-					t.Fatal(err)
-				}
+				f.step("api", managed.StepRemoveContainer)
 				// Both outcomes preserve the exact fence-set digest framing.
 				type bindingFence struct {
 					ID    id.ID         `json:"id"`
@@ -432,7 +435,7 @@ func TestManagedQuiescenceProviderExpiry(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			quiescenceSeal(t, s, a.Command.Key)
+			f := quiescenceSeal(t, s, a.Command.Key)
 
 			requests := []managed.QuiescenceAcceptanceRequest{quiescenceRequest(t, s, a, d, false), quiescenceRequest(t, s, b, d, false)}
 
@@ -453,12 +456,12 @@ func TestManagedQuiescenceProviderExpiry(t *testing.T) {
 				}
 			}
 
-			admission := managed.AdmissionRequest{Command: quiescenceCommand(t, s, a.Command.Key), OperationID: id.New(managed.PrefixOperation), Verifier: "provider"}
-			if _, err := s.AdmitManagedRemoval(t.Context(), admission); err != nil {
+			admission := managed.AttemptAdmissionRequest{AttemptRequest: f.request(), VerifierID: "provider"}
+			if _, err := s.AdmitManagedRemovalAttempt(t.Context(), admission); err != nil {
 				t.Fatal(err)
 			}
 
-			first := managed.ProviderStepAuthorization{Command: quiescenceCommand(t, s, a.Command.Key), Step: managed.ProviderStepKey{OperationKey: managed.OperationKey{Key: a.Command.Key, ActionID: s.action.ID}, ProviderOperationID: admission.OperationID, Kind: managed.StepRemoveContainer, Service: "api"}}
+			first := managed.ProviderStepAuthorization{Command: quiescenceCommand(t, s, a.Command.Key), Step: managed.ProviderStepKey{OperationKey: managed.OperationKey{Key: a.Command.Key, ActionID: s.action.ID}, ProviderOperationID: f.provider, Kind: managed.StepRemoveContainer, Service: "api"}}
 
 			grant, err := s.AuthorizeManagedProviderStep(t.Context(), first)
 			if err != nil || !grant.NewlyIssued {
@@ -516,7 +519,7 @@ func TestManagedQuiescenceProviderExpiry(t *testing.T) {
 func TestManagedQuiescenceIssueExpiry(t *testing.T) {
 	for _, backend := range []string{"memory", "postgres"} {
 		t.Run(backend, func(t *testing.T) {
-			s := controllerStore(t, backend)
+			s := &quiescenceActionStore{Authority: controllerStore(t, backend), t: t}
 			a, b := acceptOriginalPair(t, s)
 
 			d := originalDrain(t, s, a)
@@ -524,7 +527,7 @@ func TestManagedQuiescenceIssueExpiry(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			quiescenceSeal(t, s, a.Command.Key)
+			f := quiescenceSeal(t, s, a.Command.Key)
 
 			requests := []managed.QuiescenceAcceptanceRequest{quiescenceRequest(t, s, a, d, false), quiescenceRequest(t, s, b, d, false)}
 
@@ -545,20 +548,20 @@ func TestManagedQuiescenceIssueExpiry(t *testing.T) {
 				}
 			}
 
-			admission := managed.AdmissionRequest{Command: quiescenceCommand(t, s, a.Command.Key), OperationID: id.New(managed.PrefixOperation), Verifier: "provider"}
+			admission := managed.AttemptAdmissionRequest{AttemptRequest: f.request(), VerifierID: "provider"}
 
-			saved, err := s.AdmitManagedRemoval(t.Context(), admission)
+			saved, err := s.AdmitManagedRemovalAttempt(t.Context(), admission)
 			if err != nil {
 				t.Fatal(err)
 			}
 
 			time.Sleep(time.Until(expiry) + time.Millisecond)
 
-			if receipt, err := s.AdmitManagedRemoval(t.Context(), admission); err != nil || receipt != saved {
+			if receipt, err := s.AdmitManagedRemovalAttempt(t.Context(), admission); err != nil || receipt != saved {
 				t.Fatal("expired accepted admission replay", err)
 			}
 
-			if _, err = s.IssueManagedDeletion(t.Context(), quiescenceCommand(t, s, a.Command.Key)); !errors.Is(err, managed.ErrBlocked) {
+			if _, err = s.AuthorizeManagedProviderStep(t.Context(), managed.ProviderStepAuthorization{Command: quiescenceCommand(t, s, a.Command.Key), Step: managed.ProviderStepKey{OperationKey: managed.OperationKey{Key: a.Command.Key, ActionID: s.action.ID}, ProviderOperationID: f.provider, Kind: managed.StepRemoveContainer, Service: "api"}}); !errors.Is(err, managed.ErrBlocked) {
 				t.Fatal("expired observation issued deletion", err)
 			}
 		})
@@ -962,7 +965,7 @@ var _ managed.ControllerStore = (*postgres.Store)(nil)
 func TestManagedQuiescenceLastIncarnation(t *testing.T) {
 	for _, backend := range []string{"memory", "postgres"} {
 		t.Run(backend, func(t *testing.T) {
-			s := controllerStore(t, backend)
+			s := &quiescenceActionStore{Authority: controllerStore(t, backend), t: t}
 			a, b := acceptOriginalPair(t, s)
 			// Fill the actual 64-reservation set. The last issued incarnation remains unresolved.
 			var last managed.Registration
@@ -989,7 +992,9 @@ func TestManagedQuiescenceLastIncarnation(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			quiescenceSeal(t, s, a.Command.Key)
+			if _, err := s.SealManagedTarget(t.Context(), quiescenceCommand(t, s, a.Command.Key)); err != nil {
+				t.Fatal(err)
+			}
 
 			for _, reg := range []managed.OriginalRegistrationAcceptanceRequest{a, b} {
 				q := quiescenceRequest(t, s, reg, d, false)
@@ -998,7 +1003,7 @@ func TestManagedQuiescenceLastIncarnation(t *testing.T) {
 				}
 			}
 
-			if _, err := s.AdmitManagedRemoval(t.Context(), managed.AdmissionRequest{Command: quiescenceCommand(t, s, a.Command.Key), OperationID: id.New(managed.PrefixOperation), Verifier: "provider"}); !errors.Is(err, managed.ErrBlocked) {
+			if _, err := s.BeginManagedRemovalAttempt(t.Context(), managed.AttemptStartRequest{Command: quiescenceCommand(t, s, a.Command.Key), ActionID: s.action.ID, AttemptID: id.New(managed.PrefixOperation), ProviderOperationID: id.New(managed.PrefixOperation), VerifierID: "provider"}); !errors.Is(err, managed.ErrBlocked) {
 				t.Fatal("last unresolved incarnation was skipped", err)
 			}
 

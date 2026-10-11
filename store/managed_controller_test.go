@@ -529,27 +529,22 @@ func TestManagedControllerConcurrentAAndAcceptance(t *testing.T) {
 func TestManagedControllerCompleteRemovalParents(t *testing.T) {
 	for _, backend := range []string{"memory", "postgres"} {
 		t.Run(backend, func(t *testing.T) {
-			s := controllerStore(t, backend)
+			attempt, f := mixedRemovalFixture(t, backend)
+			s := attempt.s
+			attempt.fence(attempt.reservations[0])
 
-			q, f, projection := acceptedController(t, s)
-			if _, err := s.ProjectManagedRows(t.Context(), projection); err != nil {
-				t.Fatal(err)
-			}
-
-			f.must(s.IssueManagedProvision(t.Context(), f.command()))
-			f.must(s.BindManagedResources(t.Context(), managed.ResourcesRequest{Command: f.command(), OperationID: q.NewTarget.ProvisionOperationID, Receipt: []byte("full provider fixture result"), Resources: map[string]string{"network": "network-id", "api": "api-id", "sidecar": "sidecar-id"}}))
-			first := f.accepted("a", "runtime-polling")
-			second := f.accepted("b", "runtime-query")
-			f.must(s.SealManagedTarget(t.Context(), f.command()))
-			f.closeBinding(first)
-
-			if _, err := s.AdmitManagedRemoval(t.Context(), managed.AdmissionRequest{Command: f.command(), OperationID: id.New(managed.PrefixOperation), Verifier: "verifier"}); !errors.Is(err, managed.ErrBlocked) {
+			if _, err := s.AdmitManagedRemovalAttempt(t.Context(), managed.AttemptAdmissionRequest{AttemptRequest: attempt.request(), VerifierID: "provider"}); !errors.Is(err, managed.ErrNotFound) && !errors.Is(err, managed.ErrBlocked) {
 				t.Fatalf("query role skipped closure: %v", err)
 			}
 
-			f.closeBinding(second)
-			f.admit()
-			step := managed.ProviderStepAuthorization{Command: f.command(), Step: managed.ProviderStepKey{OperationKey: managed.OperationKey{Key: q.Key, ActionID: q.ID}, ProviderOperationID: f.target().Deletion.OperationID, Kind: managed.StepRemoveContainer, Service: "api"}}
+			attempt.fence(attempt.reservations[1])
+
+			if _, err := s.AdmitManagedRemovalAttempt(t.Context(), managed.AttemptAdmissionRequest{AttemptRequest: attempt.request(), VerifierID: "provider"}); err != nil {
+				t.Fatal(err)
+			}
+
+			step := managed.ProviderStepAuthorization{Command: f.command(), Step: managed.ProviderStepKey{OperationKey: managed.OperationKey{Key: attempt.key.Key, ActionID: s.action.ID}, ProviderOperationID: attempt.provider, Kind: managed.StepRemoveContainer, Service: "api"}}
+
 			before := f.target()
 			wrong := step
 
@@ -563,7 +558,7 @@ func TestManagedControllerCompleteRemovalParents(t *testing.T) {
 			}
 
 			grant, err := s.AuthorizeManagedProviderStep(t.Context(), step)
-			if err != nil || !grant.NewlyIssued || grant.Permission.FenceDigest != before.Deletion.FenceDigest || grant.Permission.ResourceID != "api-id" {
+			if err != nil || !grant.NewlyIssued || grant.Permission.FenceDigest != before.Deletion.FenceDigest || grant.Permission.ResourceID != before.Resources["api"] {
 				t.Fatalf("full parent issue: %+v %v", grant, err)
 			}
 		})

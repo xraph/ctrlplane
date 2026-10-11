@@ -34,7 +34,7 @@ type ManagedSpec struct {
 // Legacy manifests remain readable through Store but cannot gain new issue permission.
 func ParseManagedSpec(m Manifest) (ManagedSpec, error) {
 	var spec ManagedSpec
-	if len(m.Spec) == 0 || len(m.Spec) > MaxEvidence || Digest(m.Spec) != m.SpecDigest || len(m.Members) == 0 || len(m.Members) > MaxMembers {
+	if len(m.Spec) == 0 || len(m.Spec) > MaxManifestSpec || Digest(m.Spec) != m.SpecDigest || len(m.Members) == 0 || len(m.Members) > MaxMembers {
 		return spec, ErrInvalid
 	}
 

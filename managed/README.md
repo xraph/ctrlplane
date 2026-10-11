@@ -131,10 +131,11 @@ controller advisory transaction lock, then physical parent locks in sorted insta
 order, then reads database time. Nested lifecycle operations share that transaction
 and only the outer operation commits. The advisory lock serializes controller
 reads and writes across tenants. This is a throughput limit; remote calls never run while
-these locks are held. Removal admission and deletion issuance acquire controller authority before the
-parent lock when the backend supports retained observations. Other direct lifecycle
-operations take only their parent lock. None acquires controller authority from a
-held parent callback.
+these locks are held. When you use a backend that implements controller authority,
+all direct lifecycle mutations acquire it before the parent lock. Nested mutations
+reuse the held controller transaction. Backends without that support use their
+existing parent transaction. None acquires controller authority from a held parent
+callback.
 
 The progress journal and persisted continuation are recovery state. They grant no
 provider permission. Each finite provider step validates the accepted action,
@@ -315,3 +316,151 @@ validation, machine authentication, descriptor provenance and real process
 observations remain requirements for the secured adapter. An independent PostgreSQL
 connection can recover the retained association; that check does not establish
 native process or daemon recovery.
+
+## Original removal attempts
+
+For a `ctrlplane.managed.v1` target, start with
+`BeginManagedRemovalAttempt`. You need a sealed, resolved registration set and
+complete provisioned resources. The store retains generation one, permanent
+attempt and provider operation IDs, root/current records, the initial local
+receipt association, and an anchor on the original projected operation in one
+transaction. You can't bootstrap an attempt from old partial fences. Other
+supported A-only manifests keep their existing lifecycle.
+
+Use the attempt methods in this order:
+
+1. Authorize each original native Begin with `AuthorizeManagedAttemptCommand`.
+   Persist its authenticated acceptance with `RecordManagedAttemptFence`.
+2. Call `AdmitManagedRemovalAttempt` after every required binding has its original
+   fence. Fresh provider permissions still go through `AuthorizeManagedProviderStep`.
+3. Record the exact original provider result. After all removal steps have positive
+   terminal results, call `SettleManagedRemovalAttempt` with `Removed`.
+4. Authorize and retain each original native Finish, then call
+   `TombstoneManagedRemovalAttempt`.
+
+A command slot means the original invocation may have been sent, even if your
+process stopped before transport. Inspecting or replaying that slot does not grant
+a new send. `AuthorizeManagedAttemptRecovery` requires fresh parent CAS and lease
+checks but can grant only the exact retained native request. It neither advances
+the target/attempt revision nor authorizes a provider retry. Concurrent recovery
+grants can repeat that same native idempotent request, so your native adapter must
+preserve its original operation, request and command identities.
+
+You can permanently revoke unissued work with `RevokeManagedRemovalAttempt`.
+Already accepted native commands remain obligations. A late original Begin may be
+recorded after expiry for recovery and Abort, but it does not create live provider
+authority. Before Abort, retain `RecordManagedAttemptBindingSettlement`; its witness
+uses actual callback time, after the original native acceptance. The Abort proof
+must be verified after that witness and remain fresh when the store records it.
+Use the binding and historical settlement readers when an attempt never reached
+aggregate admission.
+
+`ProviderStepFailureAuthority` accepts one initial failure class:
+`ctrlplane.managed.local-no-dispatch.v1`, `local_no_dispatch`,
+`before_transport_delegate`. Its reason is `authority_refused`,
+`request_binding_mismatch` or `invocation_closed`. Your trusted hook must establish
+that the exact permission's invocation never entered the transport delegate.
+Remote status codes, timeouts, unavailable results and negative inspection do not
+prove this fact. A qualified failure can support `SettledWithoutDeletion` only
+when complete provider coverage has no positive deletion or unresolved issued
+step. Positive and failure facts conflict atomically. Partial deletion followed by
+a failure stays unresolved.
+
+Every fresh provider send validates all retained reservations and all required
+provider steps under the current authority transaction. The maximum is 64
+reservations and 33 steps. Quiescence remains limited to 60 seconds, and renewing
+it does not extend the original native fence. Once that fence expires, further
+provider issuance refuses; already issued positive results can still support
+truthful Removed settlement, Finish and tombstoning. This interface has no native
+fence renewal or successor allocation. Continue and generation two remain
+unsupported.
+
+Attempt state contains fixed 64-byte binding and 33-byte provider presence masks,
+encoded as canonical base64. Each bit must agree with its exact retained row,
+local event and receipt. Missing rows never turn an issued slot into an unissued
+one. Qualified failure, positive result and uncertainty maintenance is atomic and
+does not consume parent or attempt revisions. Local operation IDs are part of new
+fact digests; use the same local request to replay an accepted fact.
+
+New digest preimages use UTF-8 domain, a newline, then fixed typed JSON:
+`ctrlplane.managed.attempt-scope.v1`, `ctrlplane.managed.removal-attempt.v1`,
+`ctrlplane.managed.attempt-fact.v1`, `ctrlplane.managed.attempt-command.v1`,
+`ctrlplane.managed.attempt-coverage.v1`,
+`ctrlplane.managed.provider-step-failure.v1`,
+`ctrlplane.managed.attempt-registration-set.v1` and
+`ctrlplane.managed.attempt-resources.v1`. New envelopes encode counters as canonical
+decimal strings. Existing A receipts, positive provider records and operation
+history keep their original numeric encodings; operation state adds only the
+optional attempt anchor.
+
+Before allocation, the store reserves `7*N + S + 8` target revisions for the
+finite original transitions, plus one for Begin. At the maximum set that is 489
+reserved revisions and one allocation revision. Fresh observations, lease renewals
+and other optional metadata need their own capacity. A genuine positive deletion,
+validated against complete coverage, can release reserve for impossible Abort
+branches. A `local_no_dispatch` fact alone cannot release Finish capacity.
+
+The fixed manifest profile has a separate 64 KiB specification limit, sufficient
+for its supported 32 services and 32 members. Native command and evidence limits
+remain 4096 bytes. Typed attempt limits apply to complete encoded records and
+readers, including nested evidence and receipts.
+
+Managed authority transitions acquire controller authority before the physical
+parent lock. PostgreSQL currently uses a global controller advisory lock; Memory
+uses its existing store mutex and staged clones. This serialization and retained
+history growth need deployment measurement. Immutable receipt probes read only
+inside the held transaction, and successful immutable row reuse lasts for one
+read-only validation. It cannot cross a write or fresh callback.
+
+Store tests use synthetic native and failure producers. You'll still need an
+authenticated native adapter, the qualified transport hook and separate process,
+daemon and database recovery qualification before deploying this protocol.
+
+
+You can refresh a descriptor-ordered subset of 1 to 64 observations through the
+optional `QuiescenceBatchStore` capability. Each entry keeps its own operation ID
+and unchanged individual request bytes, derived at parent revision `R+i`. The
+batch saves those individual receipts at `R+i+1` and one aggregate receipt at
+`R+N+1` in the same transaction. It consumes `N+1` parent revisions, with no attempt
+revision, event, journal or lease-epoch change. Budget every renewal.
+
+Use a new batch ID and new child operation IDs for fresh observations. Replaying
+the exact accepted batch validates its retained graph and returns its saved
+receipt, including after tombstoning. A missing child or receipt refuses the whole
+read; the store does not rebuild it. If the batch fails, don't fall back to partial
+individual writes. Check that your store implements the optional capability.
+
+Fresh batch and individual observations reject a projected Abort on any
+reservation sharing the selected runtime. An Abort on another runtime does not
+block that observation. Historical reads still validate the retained registration,
+drain and receipts after Abort. They grant no send authority. Revocation, Removed
+settlement and Finish permit observational retention; Deleted refuses fresh
+observations. The original native fence and the 60-second proof lifetime still
+apply to fresh provider issuance.
+
+Current-code legacy-method refusals protect enrolled attempts only when those
+calls reach this implementation. They do not fence an older binary that writes
+the same database. Mixed-version operation and rollback remain unqualified until
+storage admission and the trusted transport enforce a writer floor.
+
+
+The maximum lifecycle campaigns run separately from ordinary unit tests. CI's
+persistence job requires all three against PostgreSQL and retains their structured
+logs. You can run the same selections locally with a private
+`CTRLPLANE_TEST_POSTGRES_DSN` pointing to a throwaway database:
+
+```sh
+GOWORK=off CTRLPLANE_MANAGED_MAXIMUM=individual go test ./store ./store/memory -run '^(TestManagedAttemptFullFiniteSet|TestManagedAttemptPostgresFullFiniteSetNearLimit|TestManagedAttemptMemoryFullFiniteSetNearLimit)$' -count=1 -timeout=30m -v
+GOWORK=off CTRLPLANE_MANAGED_MAXIMUM=batch go test ./store ./store/memory -run '^TestManagedQuiescenceBatch(FullFiniteSet|PostgresFullFiniteSetNearLimit|MemoryFullFiniteSetNearLimit)$' -count=1 -timeout=30m -v
+GOWORK=off CTRLPLANE_MANAGED_MAXIMUM=batch go test -race ./store ./store/memory -run '^TestManagedQuiescenceBatch(FullFiniteSet|PostgresFullFiniteSetNearLimit|MemoryFullFiniteSetNearLimit)$' -count=1 -timeout=30m -v
+```
+
+Without that selector, ordinary test runs visibly skip the six maximum entry
+points. The exact 490 acceptance and 489 refusal checks still run by default.
+The normal individual campaign preserves its 555-revision fixture. Normal and
+race batch campaigns use the separate 556 fixture and count every observation,
+aggregate and lease renewal. The full positive lifecycle consumes 293 parent
+transitions including allocation, and 292 attempt transitions after revision 1;
+the latter includes all 33 provider permissions. Positive result retention does
+not advance either counter. Sequential individual race sweeps remain explicit
+timing diagnostics, with their actual failures reported separately.

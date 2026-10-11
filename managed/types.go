@@ -13,11 +13,13 @@ import (
 
 // Bounds limit persisted records and public pages. Exhaustion refuses new work.
 const (
-	DefaultPage                 = 100
-	MaxPage                     = 500
-	MaxMembers                  = 32
-	MaxReservations             = 64
-	MaxEvidence                 = 4096
+	DefaultPage     = 100
+	MaxPage         = 500
+	MaxMembers      = 32
+	MaxReservations = 64
+	MaxEvidence     = 4096
+	// MaxManifestSpec bounds the recognized fixed-profile specification separately from native evidence.
+	MaxManifestSpec             = 64 << 10
 	MaxDocument                 = 8 << 20
 	MaxLease                    = 5 * time.Minute
 	PrefixOperation   id.Prefix = "mop"

@@ -445,11 +445,23 @@ func (w WireIdentity) Value() (Identity, error) {
 		return Identity{}, ErrInvalid
 	}
 
-	if len(w.Manifest.Members) > MaxMembers || len(w.Manifest.Spec) > MaxEvidence {
+	if len(w.Manifest.Members) > MaxMembers || len(w.Manifest.Spec) > MaxManifestSpec {
 		return Identity{}, ErrCapacity
 	}
 
-	if !wireToken(w.TenantID) || w.InstanceID.Prefix() != id.PrefixInstance || w.ProvisionOperationID.Prefix() != PrefixOperation || !wireToken(w.Physical.Provider) || !wireToken(w.Physical.Placement) || !wireToken(w.Physical.Project) || !wireToken(w.Physical.Generation) || len(w.Manifest.Members) == 0 || !wireProof(w.Manifest.Spec) || Digest(w.Manifest.Spec) != w.Manifest.SpecDigest {
+	specValid := wireProof(w.Manifest.Spec)
+
+	var profile struct {
+		Profile string `json:"profile"`
+	}
+
+	parseErr := json.Unmarshal(w.Manifest.Spec, &profile)
+	if len(w.Manifest.Spec) > MaxEvidence || profile.Profile == "ctrlplane.managed.v1" || parseErr != nil && bytes.Contains(w.Manifest.Spec, []byte("ctrlplane.managed.")) {
+		_, specErr := ParseProvisionSpec(Manifest{Version: version, Members: w.Manifest.Members, Spec: w.Manifest.Spec, SpecDigest: w.Manifest.SpecDigest})
+		specValid = parseErr == nil && specErr == nil
+	}
+
+	if !wireToken(w.TenantID) || w.InstanceID.Prefix() != id.PrefixInstance || w.ProvisionOperationID.Prefix() != PrefixOperation || !wireToken(w.Physical.Provider) || !wireToken(w.Physical.Placement) || !wireToken(w.Physical.Project) || !wireToken(w.Physical.Generation) || len(w.Manifest.Members) == 0 || !specValid || Digest(w.Manifest.Spec) != w.Manifest.SpecDigest {
 		return Identity{}, ErrInvalid
 	}
 

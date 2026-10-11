@@ -89,7 +89,13 @@ func digest(s string) bool {
 }
 func key(k managed.Key) bool { return token(k.TenantID) && k.InstanceID.Prefix() == id.PrefixInstance }
 func identity(i managed.Identity) error {
-	if i.ProvisionOperationID.Prefix() != managed.PrefixOperation || !key(i.Key) || !token(i.Physical.Provider) || !token(i.Physical.Placement) || !token(i.Physical.Project) || !token(i.Physical.Generation) || i.Manifest.Version == 0 || !evidence(i.Manifest.Spec) || managed.Digest(i.Manifest.Spec) != i.Manifest.SpecDigest || len(i.Manifest.Members) == 0 || len(i.Manifest.Members) > managed.MaxMembers {
+	specValid := evidence(i.Manifest.Spec)
+	if len(i.Manifest.Spec) > managed.MaxEvidence || fixedAttemptProfile(&managed.Target{Identity: i}) {
+		_, specErr := managed.ParseProvisionSpec(i.Manifest)
+		specValid = specErr == nil
+	}
+
+	if i.ProvisionOperationID.Prefix() != managed.PrefixOperation || !key(i.Key) || !token(i.Physical.Provider) || !token(i.Physical.Placement) || !token(i.Physical.Project) || !token(i.Physical.Generation) || i.Manifest.Version == 0 || !specValid || managed.Digest(i.Manifest.Spec) != i.Manifest.SpecDigest || len(i.Manifest.Members) == 0 || len(i.Manifest.Members) > managed.MaxMembers {
 		return managed.ErrInvalid
 	}
 
@@ -224,6 +230,22 @@ func (r *Repository) list(ctx context.Context, q managed.PageRequest) (managed.P
 }
 
 func (r *Repository) apply(ctx context.Context, c managed.Command, kind string, input any, lease bool, fn func(*managed.Target, time.Time) error) (managed.Receipt, error) {
+	if _, held := r.backend.(ControllerTransaction); !held {
+		if _, capable := r.backend.(ControllerBackend); capable {
+			var receipt managed.Receipt
+
+			err := r.controller(ctx, "managed:"+c.InstanceID.String(), []managed.Key{c.Key}, func(tx ControllerTransaction) error {
+				var applyErr error
+
+				receipt, applyErr = New(tx).apply(ctx, c, kind, input, lease, fn)
+
+				return applyErr
+			})
+
+			return receipt, err
+		}
+	}
+
 	if !key(c.Key) || c.ID.Prefix() != managed.PrefixOperation || !token(c.Owner) || c.Revision == 0 {
 		return managed.Receipt{}, managed.ErrInvalid
 	}
@@ -242,7 +264,9 @@ func (r *Repository) apply(ctx context.Context, c managed.Command, kind string, 
 
 	fingerprint := managed.Digest(b)
 
-	return r.backend.Atomic(ctx, c.Key, c.ID, fingerprint, func(t *managed.Target, now time.Time) (managed.Receipt, error) {
+	freshValidated := false
+
+	result, atomicErr := r.backend.Atomic(ctx, c.Key, c.ID, fingerprint, func(t *managed.Target, now time.Time) (managed.Receipt, error) {
 		if t.Revision != c.Revision || t.LeaseEpoch != c.LeaseEpoch || (lease && (t.LeaseOwner != c.Owner || !now.Before(t.LeaseUntil))) {
 			return managed.Receipt{}, managed.ErrConflict
 		}
@@ -255,14 +279,40 @@ func (r *Repository) apply(ctx context.Context, c managed.Command, kind string, 
 			return managed.Receipt{}, managed.ErrCapacity
 		}
 
+		tx, _ := r.backend.(ControllerTransaction)
+		if err := attemptLegacyGuard(ctx, tx, t, kind, now); err != nil {
+			return managed.Receipt{}, err
+		}
+
 		if err := fn(t, now); err != nil {
 			return managed.Receipt{}, err
 		}
 
+		if err := attemptIntegrity(ctx, tx, t); err != nil {
+			return managed.Receipt{}, err
+		}
+
 		t.Revision++
+		freshValidated = true
 
 		return managed.Receipt{ID: c.ID, Digest: fingerprint, Revision: t.Revision, LeaseEpoch: t.LeaseEpoch, AcceptedAt: now.UTC(), LeaseUntil: t.LeaseUntil}, nil
 	})
+	if atomicErr != nil {
+		return managed.Receipt{}, atomicErr
+	}
+
+	if tx, held := r.backend.(ControllerTransaction); held && !freshValidated {
+		current, readErr := tx.Read(ctx, c.Key)
+		if readErr != nil {
+			return managed.Receipt{}, readErr
+		}
+
+		if readErr = attemptIntegrity(ctx, tx, current); readErr != nil {
+			return managed.Receipt{}, readErr
+		}
+	}
+
+	return result, nil
 }
 
 // ClaimManagedLease fences stale local writers; it never settles outstanding calls.

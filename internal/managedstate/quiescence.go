@@ -2,6 +2,7 @@ package managedstate
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"time"
@@ -43,7 +44,17 @@ func quiescenceReceipt(ctx context.Context, tx ControllerTransaction, q managed.
 		return managed.Receipt{}, err
 	}
 
-	return New(tx).apply(ctx, c, managed.QuiescenceHistory, q, true, func(*managed.Target, time.Time) error { return missing })
+	fingerprint, err := quiescenceFingerprint(q)
+	if err != nil {
+		return managed.Receipt{}, err
+	}
+
+	receipt, err := tx.ReadReceipt(ctx, c.Key, c.ID, fingerprint)
+	if errors.Is(err, managed.ErrNotFound) {
+		return managed.Receipt{}, missing
+	}
+
+	return receipt, err
 }
 
 // readQuiescence validates one immutable row without recursively resolving its current index.
@@ -223,6 +234,10 @@ func (r *Repository) AcceptManagedQuiescence(ctx context.Context, q managed.Quie
 		var verified time.Time
 
 		out, err = New(tx).apply(ctx, c, managed.QuiescenceHistory, q, true, func(t *managed.Target, now time.Time) error {
+			if e := originalDrainFreshEligibility(t, q.Command.ReservationID); e != nil {
+				return e
+			}
+
 			v, err := reservation(t, q.Command.ReservationID)
 			if err != nil {
 				return err
@@ -356,4 +371,16 @@ func laterQuiescence(ctx context.Context, tx ControllerTransaction, t *managed.T
 	}
 
 	return nil
+}
+
+func quiescenceFingerprint(q managed.QuiescenceAcceptanceRequest) (string, error) {
+	raw, err := json.Marshal(struct {
+		Kind  string `json:"kind"`
+		Input any    `json:"input"`
+	}{managed.QuiescenceHistory, q})
+	if err != nil {
+		return "", err
+	}
+
+	return managed.Digest(raw), nil
 }
