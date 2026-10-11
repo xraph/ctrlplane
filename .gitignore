@@ -1,3 +1,6 @@
 
 # Local git worktrees
 .worktrees/
+_project_files/
+
+tmp/
