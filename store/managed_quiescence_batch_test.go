@@ -580,7 +580,23 @@ func TestManagedQuiescenceBatchPostgresLeaseLockExpiry(t *testing.T) {
 		t.Fatal("lease expired before lock-expiry call")
 	}
 
+	waitContext, cancelWait := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancelWait()
+
+	type lockObservation struct {
+		pid int
+		at  time.Time
+		err error
+	}
+
+	observed := make(chan lockObservation, 1)
+
 	err = releaseAfterStoreTime(t, s, f.key.Key, lease.LeaseUntil, func() error {
+		go func() {
+			pid, at, e := observeLiveBatchLock(waitContext, s, lease.LeaseUntil)
+			observed <- lockObservation{pid: pid, at: at, err: e}
+		}()
+
 		result, e := s.AcceptManagedQuiescenceBatch(t.Context(), q)
 		if result != (managed.QuiescenceBatchReceipt{}) {
 			t.Error("expired lease exposed batch receipt")
@@ -591,6 +607,17 @@ func TestManagedQuiescenceBatchPostgresLeaseLockExpiry(t *testing.T) {
 	afterCall := quiescenceClock(t, f.s)
 	unchanged := reflect.DeepEqual(before, attemptPostgresSnapshot(t, s))
 	t.Logf("lease lock expiry pre=%s deadline=%s post=%s unchanged=%t", beforeCall.Format(time.RFC3339Nano), lease.LeaseUntil.Format(time.RFC3339Nano), afterCall.Format(time.RFC3339Nano), unchanged)
+
+	select {
+	case observation := <-observed:
+		t.Logf("lease authority blocked pid=%d db_now=%s deadline=%s live_margin=%s", observation.pid, observation.at.Format(time.RFC3339Nano), lease.LeaseUntil.Format(time.RFC3339Nano), lease.LeaseUntil.Sub(observation.at))
+
+		if observation.err != nil || observation.pid == 0 || !observation.at.Before(lease.LeaseUntil) {
+			t.Fatal("authority call was not observed blocked while lease live", observation.err)
+		}
+	case <-waitContext.Done():
+		t.Fatal("authority lock observation did not finish", waitContext.Err())
+	}
 
 	if !afterCall.After(lease.LeaseUntil) {
 		t.Fatal("call did not cross actual lease deadline")
@@ -608,6 +635,40 @@ func TestManagedQuiescenceBatchPostgresLeaseLockExpiry(t *testing.T) {
 
 	if !unchanged {
 		t.Fatal("expired lease batch wrote")
+	}
+}
+func observeLiveBatchLock(ctx context.Context, s *postgres.Store, until time.Time) (int, time.Time, error) {
+	pg := pgdriver.Unwrap(s.DB())
+
+	tick := time.NewTicker(5 * time.Millisecond)
+	defer tick.Stop()
+
+	for {
+		var observation struct {
+			PID    int   `db:"pid"`
+			Micros int64 `db:"micros"`
+		}
+
+		if err := pg.NewRaw(`SELECT COALESCE(max(pid),0) AS pid, (extract(epoch FROM clock_timestamp())*1000000)::bigint AS micros
+FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock'
+AND cardinality(pg_blocking_pids(pid))>0 AND query LIKE 'SELECT data FROM cp_managed_targets%'`).Scan(ctx, &observation); err != nil {
+			return 0, time.Time{}, err
+		}
+
+		now := time.UnixMicro(observation.Micros)
+		if !now.Before(until) {
+			return observation.PID, now, errors.New("lease deadline reached before observing live authority lock wait")
+		}
+
+		if observation.PID != 0 {
+			return observation.PID, now, nil
+		}
+
+		select {
+		case <-tick.C:
+		case <-ctx.Done():
+			return 0, now, ctx.Err()
+		}
 	}
 }
 func TestManagedQuiescenceBatchConcurrent(t *testing.T) {
@@ -1347,31 +1408,41 @@ func assertPostgresPositiveBatchReserve(t *testing.T, f *removalFixture) {
 	before = attemptPostgresSnapshot(t, s)
 	logPositiveBatchAuthority(t, f, q, 209, "pre-call")
 
+	logAcceptanceFailure := func() {
+		t.Helper()
+
+		acceptanceUnchanged := reflect.DeepEqual(before, attemptPostgresSnapshot(t, s))
+		t.Logf("209 unexpected unchanged=%t", acceptanceUnchanged)
+		logPositiveBatchAuthority(t, f, q, 209, "unexpected post-call")
+	}
+
 	receipt, err := s.AcceptManagedQuiescenceBatch(t.Context(), q)
 	if err != nil {
-		unchanged = reflect.DeepEqual(before, attemptPostgresSnapshot(t, s))
-		logPositiveBatchAuthority(t, f, q, 209, "unexpected post-call")
-		t.Logf("209 unexpected unchanged=%t", unchanged)
+		logAcceptanceFailure()
 		t.Fatal("209 headroom must accept", err)
 	}
 
 	target, err := s.ReadManagedTarget(t.Context(), key.Key)
 	if err != nil || target.Revision != math.MaxInt64-144 {
+		logAcceptanceFailure()
 		t.Fatal("accepted batch did not leave144", err)
 	}
 
 	revision, err := receipt.Receipt.Revision.Uint64()
 	if err != nil || revision != target.Revision {
+		logAcceptanceFailure()
 		t.Fatal("receipt counter differs", err)
 	}
 
 	later, err := s.ReadManagedRemovalAttempt(t.Context(), key)
 	if err != nil || !reflect.DeepEqual(record, later) {
+		logAcceptanceFailure()
 		t.Fatal("batch changed attempt", err)
 	}
 
 	laterJournal, err := s.ReadManagedOperation(t.Context(), journalKey)
 	if err != nil || !reflect.DeepEqual(journal, laterJournal) {
+		logAcceptanceFailure()
 		t.Fatal("batch changed journal", err)
 	}
 
