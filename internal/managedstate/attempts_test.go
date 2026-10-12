@@ -287,13 +287,16 @@ func TestAttemptReserveRequiresCheckedView(t *testing.T) {
 type attemptBatchFixture struct {
 	*attemptReadFixture
 
-	recordRows  []ControllerRecordResult
-	receiptRows []ControllerReceiptResult
-	batchErr    error
-	after       func()
+	recordCalls  int
+	receiptCalls int
+	recordRows   []ControllerRecordResult
+	receiptRows  []ControllerReceiptResult
+	batchErr     error
+	after        func()
 }
 
 func (f *attemptBatchFixture) ReadImmutableRecords(context.Context, []ControllerRecordKey) ([]ControllerRecordResult, error) {
+	f.recordCalls++
 	if f.after != nil {
 		f.after()
 	}
@@ -301,6 +304,7 @@ func (f *attemptBatchFixture) ReadImmutableRecords(context.Context, []Controller
 	return f.recordRows, f.batchErr
 }
 func (f *attemptBatchFixture) ReadImmutableReceipts(context.Context, managed.Key, []id.ID) ([]ControllerReceiptResult, error) {
+	f.receiptCalls++
 	if f.after != nil {
 		f.after()
 	}
@@ -770,4 +774,195 @@ func TestAttemptImmutableEventAndDigestCaches(t *testing.T) {
 	}
 
 	t.Logf("512 event values shallow=%d key shallow=%d;512 digest values shallow=%d; map buckets and owned strings excluded", 512*reflect.TypeFor[attemptEvent]().Size(), 512*reflect.TypeFor[attemptImmutableValueKey]().Size(), 512*reflect.TypeFor[string]().Size())
+}
+
+func (f *attemptBatchFixture) ReadHeldRecords(ctx context.Context, keys []ControllerRecordKey) ([]ControllerRecordResult, error) {
+	return f.ReadImmutableRecords(ctx, keys)
+}
+
+func TestAttemptHeldBatchTransportRefusal(t *testing.T) {
+	selected := ControllerRecordKey{"step", "tenant", managed.Digest([]byte("slot"))}
+	second := selected
+	second.Key = managed.Digest([]byte("second"))
+	valid := ControllerRecordResult{ControllerRecordKey: selected, Found: true, Size: 3, Data: []byte("row")}
+	another := ControllerRecordResult{ControllerRecordKey: second, Found: true, Size: 3, Data: []byte("two")}
+	malformed := another
+	malformed.Size++
+	oversized := another
+	oversized.Size = 262145
+	oversized.Data = nil
+	unexpected := another
+	unexpected.Scope = "other-tenant"
+	absent := another
+
+	absent.Found = false
+	for _, rows := range [][]ControllerRecordResult{{valid}, {valid, valid}, {valid, malformed}, {valid, oversized}, {valid, unexpected}, {valid, absent}} {
+		f := &attemptBatchFixture{attemptReadFixture: &attemptReadFixture{}, recordRows: rows}
+
+		view := newAttemptCheckedReads(f)
+		if err := view.prefetchHeldRecords(t.Context(), []ControllerRecordKey{selected, second}); !errors.Is(err, managed.ErrUnavailable) || len(view.heldRows) != 0 || len(view.heldMissing) != 0 {
+			t.Fatal("invalid held batch installed", err)
+		}
+	}
+
+	f := &attemptBatchFixture{attemptReadFixture: &attemptReadFixture{}, recordRows: []ControllerRecordResult{valid}}
+
+	view := newAttemptCheckedReads(f)
+	if err := view.prefetchHeldRecords(t.Context(), []ControllerRecordKey{selected}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := view.ReadHeldRecords(t.Context(), []ControllerRecordKey{selected}); !errors.Is(err, managed.ErrUnavailable) {
+		t.Fatal("batch wrapper bypass", err)
+	}
+
+	canceled, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	if _, err := view.ReadRecord(canceled, selected.Kind, selected.Scope, selected.Key); !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+}
+
+type attemptHeldCountingFixture struct {
+	*attemptReadFixture
+
+	batches [][]ControllerRecordKey
+}
+
+func (f *attemptHeldCountingFixture) ReadHeldRecords(ctx context.Context, keys []ControllerRecordKey) ([]ControllerRecordResult, error) {
+	if err := ValidateHeldRecordKeys(keys); err != nil {
+		return nil, err
+	}
+
+	f.batches = append(f.batches, slices.Clone(keys))
+
+	out := make([]ControllerRecordResult, 0, len(keys))
+	for _, k := range keys {
+		raw, found := f.rows[[3]string{k.Kind, k.Scope, k.Key}]
+		out = append(out, ControllerRecordResult{ControllerRecordKey: k, Found: found, Size: len(raw), Data: bytes.Clone(raw)})
+	}
+
+	return out, ctx.Err()
+}
+
+func TestAttemptUnissuedProviderBatchBoundary(t *testing.T) {
+	binding := managed.StartupBindingRef{BindingID: "binding", BindingGeneration: "1", BindingDigest: strings.Repeat("a", 64)}
+	spec := managed.ProvisionSpec{Version: "1"}
+	target := &managed.Target{Identity: managed.Identity{Key: managed.Key{TenantID: "tenant", InstanceID: id.New(id.PrefixInstance)}}}
+	target.Resources = map[string]string{"network": "network-resource"}
+
+	for i := range 32 {
+		name := "service" + strconv.Itoa(i)
+
+		role := "sidecar"
+		if i == 0 {
+			role = "main"
+		}
+
+		spec.Services = append(spec.Services, managed.ProvisionService{Name: name, Image: "x@sha256:" + strings.Repeat("b", 64), Role: role, CPUMillis: "1", MemoryMiB: "1", PIDLimit: "1", Startup: binding})
+		target.Resources[name] = "resource" + strconv.Itoa(i)
+	}
+
+	raw, err := json.Marshal(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	encoded, err := json.Marshal(managed.ManagedSpec{Profile: "ctrlplane.managed.v1", RuntimeRoles: []managed.RuntimeRole{managed.Polling}, Provision: raw})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	target.Manifest = managed.Manifest{Version: 1, Spec: encoded, SpecDigest: managed.Digest(encoded), Members: []managed.Member{{Name: "worker", Service: "service0"}}}
+	v := attemptView{scope: managed.Digest([]byte("scope")), descriptor: managed.AttemptDescriptor{ActionID: id.New(managed.PrefixOperation), ProviderOperationID: id.New(managed.PrefixOperation)}, state: managed.AttemptState{ProviderSlots: make([]byte, 33)}}
+
+	steps, err := attemptSteps(target, v)
+	if err != nil || len(steps) != 33 {
+		t.Fatal("steps", len(steps), err)
+	}
+
+	f := &attemptHeldCountingFixture{attemptReadFixture: &attemptReadFixture{rows: map[[3]string][]byte{}}}
+
+	reads := newAttemptCheckedReads(f)
+	if err = reads.prefetchProviders(t.Context(), target, v); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(f.batches) != 2 || len(f.batches[0]) != 64 || len(f.batches[1]) != 35 {
+		t.Fatal("99 selections must use two bounded reads", f.batches)
+	}
+
+	unique := map[ControllerRecordKey]bool{}
+
+	for _, batch := range f.batches {
+		for _, selected := range batch {
+			if unique[selected] {
+				t.Fatal("duplicate selection")
+			}
+
+			unique[selected] = true
+		}
+	}
+
+	for i, step := range steps {
+		if _, _, err = attemptProviderRead(t.Context(), reads, target, v, step, i); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if f.rowReads != 0 {
+		t.Fatal("presence escaped batch", f.rowReads)
+	}
+
+	if err = reads.prefetchProviders(t.Context(), target, v); err != nil || len(f.batches) != 2 {
+		t.Fatal("held view refetched", err)
+	}
+
+	slot, err := providerStepID(steps[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, selected := range []ControllerRecordKey{{"step", target.TenantID, slot}, {"removal_provider_slot", v.scope, slot}, {"step_failure", target.TenantID, slot}} {
+		f.rows = map[[3]string][]byte{{selected.Kind, selected.Scope, selected.Key}: []byte(`{}`)}
+		fresh := newAttemptCheckedReads(f)
+
+		err = fresh.prefetchProviders(t.Context(), target, v)
+		if err == nil {
+			_, _, err = attemptProviderRead(t.Context(), fresh, target, v, steps[0], 0)
+		}
+
+		if err == nil {
+			t.Fatal("fresh validation accepted unexpected zero-mask row", selected.Kind)
+		}
+	}
+}
+
+func TestAttemptSharedImmutableTransport(t *testing.T) {
+	selected := ControllerRecordKey{"removal_current_binding", managed.Digest([]byte("scope")), managed.Digest([]byte("slot"))}
+	op := id.New(managed.PrefixOperation)
+	key := managed.Key{TenantID: "tenant", InstanceID: id.New(id.PrefixInstance)}
+	receipt := managed.Receipt{ID: op, Digest: managed.Digest([]byte("receipt"))}
+	f := &attemptBatchFixture{attemptReadFixture: &attemptReadFixture{}, recordRows: []ControllerRecordResult{{ControllerRecordKey: selected, Found: true, Size: 3, Data: []byte("row")}}, receiptRows: []ControllerReceiptResult{{OperationID: op, Found: true, Receipt: receipt}}}
+
+	reads := newAttemptCheckedReads(f)
+	for range 3 {
+		if err := reads.prefetchRecords(t.Context(), []ControllerRecordKey{selected}); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := reads.prefetchReceipts(t.Context(), key, []id.ID{op}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if f.recordCalls != 1 || f.receiptCalls != 1 {
+		t.Fatal("successful exact transport repeated", f.recordCalls, f.receiptCalls)
+	}
+
+	raw, err := reads.ReadRecord(t.Context(), selected.Kind, selected.Scope, selected.Key)
+	if err != nil || string(raw) != "row" || f.rowReads != 0 {
+		t.Fatal("prefetched current binding escaped transport", err)
+	}
 }

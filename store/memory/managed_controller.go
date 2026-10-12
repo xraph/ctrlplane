@@ -162,12 +162,29 @@ func (t managedControllerTransaction) ReadImmutableRecords(ctx context.Context, 
 		return nil, err
 	}
 
+	return t.readSelectedRecords(ctx, keys, managedstate.ImmutableRecordLimit)
+}
+
+// ReadHeldRecords selects provider rows only for the caller's no-write interval.
+func (t managedControllerTransaction) ReadHeldRecords(ctx context.Context, keys []managedstate.ControllerRecordKey) ([]managedstate.ControllerRecordResult, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	if err := managedstate.ValidateHeldRecordKeys(keys); err != nil {
+		return nil, err
+	}
+
+	return t.readSelectedRecords(ctx, keys, managedstate.HeldRecordLimit)
+}
+
+func (t managedControllerTransaction) readSelectedRecords(ctx context.Context, keys []managedstate.ControllerRecordKey, limit func(string) int) ([]managedstate.ControllerRecordResult, error) {
 	out := make([]managedstate.ControllerRecordResult, 0, len(keys))
 	for _, selected := range keys {
 		raw, found := t.store.managedControllerRecords[selected.Kind+":"+selected.Scope][selected.Key]
 
 		result := managedstate.ControllerRecordResult{ControllerRecordKey: selected, Found: found, Size: len(raw)}
-		if len(raw) <= managedstate.ImmutableRecordLimit(selected.Kind) {
+		if len(raw) <= limit(selected.Kind) {
 			result.Data = slices.Clone(raw)
 		}
 

@@ -171,6 +171,8 @@ func readContinuationBaseHeld(ctx context.Context, tx ControllerTransaction, t *
 
 // readAttempt validates a bounded root/first/current/immediate slice and exact history.
 func readAttempt(ctx context.Context, tx ControllerTransaction, t *managed.Target, k managed.AttemptKey) (attemptView, error) {
+	tx = newAttemptCheckedReads(tx)
+
 	var empty attemptView
 
 	scope, err := attemptScope(t.Key)

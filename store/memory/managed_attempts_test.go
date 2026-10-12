@@ -2740,3 +2740,98 @@ func TestManagedRemovalContinuationMemoryStorageCaps(t *testing.T) {
 
 	t.Log("association oversized digest rejected by exact retained association comparison; public record derives from bounded validated components")
 }
+
+func TestManagedAttemptMemoryHeldBatches(t *testing.T) {
+	s, action, _, _ := memoryAttemptFixture(t)
+
+	before, err := s.ReadManagedTarget(t.Context(), action.Key)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	beforeRaw, err := json.Marshal(before)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = (managedBackend{store: s}).ControllerAtomic(t.Context(), "held-batch", []managed.Key{action.Key}, func(tx managedstate.ControllerTransaction) error {
+		keys := []managedstate.ControllerRecordKey{}
+
+		for i, kind := range []string{"step", "removal_provider_slot", "step_failure", "step_history"} {
+			scope := action.TenantID
+			if kind == "removal_provider_slot" {
+				scope = managed.Digest([]byte("scope"))
+			}
+
+			keys = append(keys, managedstate.ControllerRecordKey{Kind: kind, Scope: scope, Key: managed.Digest([]byte(strconv.Itoa(i)))})
+		}
+
+		rows, e := tx.ReadHeldRecords(t.Context(), keys)
+		if e != nil || len(rows) != 4 {
+			t.Fatal(e)
+		}
+
+		for _, row := range rows {
+			if row.Found || row.Size != 0 || len(row.Data) != 0 {
+				t.Fatal("absence lost")
+			}
+		}
+
+		for i, selected := range keys {
+			raw := []byte(strings.Repeat("x", managedstate.HeldRecordLimit(selected.Kind)))
+			if e = tx.WriteRecord(t.Context(), selected.Kind, selected.Scope, selected.Key, raw, true); e != nil {
+				return e
+			}
+
+			rows, e = tx.ReadHeldRecords(t.Context(), keys)
+			if e != nil || !rows[i].Found || string(rows[i].Data) != string(raw) || rows[i].ControllerRecordKey != selected {
+				t.Fatal("held mutation/identity/bytes", e)
+			}
+
+			rows[i].Data[0] = 'Y'
+
+			again, readErr := tx.ReadHeldRecords(t.Context(), keys)
+			if readErr != nil || string(again[i].Data) != string(raw) {
+				t.Fatal("borrowed bytes", readErr)
+			}
+		}
+
+		if _, e = tx.ReadHeldRecords(t.Context(), append(keys, keys[0])); !errors.Is(e, managed.ErrInvalid) {
+			t.Fatal("duplicate", e)
+		}
+
+		over := make([]managedstate.ControllerRecordKey, 65)
+		if _, e = tx.ReadHeldRecords(t.Context(), over); !errors.Is(e, managed.ErrInvalid) {
+			t.Fatal("bound", e)
+		}
+
+		bad := keys[0]
+
+		bad.Kind = "removal_attempt_state"
+		if _, e = tx.ReadHeldRecords(t.Context(), []managedstate.ControllerRecordKey{bad}); !errors.Is(e, managed.ErrInvalid) {
+			t.Fatal("kind", e)
+		}
+
+		canceled, cancel := context.WithCancel(t.Context())
+		cancel()
+
+		if _, e = tx.ReadHeldRecords(canceled, keys); !errors.Is(e, context.Canceled) {
+			t.Fatal("cancel", e)
+		}
+
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	after, err := s.ReadManagedTarget(t.Context(), action.Key)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	afterRaw, err := json.Marshal(after)
+	if err != nil || string(afterRaw) != string(beforeRaw) {
+		t.Fatal("parent changed", err)
+	}
+}

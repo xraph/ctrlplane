@@ -293,12 +293,15 @@ func attemptSets(ctx context.Context, tx ControllerTransaction, t *managed.Targe
 }
 
 // attemptCheckedReads lives only during one readAttempt validation. It retains
-// successful immutable reads and exact native own-slot batch absence. Mutable
-// rows and missing original/event/receipt dependencies still reach the backend.
+// successful immutable reads and exact native own-slot batch absence. Provider
+// rows use separate held transport; missing original/event/receipt dependencies
+// still reach the backend.
 // The view is discarded before the caller performs any write or fresh callback.
 type attemptCheckedReads struct {
 	ControllerTransaction
 
+	heldRows         map[[3]string][]byte
+	heldMissing      map[[3]string]bool
 	rows             map[[3]string][]byte
 	missing          map[[3]string]bool
 	receipts         map[attemptReceiptKey]managed.Receipt
@@ -308,6 +311,11 @@ type attemptCheckedReads struct {
 	manifestSpec     managed.ProvisionSpec
 	manifestRoles    managed.ManagedSpec
 }
+
+func newAttemptCheckedReads(tx ControllerTransaction) *attemptCheckedReads {
+	return &attemptCheckedReads{ControllerTransaction: tx, rows: make(map[[3]string][]byte), missing: make(map[[3]string]bool), receipts: make(map[attemptReceiptKey]managed.Receipt), heldRows: make(map[[3]string][]byte), heldMissing: make(map[[3]string]bool)}
+}
+
 type attemptImmutableValueKey struct{ Kind, Scope, Key, BytesDigest string }
 
 func (v *attemptCheckedReads) eventValue(ctx context.Context, scope, key string) (attemptEvent, error) {
@@ -455,11 +463,19 @@ func (v *attemptCheckedReads) ReadRecord(ctx context.Context, kind, scope, key s
 	immutable := false
 
 	switch kind {
-	case "removal_command", "removal_fence", "removal_abort", "removal_finish", "removal_binding_settlement", "removal_admission", "removal_revocation", "removal_settlement", "removal_attempt_event", managed.OriginalRegistration, managed.OriginalDrain, managed.QuiescenceHistory:
+	case "removal_current_binding", "removal_command", "removal_fence", "removal_abort", "removal_finish", "removal_binding_settlement", "removal_admission", "removal_revocation", "removal_settlement", "removal_attempt_event", managed.OriginalRegistration, managed.OriginalDrain, managed.QuiescenceHistory:
 		immutable = true
 	}
 
 	selected := [3]string{kind, scope, key}
+	if raw, ok := v.heldRows[selected]; ok {
+		return bytes.Clone(raw), nil
+	}
+
+	if v.heldMissing[selected] {
+		return nil, managed.ErrNotFound
+	}
+
 	if v.missing[selected] {
 		return nil, managed.ErrNotFound
 	}
@@ -512,6 +528,10 @@ func (*attemptCheckedReads) ProjectRows(context.Context, managed.Identity, manag
 	return managed.ErrUnavailable
 }
 
+func (*attemptCheckedReads) ReadHeldRecords(context.Context, []ControllerRecordKey) ([]ControllerRecordResult, error) {
+	return nil, managed.ErrUnavailable
+}
+
 // Batch transport stays private to one checked view and cannot be extended through it.
 func (*attemptCheckedReads) ReadImmutableRecords(context.Context, []ControllerRecordKey) ([]ControllerRecordResult, error) {
 	return nil, managed.ErrUnavailable
@@ -521,12 +541,47 @@ func (*attemptCheckedReads) ReadImmutableReceipts(context.Context, managed.Key, 
 }
 
 func (v *attemptCheckedReads) prefetchRecords(ctx context.Context, keys []ControllerRecordKey) error {
+	return v.prefetchSelectedRecords(ctx, keys, false)
+}
+func (v *attemptCheckedReads) prefetchHeldRecords(ctx context.Context, keys []ControllerRecordKey) error {
+	return v.prefetchSelectedRecords(ctx, keys, true)
+}
+func (v *attemptCheckedReads) prefetchSelectedRecords(ctx context.Context, keys []ControllerRecordKey, held bool) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	rowsCache, missing, limit, read := v.rows, v.missing, ImmutableRecordLimit, v.ControllerTransaction.ReadImmutableRecords
+	if held {
+		if v.heldRows == nil {
+			v.heldRows = make(map[[3]string][]byte)
+			v.heldMissing = make(map[[3]string]bool)
+		}
+
+		rowsCache, missing, limit, read = v.heldRows, v.heldMissing, HeldRecordLimit, v.ControllerTransaction.ReadHeldRecords
+	}
+
+	pending := make([]ControllerRecordKey, 0, len(keys))
+
+	seenKeys := make(map[ControllerRecordKey]bool, len(keys))
+	for _, k := range keys {
+		selected := [3]string{k.Kind, k.Scope, k.Key}
+
+		_, found := rowsCache[selected]
+		if !found && !missing[selected] && !seenKeys[k] {
+			pending = append(pending, k)
+		}
+
+		seenKeys[k] = true
+	}
+
+	keys = pending
 	for len(keys) > 0 {
 		count := min(64, len(keys))
 		selected := keys[:count]
 		keys = keys[count:]
 
-		rows, err := v.ControllerTransaction.ReadImmutableRecords(ctx, selected)
+		rows, err := read(ctx, selected)
 		if err != nil {
 			return err
 		}
@@ -551,8 +606,8 @@ func (v *attemptCheckedReads) prefetchRecords(ctx context.Context, keys []Contro
 			}
 
 			seen[row.ControllerRecordKey] = true
-			if row.Size > ImmutableRecordLimit(row.Kind) {
-				if row.Kind == managed.OriginalRegistration {
+			if row.Size > limit(row.Kind) {
+				if row.Kind == managed.OriginalRegistration || held && (row.Kind == "step" || row.Kind == "step_history") {
 					return managed.ErrUnavailable
 				}
 
@@ -567,9 +622,9 @@ func (v *attemptCheckedReads) prefetchRecords(ctx context.Context, keys []Contro
 		for _, row := range rows {
 			k := [3]string{row.Kind, row.Scope, row.Key}
 			if row.Found {
-				v.rows[k] = bytes.Clone(row.Data)
-			} else if row.Kind != managed.OriginalRegistration && row.Kind != "removal_attempt_event" {
-				v.missing[k] = true
+				rowsCache[k] = bytes.Clone(row.Data)
+			} else if row.Kind != managed.OriginalRegistration && row.Kind != "removal_attempt_event" && row.Kind != "step_history" {
+				missing[k] = true
 			}
 		}
 	}
@@ -577,6 +632,27 @@ func (v *attemptCheckedReads) prefetchRecords(ctx context.Context, keys []Contro
 	return nil
 }
 func (v *attemptCheckedReads) prefetchReceipts(ctx context.Context, key managed.Key, operations []id.ID) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	pending := make([]id.ID, 0, len(operations))
+	cachedOps := make(map[id.ID]bool, len(operations))
+
+	for cached := range v.receipts {
+		if cached.Key == key {
+			cachedOps[cached.ID] = true
+		}
+	}
+
+	for _, operation := range operations {
+		if !cachedOps[operation] {
+			pending = append(pending, operation)
+			cachedOps[operation] = true
+		}
+	}
+
+	operations = pending
 	for len(operations) > 0 {
 		count := min(64, len(operations))
 		selected := operations[:count]
@@ -781,11 +857,92 @@ func (reads *attemptCheckedReads) prefetchAttempt(ctx context.Context, t *manage
 		}
 	}
 
+	if err = reads.prefetchReceipts(ctx, t.Key, operations); err != nil {
+		return err
+	}
+
+	return reads.prefetchProviders(ctx, t, v)
+}
+
+// prefetchProviders retains every own-slot selection, including zero masks.
+// Discovery supplies transport keys only; attemptProviderRead validates authority.
+func (reads *attemptCheckedReads) prefetchProviders(ctx context.Context, t *managed.Target, v attemptView) error {
+	steps, err := attemptSteps(t, v)
+	if err != nil {
+		return err
+	}
+
+	if len(steps) > 33 {
+		return managed.ErrUnavailable
+	}
+
+	keys := make([]ControllerRecordKey, 0, 3*len(steps))
+
+	associations := make([]ControllerRecordKey, 0, len(steps))
+	for _, step := range steps {
+		slot, e := providerStepID(step)
+		if e != nil {
+			return e
+		}
+
+		association := ControllerRecordKey{"removal_provider_slot", v.scope, slot}
+		keys = append(keys, ControllerRecordKey{"step", t.TenantID, slot}, association, ControllerRecordKey{"step_failure", t.TenantID, slot})
+		associations = append(associations, association)
+	}
+
+	if err = reads.prefetchHeldRecords(ctx, keys); err != nil {
+		return err
+	}
+
+	history := make([]ControllerRecordKey, 0, 2*len(steps))
+	operations := make([]id.ID, 0, len(steps))
+
+	for _, selected := range associations {
+		raw, found := reads.heldRows[[3]string{selected.Kind, selected.Scope, selected.Key}]
+		if !found {
+			continue
+		}
+
+		var association attemptProviderSlot
+		if json.Unmarshal(raw, &association) != nil {
+			return managed.ErrUnavailable
+		}
+
+		for _, hash := range []string{association.PositiveDigest, association.LastUncertaintyDigest} {
+			if hash != "" {
+				if !digest(hash) {
+					return managed.ErrUnavailable
+				}
+
+				history = append(history, ControllerRecordKey{"step_history", t.TenantID, hash})
+			}
+		}
+
+		receipt, e := association.Receipt.Value()
+		if e != nil {
+			return e
+		}
+
+		if receipt.ID.Prefix() != managed.PrefixOperation {
+			return managed.ErrUnavailable
+		}
+
+		operations = append(operations, receipt.ID)
+	}
+
+	if err = reads.prefetchHeldRecords(ctx, history); err != nil {
+		return err
+	}
+
 	return reads.prefetchReceipts(ctx, t.Key, operations)
 }
 
 func readAttemptBaseHeld(ctx context.Context, tx ControllerTransaction, t *managed.Target, k managed.AttemptKey) (attemptView, error) {
-	checked := &attemptCheckedReads{ControllerTransaction: tx, rows: make(map[[3]string][]byte), missing: make(map[[3]string]bool), receipts: make(map[attemptReceiptKey]managed.Receipt)}
+	checked, ok := tx.(*attemptCheckedReads)
+	if !ok {
+		checked = newAttemptCheckedReads(tx)
+	}
+
 	tx = checked
 
 	var v attemptView

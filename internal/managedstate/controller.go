@@ -30,7 +30,7 @@ type ControllerRecord struct {
 	Data []byte
 }
 
-// ControllerRecordKey selects one immutable retained row.
+// ControllerRecordKey selects one exact retained row.
 type ControllerRecordKey struct{ Kind, Scope, Key string }
 
 // ControllerRecordResult preserves existence independently of payload length.
@@ -56,6 +56,8 @@ func ImmutableRecordLimit(kind string) int {
 		return managed.MaxOriginalLifecycleRecord
 	case "removal_command", "removal_abort", "removal_finish":
 		return managed.MaxAttemptCommand
+	case "removal_current_binding":
+		return managed.MaxAttemptCurrentBinding
 	case "removal_fence":
 		return managed.MaxAttemptFence
 	case "removal_binding_settlement", "removal_attempt_event":
@@ -92,6 +94,47 @@ func ValidateImmutableRecordKeys(keys []ControllerRecordKey) error {
 	return nil
 }
 
+// HeldRecordLimit preserves the existing reader caps for provider transport.
+// Step and history readers use the physical controller row bound.
+func HeldRecordLimit(kind string) int {
+	switch kind {
+	case "step", "step_history":
+		return 262144
+	case "removal_provider_slot":
+		return managed.MaxAttemptAssociation
+	case "step_failure":
+		return managed.MaxAttemptSettlement
+	default:
+		return 0
+	}
+}
+
+// ValidateHeldRecordKeys bounds provider selection within one no-write interval.
+func ValidateHeldRecordKeys(keys []ControllerRecordKey) error {
+	if len(keys) == 0 || len(keys) > 64 {
+		return managed.ErrInvalid
+	}
+
+	seen := make(map[ControllerRecordKey]bool, len(keys))
+	for _, selected := range keys {
+		if HeldRecordLimit(selected.Kind) == 0 || !digest(selected.Key) || seen[selected] {
+			return managed.ErrInvalid
+		}
+
+		if selected.Kind == "removal_provider_slot" {
+			if !digest(selected.Scope) {
+				return managed.ErrInvalid
+			}
+		} else if !token(selected.Scope) {
+			return managed.ErrInvalid
+		}
+
+		seen[selected] = true
+	}
+
+	return nil
+}
+
 // ValidateImmutableReceiptKeys bounds exact parent and receipt identities.
 func ValidateImmutableReceiptKeys(k managed.Key, operations []id.ID) error {
 	if !key(k) || len(k.InstanceID.String()) > 64 || len(operations) == 0 || len(operations) > 64 {
@@ -117,6 +160,7 @@ type ControllerTransaction interface {
 	Now() time.Time
 	// ReadReceipt reads exact immutable history after the caller validates the held target.
 	ReadReceipt(ctx context.Context, key managed.Key, operation id.ID, digest string) (managed.Receipt, error)
+	ReadHeldRecords(ctx context.Context, keys []ControllerRecordKey) ([]ControllerRecordResult, error)
 	ReadImmutableRecords(ctx context.Context, keys []ControllerRecordKey) ([]ControllerRecordResult, error)
 	ReadImmutableReceipts(ctx context.Context, key managed.Key, operations []id.ID) ([]ControllerReceiptResult, error)
 	ReadRecord(ctx context.Context, kind, scope, key string) ([]byte, error)

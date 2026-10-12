@@ -177,6 +177,23 @@ func (t managedControllerTransaction) ReadImmutableRecords(ctx context.Context, 
 		return nil, err
 	}
 
+	return t.readSelectedRecords(ctx, keys, managedstate.ImmutableRecordLimit)
+}
+
+// ReadHeldRecords selects provider rows only for the caller's no-write interval.
+func (t managedControllerTransaction) ReadHeldRecords(ctx context.Context, keys []managedstate.ControllerRecordKey) ([]managedstate.ControllerRecordResult, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	if err := managedstate.ValidateHeldRecordKeys(keys); err != nil {
+		return nil, err
+	}
+
+	return t.readSelectedRecords(ctx, keys, managedstate.HeldRecordLimit)
+}
+
+func (t managedControllerTransaction) readSelectedRecords(ctx context.Context, keys []managedstate.ControllerRecordKey, limit func(string) int) ([]managedstate.ControllerRecordResult, error) {
 	values := make([]string, 0, len(keys))
 
 	args := make([]any, 0, len(keys)*5)
@@ -187,7 +204,7 @@ func (t managedControllerTransaction) ReadImmutableRecords(ctx context.Context, 
 		}
 
 		values = append(values, "("+refs[0]+"::int,"+refs[1]+"::text,"+refs[2]+"::text,"+refs[3]+"::text,"+refs[4]+"::int)")
-		args = append(args, n, selected.Kind, selected.Scope, selected.Key, managedstate.ImmutableRecordLimit(selected.Kind))
+		args = append(args, n, selected.Kind, selected.Scope, selected.Key, limit(selected.Kind))
 	}
 
 	var rows []struct {
