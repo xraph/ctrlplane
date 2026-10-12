@@ -563,6 +563,53 @@ func TestManagedQuiescenceBatchPostgresLockExpiry(t *testing.T) {
 		t.Fatal("expired batch wrote")
 	}
 }
+func TestManagedQuiescenceBatchPostgresLeaseLockExpiry(t *testing.T) {
+	f := newRemovalFixture(t, "postgres")
+	s := f.s.Authority.(*postgres.Store)
+
+	lease, err := s.ClaimManagedLease(t.Context(), managed.LeaseRequest{Command: f.request().Command, Duration: 500 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	q := batchRequest(t, f)
+	before := attemptPostgresSnapshot(t, s)
+
+	beforeCall := quiescenceClock(t, f.s)
+	if !beforeCall.Before(lease.LeaseUntil) {
+		t.Fatal("lease expired before lock-expiry call")
+	}
+
+	err = releaseAfterStoreTime(t, s, f.key.Key, lease.LeaseUntil, func() error {
+		result, e := s.AcceptManagedQuiescenceBatch(t.Context(), q)
+		if result != (managed.QuiescenceBatchReceipt{}) {
+			t.Error("expired lease exposed batch receipt")
+		}
+
+		return e
+	})
+	afterCall := quiescenceClock(t, f.s)
+	unchanged := reflect.DeepEqual(before, attemptPostgresSnapshot(t, s))
+	t.Logf("lease lock expiry pre=%s deadline=%s post=%s unchanged=%t", beforeCall.Format(time.RFC3339Nano), lease.LeaseUntil.Format(time.RFC3339Nano), afterCall.Format(time.RFC3339Nano), unchanged)
+
+	if !afterCall.After(lease.LeaseUntil) {
+		t.Fatal("call did not cross actual lease deadline")
+	}
+
+	for _, entry := range q.Entries {
+		if !afterCall.Before(entry.Observation.ValidUntil) {
+			t.Fatal("new proof expired during lease lock case")
+		}
+	}
+
+	if !errors.Is(err, managed.ErrConflict) {
+		t.Fatal("post-lock lease expiry", err)
+	}
+
+	if !unchanged {
+		t.Fatal("expired lease batch wrote")
+	}
+}
 func TestManagedQuiescenceBatchConcurrent(t *testing.T) {
 	for _, backend := range []string{"memory", "postgres"} {
 		for _, kind := range []string{"overlap", "disjoint", "individual", "lease", "revoke", "provider"} {
@@ -1279,20 +1326,32 @@ func assertPostgresPositiveBatchReserve(t *testing.T, f *removalFixture) {
 	q := batchRequest(t, f)
 	before := attemptPostgresSnapshot(t, s)
 
+	logPositiveBatchAuthority(t, f, q, 206, "pre-call")
 	refused, err := s.AcceptManagedQuiescenceBatch(t.Context(), q)
+
+	unchanged := reflect.DeepEqual(before, attemptPostgresSnapshot(t, s))
 	if !errors.Is(err, managed.ErrCapacity) || !reflect.DeepEqual(refused, managed.QuiescenceBatchReceipt{}) {
+		logPositiveBatchAuthority(t, f, q, 206, "unexpected post-call")
+		t.Logf("206 unexpected unchanged=%t", unchanged)
 		t.Fatal("206 headroom must refuse without a receipt", err)
 	}
 
-	if !reflect.DeepEqual(before, attemptPostgresSnapshot(t, s)) {
+	if !unchanged {
+		logPositiveBatchAuthority(t, f, q, 206, "unexpected post-call")
+		t.Log("206 unexpected unchanged=false")
 		t.Fatal("206 refusal changed rows or receipts")
 	}
 
 	setRevision(math.MaxInt64 - 209)
 	q.Command.Revision = managed.Decimal(strconv.FormatUint(math.MaxInt64-209, 10))
+	before = attemptPostgresSnapshot(t, s)
+	logPositiveBatchAuthority(t, f, q, 209, "pre-call")
 
 	receipt, err := s.AcceptManagedQuiescenceBatch(t.Context(), q)
 	if err != nil {
+		unchanged = reflect.DeepEqual(before, attemptPostgresSnapshot(t, s))
+		logPositiveBatchAuthority(t, f, q, 209, "unexpected post-call")
+		t.Logf("209 unexpected unchanged=%t", unchanged)
 		t.Fatal("209 headroom must accept", err)
 	}
 
@@ -1317,11 +1376,38 @@ func assertPostgresPositiveBatchReserve(t *testing.T, f *removalFixture) {
 	}
 
 	accepted := attemptPostgresSnapshot(t, s)
+	logPositiveBatchAuthority(t, f, q, 144, "pre-replay")
 
 	replay, err := s.AcceptManagedQuiescenceBatch(t.Context(), q)
-	if err != nil || !reflect.DeepEqual(receipt, replay) || !reflect.DeepEqual(accepted, attemptPostgresSnapshot(t, s)) {
+
+	unchanged = reflect.DeepEqual(accepted, attemptPostgresSnapshot(t, s))
+	if err != nil || !reflect.DeepEqual(receipt, replay) || !unchanged {
+		logPositiveBatchAuthority(t, f, q, 144, "unexpected post-replay")
+		t.Logf("replay unexpected unchanged=%t", unchanged)
 		t.Fatal("capacity boundary replay changed", err)
 	}
 
 	t.Log("actual64bindings/24positive/9unissued:206refused unchanged;209accepted65,left144;attempt154 unchanged")
+}
+
+func logPositiveBatchAuthority(t *testing.T, f *removalFixture, q managed.QuiescenceBatchAcceptanceRequest, headroom int, phase string) {
+	t.Helper()
+
+	target, err := f.s.ReadManagedTarget(t.Context(), f.key.Key)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	now := quiescenceClock(t, f.s)
+
+	margin := time.Minute
+	for _, entry := range q.Entries {
+		if left := entry.Observation.ValidUntil.Sub(now); left < margin {
+			margin = left
+		}
+	}
+
+	revision, _ := q.Command.Revision.Uint64()
+	epoch, _ := q.Command.LeaseEpoch.Uint64()
+	t.Logf("positive-reserve %s headroom=%d db_now=%s revision=%d epoch=%d owner=%q revision_match=%t epoch_match=%t owner_match=%t lease_deadline=%s lease_margin=%s new_proof_margin=%s", phase, headroom, now.Format(time.RFC3339Nano), target.Revision, target.LeaseEpoch, target.LeaseOwner, revision == target.Revision, epoch == target.LeaseEpoch, q.Command.Owner == target.LeaseOwner, target.LeaseUntil.Format(time.RFC3339Nano), target.LeaseUntil.Sub(now), margin)
 }

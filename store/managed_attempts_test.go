@@ -869,14 +869,15 @@ func testManagedFiniteSetWithBatch(t *testing.T, nearLimit bool, diagnostic stri
 			renewals := newBatchRenewalBudget(t, nearLimit, diagnostic)
 			t.Cleanup(func() { renewals.log(t) })
 
-			claimLease := func() {
+			claimLease := func() managed.Receipt {
 				t.Helper()
 
 				if batch {
 					renewals.leaseAttempt(t)
 				}
 
-				if _, err := f.s.ClaimManagedLease(t.Context(), managed.LeaseRequest{Command: f.request().Command, Duration: managed.MaxLease}); err != nil {
+				receipt, err := f.s.ClaimManagedLease(t.Context(), managed.LeaseRequest{Command: f.request().Command, Duration: managed.MaxLease})
+				if err != nil {
 					t.Fatal(err)
 				}
 
@@ -885,6 +886,8 @@ func testManagedFiniteSetWithBatch(t *testing.T, nearLimit bool, diagnostic stri
 				if batch {
 					renewals.leases++
 				}
+
+				return receipt
 			}
 			refreshBatch := func() (int, time.Duration) {
 				t.Helper()
@@ -1026,6 +1029,27 @@ func testManagedFiniteSetWithBatch(t *testing.T, nearLimit bool, diagnostic stri
 			proofUpdates := 64
 
 			for n := range 33 {
+				if diagnostic == "positive-reserve" && n == 23 {
+					current, err := f.s.ReadManagedTarget(t.Context(), f.key.Key)
+					if err != nil {
+						t.Fatal(err)
+					}
+
+					now := quiescenceClock(t, f.s)
+					if current.LeaseOwner == "" || !now.Before(current.LeaseUntil) {
+						t.Fatalf("positive-reserve preparation requires live authority: now=%s revision=%d epoch=%d owner=%q deadline=%s", now.Format(time.RFC3339Nano), current.Revision, current.LeaseEpoch, current.LeaseOwner, current.LeaseUntil.Format(time.RFC3339Nano))
+					}
+
+					attempts, accepted := renewals.leaseAttempts, renewals.leases
+					receipt := claimLease()
+
+					if renewals.leaseAttempts != attempts+1 || renewals.leases != accepted+1 {
+						t.Fatal("positive-reserve preparation was not counted once")
+					}
+
+					t.Logf("positive-reserve preparation counted=1 leases_attempted=%d leases_accepted=%d revision=%d epoch=%d deadline=%s", renewals.leaseAttempts, renewals.leases, receipt.Revision, receipt.LeaseEpoch, receipt.LeaseUntil.Format(time.RFC3339Nano))
+				}
+
 				now := quiescenceClock(t, f.s)
 
 				margin := time.Minute
@@ -1100,6 +1124,11 @@ func testManagedFiniteSetWithBatch(t *testing.T, nearLimit bool, diagnostic stri
 				steps++
 				if diagnostic == "positive-reserve" && steps == 24 {
 					assertPostgresPositiveBatchReserve(t, f)
+					renewals.complete(t)
+
+					if renewals.leaseAttempts > 90 {
+						t.Fatal("positive-reserve lease opportunities exceeded90")
+					}
 
 					return
 				}
