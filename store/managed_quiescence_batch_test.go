@@ -1167,3 +1167,161 @@ func TestManagedQuiescenceBatchPostgresReserve(t *testing.T) {
 		t.Fatal("batch N+1 counter mismatch")
 	}
 }
+
+const batchCompletionHeadroom = 490 + 65*(1+33) + (64 + 1 + 33 + 64)
+
+type batchRenewalBudget struct {
+	maxBatches, maxLeases        int
+	batchAttempts, leaseAttempts int
+	batches, leases              int
+}
+
+func newBatchRenewalBudget(t *testing.T, nearLimit bool, diagnostic string) *batchRenewalBudget {
+	t.Helper()
+
+	b := &batchRenewalBudget{maxBatches: 34, maxLeases: 162}
+	if !nearLimit {
+		b.maxBatches++
+	}
+
+	if diagnostic == "full-ledger-direct" {
+		b.maxLeases++
+	}
+
+	return b
+}
+func (b *batchRenewalBudget) batchAttempt(t *testing.T) {
+	t.Helper()
+
+	b.batchAttempts++
+	if b.batchAttempts > b.maxBatches {
+		t.Fatalf("batch attempt budget exceeded: %d > %d", b.batchAttempts, b.maxBatches)
+	}
+}
+func (b *batchRenewalBudget) leaseAttempt(t *testing.T) {
+	t.Helper()
+
+	b.leaseAttempts++
+	if b.leaseAttempts > b.maxLeases {
+		t.Fatalf("lease attempt budget exceeded: %d > %d", b.leaseAttempts, b.maxLeases)
+	}
+}
+func (b *batchRenewalBudget) complete(t *testing.T) {
+	t.Helper()
+
+	if b.batchAttempts != b.batches || b.leaseAttempts != b.leases || b.batches > b.maxBatches || b.leases > b.maxLeases {
+		t.Fatal("renewal attempts and accepted work differ", b)
+	}
+}
+func (b *batchRenewalBudget) log(t *testing.T) {
+	t.Helper()
+	t.Logf("renewal envelope Bmax=%d Lmax=%d batches_attempted=%d batches_accepted=%d leases_attempted=%d leases_accepted=%d", b.maxBatches, b.maxLeases, b.batchAttempts, b.batches, b.leaseAttempts, b.leases)
+}
+
+func TestManagedQuiescenceBatchPostgresPositiveReserve(t *testing.T) {
+	testManagedFiniteSetWithBatch(t, false, "positive-reserve", true)
+}
+func assertPostgresPositiveBatchReserve(t *testing.T, f *removalFixture) {
+	t.Helper()
+
+	s := f.s.Authority.(*postgres.Store)
+	key := f.key
+
+	record, err := s.ReadManagedRemovalAttempt(t.Context(), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if record.State.Revision != "154" || len(record.Descriptor.ReservationIDs) != 64 {
+		t.Fatal("incorrect admitted positive ledger", record.State.Revision)
+	}
+
+	for _, mask := range record.State.BindingSlots {
+		if mask != 1|8 {
+			t.Fatal("missing native Begin/fence association")
+		}
+	}
+
+	positive, unissued := 0, 0
+
+	for _, mask := range record.State.ProviderSlots {
+		switch mask {
+		case 1 | 2:
+			positive++
+		case 0:
+			unissued++
+		default:
+			t.Fatal("unexpected provider slot", mask)
+		}
+	}
+
+	if positive != 24 || unissued != 9 {
+		t.Fatal("incorrect provider coverage", positive, unissued)
+	}
+
+	journalKey := managed.OperationKey{Key: key.Key, ActionID: f.s.action.ID}
+
+	journal, err := s.ReadManagedOperation(t.Context(), journalKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pg := pgdriver.Unwrap(s.DB())
+	setRevision := func(value int64) {
+		t.Helper()
+
+		if _, err := pg.Exec(t.Context(), "UPDATE cp_managed_targets SET revision=$1,data=jsonb_set(data,'{revision}',to_jsonb($1::bigint)) WHERE id=$2", value, key.InstanceID.String()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	setRevision(math.MaxInt64 - 206)
+
+	q := batchRequest(t, f)
+	before := attemptPostgresSnapshot(t, s)
+
+	refused, err := s.AcceptManagedQuiescenceBatch(t.Context(), q)
+	if !errors.Is(err, managed.ErrCapacity) || !reflect.DeepEqual(refused, managed.QuiescenceBatchReceipt{}) {
+		t.Fatal("206 headroom must refuse without a receipt", err)
+	}
+
+	if !reflect.DeepEqual(before, attemptPostgresSnapshot(t, s)) {
+		t.Fatal("206 refusal changed rows or receipts")
+	}
+
+	setRevision(math.MaxInt64 - 209)
+	q.Command.Revision = managed.Decimal(strconv.FormatUint(math.MaxInt64-209, 10))
+
+	receipt, err := s.AcceptManagedQuiescenceBatch(t.Context(), q)
+	if err != nil {
+		t.Fatal("209 headroom must accept", err)
+	}
+
+	target, err := s.ReadManagedTarget(t.Context(), key.Key)
+	if err != nil || target.Revision != math.MaxInt64-144 {
+		t.Fatal("accepted batch did not leave144", err)
+	}
+
+	revision, err := receipt.Receipt.Revision.Uint64()
+	if err != nil || revision != target.Revision {
+		t.Fatal("receipt counter differs", err)
+	}
+
+	later, err := s.ReadManagedRemovalAttempt(t.Context(), key)
+	if err != nil || !reflect.DeepEqual(record, later) {
+		t.Fatal("batch changed attempt", err)
+	}
+
+	laterJournal, err := s.ReadManagedOperation(t.Context(), journalKey)
+	if err != nil || !reflect.DeepEqual(journal, laterJournal) {
+		t.Fatal("batch changed journal", err)
+	}
+
+	accepted := attemptPostgresSnapshot(t, s)
+
+	replay, err := s.AcceptManagedQuiescenceBatch(t.Context(), q)
+	if err != nil || !reflect.DeepEqual(receipt, replay) || !reflect.DeepEqual(accepted, attemptPostgresSnapshot(t, s)) {
+		t.Fatal("capacity boundary replay changed", err)
+	}
+
+	t.Log("actual64bindings/24positive/9unissued:206refused unchanged;209accepted65,left144;attempt154 unchanged")
+}

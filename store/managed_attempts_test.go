@@ -785,7 +785,7 @@ func testManagedFiniteSetWithBatch(t *testing.T, nearLimit bool, diagnostic stri
 
 				initialRevision = (1<<63 - 1) - (reserve + 65 + 1)
 				if batch {
-					initialRevision--
+					initialRevision = (1<<63 - 1) - batchCompletionHeadroom
 				}
 
 				setRevision(initialRevision)
@@ -819,6 +819,35 @@ func testManagedFiniteSetWithBatch(t *testing.T, nearLimit bool, diagnostic stri
 			t.Logf("setup elapsed=%s", time.Since(started))
 
 			leaseUpdates := 0
+			renewals := newBatchRenewalBudget(t, nearLimit, diagnostic)
+			t.Cleanup(func() { renewals.log(t) })
+
+			claimLease := func() {
+				t.Helper()
+
+				if batch {
+					renewals.leaseAttempt(t)
+				}
+
+				if _, err := f.s.ClaimManagedLease(t.Context(), managed.LeaseRequest{Command: f.request().Command, Duration: managed.MaxLease}); err != nil {
+					t.Fatal(err)
+				}
+
+				leaseUpdates++
+
+				if batch {
+					renewals.leases++
+				}
+			}
+			refreshBatch := func() (int, time.Duration) {
+				t.Helper()
+				renewals.batchAttempt(t)
+
+				count, margin := f.refreshObservationBatch()
+				renewals.batches++
+
+				return count, margin
+			}
 
 			renewSetupLease := func(force bool) {
 				t.Helper()
@@ -833,17 +862,13 @@ func testManagedFiniteSetWithBatch(t *testing.T, nearLimit bool, diagnostic stri
 					return
 				}
 
-				if leaseUpdates != 0 {
+				if !batch && leaseUpdates != 0 {
 					t.Fatalf("setup needs more than the single budgeted lease renewal: margin=%s elapsed=%s", margin, time.Since(started))
 				}
 
 				t.Logf("pre-positive lease renewal margin=%s elapsed=%s", margin, time.Since(started))
 
-				if _, err = f.s.ClaimManagedLease(t.Context(), managed.LeaseRequest{Command: f.request().Command, Duration: managed.MaxLease}); err != nil {
-					t.Fatal(err)
-				}
-
-				leaseUpdates++
+				claimLease()
 			}
 			for _, rid := range f.reservations {
 				renewSetupLease(false)
@@ -919,7 +944,7 @@ func testManagedFiniteSetWithBatch(t *testing.T, nearLimit bool, diagnostic stri
 			batchUpdates := 0
 
 			if batch {
-				f.refreshObservationBatch()
+				refreshBatch()
 
 				batchUpdates++
 			} else {
@@ -972,11 +997,7 @@ func testManagedFiniteSetWithBatch(t *testing.T, nearLimit bool, diagnostic stri
 					}
 
 					if lease.LeaseUntil.Sub(now) < time.Minute {
-						if _, err = f.s.ClaimManagedLease(t.Context(), managed.LeaseRequest{Command: f.request().Command, Duration: managed.MaxLease}); err != nil {
-							t.Fatal(err)
-						}
-
-						leaseUpdates++
+						claimLease()
 					}
 
 					var (
@@ -984,7 +1005,7 @@ func testManagedFiniteSetWithBatch(t *testing.T, nearLimit bool, diagnostic stri
 						renewedMargin time.Duration
 					)
 					if batch {
-						count, renewedMargin = f.refreshObservationBatch()
+						count, renewedMargin = refreshBatch()
 						batchUpdates++
 					} else {
 						count, renewedMargin = f.refreshExpiringObservations(5 * time.Second)
@@ -1030,10 +1051,15 @@ func testManagedFiniteSetWithBatch(t *testing.T, nearLimit bool, diagnostic stri
 				}
 
 				steps++
+				if diagnostic == "positive-reserve" && steps == 24 {
+					assertPostgresPositiveBatchReserve(t, f)
+
+					return
+				}
 
 				if batch && !nearLimit && diagnostic == "" && (n == 0 || n == 32) {
 					if n == 32 {
-						f.refreshObservationBatch()
+						refreshBatch()
 
 						batchUpdates++
 						proofUpdates += 64
@@ -1052,24 +1078,23 @@ func testManagedFiniteSetWithBatch(t *testing.T, nearLimit bool, diagnostic stri
 				}
 
 				if target.LeaseUntil.Sub(quiescenceClock(t, f.s)) < time.Minute {
-					if _, e = f.s.ClaimManagedLease(t.Context(), managed.LeaseRequest{Command: f.request().Command, Duration: managed.MaxLease}); e != nil {
-						t.Fatal(e)
-					}
-
-					leaseUpdates++
+					claimLease()
 				}
 
 				refreshStarted := time.Now()
 
 				if batch {
-					f.refreshObservationBatch()
+					refreshBatch()
+
+					batchUpdates++
+					proofUpdates += 64
 				} else {
 					f.refreshObservations()
 				}
 
 				now := quiescenceClock(t, f.s)
 				margin := f.observations[0].Observation.ValidUntil.Sub(now)
-				t.Logf("direct fullest33-positive/max4096 full64 renewal cost=%s oldest_age=%s margin=%s actual minimum authorization margin=%s proof_updates_before=%d lease_updates=%d", time.Since(refreshStarted), time.Minute-margin, margin, minimumAuthorizationMargin, proofUpdates, leaseUpdates)
+				t.Logf("direct fullest33-positive/max4096 full64 renewal cost=%s oldest_age=%s margin=%s actual minimum authorization margin=%s proof_updates=%d lease_updates=%d batches=%d", time.Since(refreshStarted), time.Minute-margin, margin, minimumAuthorizationMargin, proofUpdates, leaseUpdates, batchUpdates)
 
 				if margin <= 0 {
 					t.Fatal("direct fullest ledger renewal exceeds60s")
@@ -1114,11 +1139,7 @@ func testManagedFiniteSetWithBatch(t *testing.T, nearLimit bool, diagnostic stri
 				}
 
 				if target.LeaseUntil.Sub(quiescenceClock(t, f.s)) < time.Minute {
-					if _, err = f.s.ClaimManagedLease(t.Context(), managed.LeaseRequest{Command: f.request().Command, Duration: managed.MaxLease}); err != nil {
-						t.Fatal(err)
-					}
-
-					leaseUpdates++
+					claimLease()
 				}
 
 				grant := f.command(rid, managed.AttemptFinish)
@@ -1178,6 +1199,16 @@ func testManagedFiniteSetWithBatch(t *testing.T, nearLimit bool, diagnostic stri
 
 			if batch {
 				f.verifyBatchHistory()
+
+				individualUpdates := proofUpdates - 64*batchUpdates
+
+				renewals.complete(t)
+
+				if batchUpdates != renewals.batches || leaseUpdates != renewals.leases || target.Revision-initialRevision != uint64(293+individualUpdates+65*batchUpdates+leaseUpdates) {
+					t.Fatal("batch renewal accounting mismatch")
+				}
+
+				t.Logf("finite batch envelope headroom=%d Bmax=%d Lmax=%d U=%d B=%d L=%d", batchCompletionHeadroom, renewals.maxBatches, renewals.maxLeases, individualUpdates, batchUpdates, leaseUpdates)
 				t.Logf("batch aggregates=%d actual parent delta=%d attempt delta=%d", batchUpdates, target.Revision-initialRevision, attemptRevision-1)
 
 				if attemptRevision-1 != 292 {
@@ -1186,7 +1217,7 @@ func testManagedFiniteSetWithBatch(t *testing.T, nearLimit bool, diagnostic stri
 			}
 
 			if nearLimit {
-				t.Logf("near-limit initial terminal reserve=489 optional pre-send renewal budget=65 parent_delta=%d signed_headroom=%d", target.Revision-initialRevision, uint64(1<<63-1)-target.Revision)
+				t.Logf("near-limit initial terminal reserve=489 batch=%t initial_headroom=%d parent_delta=%d signed_headroom=%d", batch, uint64(1<<63-1)-initialRevision, target.Revision-initialRevision, uint64(1<<63-1)-target.Revision)
 			}
 		})
 	}

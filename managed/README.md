@@ -458,8 +458,16 @@ GOWORK=off CTRLPLANE_MANAGED_MAXIMUM=batch go test -race ./store ./store/memory 
 Without that selector, ordinary test runs visibly skip the six maximum entry
 points. The exact 490 acceptance and 489 refusal checks still run by default.
 The normal individual campaign preserves its 555-revision fixture. Normal and
-race batch campaigns use the separate 556 fixture and count every observation,
-aggregate and lease renewal. The full positive lifecycle consumes 293 parent
+race constrained batch completion fixtures start with 2,862 transitions of
+headroom. That
+finite allowance covers the 490-transition admission boundary, at most 34 full
+batches and 162 lease renewals from the fixture's declared call sites. Each run
+counts attempted and accepted renewals. The unconstrained case also retains its
+final diagnostic batch. A single operation that outlasts its proof still fails;
+this allowance does not promise progress through arbitrary delays. Separate
+64-binding, 24-positive-slot tests prove that a full batch refuses 206 headroom
+without writes and accepts 209, leaving 144 for the unchanged terminal reserve.
+The full positive lifecycle consumes 293 parent
 transitions including allocation, and 292 attempt transitions after revision 1;
 the latter includes all 33 provider permissions. Positive result retention does
 not advance either counter. Sequential individual race sweeps remain explicit

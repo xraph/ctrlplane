@@ -1550,7 +1550,15 @@ func TestManagedAttemptMemoryFullFiniteSetNearLimit(t *testing.T) {
 	testMemoryFiniteSetNearLimit(t, false)
 }
 func testMemoryFiniteSetNearLimit(t *testing.T, batch bool) {
-	for _, boundaryOnly := range []bool{true, false} {
+	testMemoryFiniteSetBudget(t, batch, false)
+}
+func testMemoryFiniteSetBudget(t *testing.T, batch, positiveReserve bool) {
+	boundaries := []bool{true, false}
+	if positiveReserve {
+		boundaries = []bool{false}
+	}
+
+	for _, boundaryOnly := range boundaries {
 		t.Run(strconv.FormatBool(boundaryOnly), func(t *testing.T) {
 			started := time.Now()
 
@@ -1577,7 +1585,7 @@ func testMemoryFiniteSetNearLimit(t *testing.T, batch bool) {
 
 			headroom := uint64(reserve + 65 + 1)
 			if batch {
-				headroom++
+				headroom = memoryBatchCompletionHeadroom
 			}
 
 			if boundaryOnly {
@@ -1611,6 +1619,24 @@ func testMemoryFiniteSetNearLimit(t *testing.T, batch bool) {
 				}
 			}
 			leases := 0
+			renewals := newMemoryBatchRenewalBudget()
+
+			t.Cleanup(func() { renewals.log(t) })
+
+			claimLease := func() {
+				t.Helper()
+
+				if batch {
+					renewals.leaseAttempt(t)
+				}
+
+				must(s.ClaimManagedLease(t.Context(), managed.LeaseRequest{Command: projectionCommand(t, s, action.Key), Duration: managed.MaxLease}))
+
+				leases++
+				if batch {
+					renewals.leases++
+				}
+			}
 
 			renewSetupLease := func(force bool) {
 				t.Helper()
@@ -1624,13 +1650,11 @@ func testMemoryFiniteSetNearLimit(t *testing.T, batch bool) {
 					return
 				}
 
-				if leases != 0 {
+				if !batch && leases != 0 {
 					t.Fatal("setup needs more than single budgeted lease renewal")
 				}
 
-				must(s.ClaimManagedLease(t.Context(), managed.LeaseRequest{Command: projectionCommand(t, s, action.Key), Duration: managed.MaxLease}))
-
-				leases++
+				claimLease()
 			}
 			for _, observation := range observations {
 				renewSetupLease(false)
@@ -1648,6 +1672,15 @@ func testMemoryFiniteSetNearLimit(t *testing.T, batch bool) {
 
 			var batchHistory []managed.QuiescenceBatchAcceptanceRequest
 
+			refreshBatch := func() {
+				t.Helper()
+				renewals.batchAttempt(t)
+				observations = memoryRefreshBatch(t, s, action, key, observations, &batchHistory)
+				renewals.batches++
+				updates += 64
+				aggregates++
+			}
+
 			renewLease := func() {
 				t.Helper()
 
@@ -1657,9 +1690,7 @@ func testMemoryFiniteSetNearLimit(t *testing.T, batch bool) {
 				}
 
 				if time.Until(target.LeaseUntil) < time.Minute {
-					must(s.ClaimManagedLease(t.Context(), managed.LeaseRequest{Command: projectionCommand(t, s, action.Key), Duration: managed.MaxLease}))
-
-					leases++
+					claimLease()
 				}
 			}
 
@@ -1677,9 +1708,7 @@ func testMemoryFiniteSetNearLimit(t *testing.T, batch bool) {
 			}
 
 			if batch {
-				observations = memoryRefreshBatch(t, s, action, key, observations, &batchHistory)
-				updates += 64
-				aggregates++
+				refreshBatch()
 			} else {
 				for index := range observations {
 					refresh(index)
@@ -1710,14 +1739,16 @@ func testMemoryFiniteSetNearLimit(t *testing.T, batch bool) {
 						break
 					}
 
+					if batch && renewed >= 1 {
+						t.Fatal("one batch refresh did not establish the required proof margin")
+					}
+
 					if renewed >= 64 {
 						t.Fatal("one full renewal cannot establish proof margin")
 					}
 
 					if batch {
-						observations = memoryRefreshBatch(t, s, action, key, observations, &batchHistory)
-						updates += 64
-						aggregates++
+						refreshBatch()
 					} else {
 						refresh(oldest)
 					}
@@ -1741,6 +1772,12 @@ func testMemoryFiniteSetNearLimit(t *testing.T, batch bool) {
 
 				if err = s.RecordManagedProviderStepResult(t.Context(), managed.ProviderStepResult{Permission: grant.Permission, Outcome: managed.PortTerminal, ResourceID: grant.Permission.ResourceID, Evidence: []byte(strings.Repeat("x", managed.MaxEvidence)), ObservedAt: time.Now().UTC()}); err != nil {
 					t.Fatal(err)
+				}
+
+				if positiveReserve && n == 23 {
+					assertMemoryPositiveBatchReserve(t, s, action, key, observations)
+
+					return
 				}
 			}
 
@@ -1830,6 +1867,16 @@ func testMemoryFiniteSetNearLimit(t *testing.T, batch bool) {
 				if afterReplay := projectionSnapshot(t, s); beforeReplay != afterReplay {
 					t.Fatal("terminal replay wrote")
 				}
+			}
+
+			if batch {
+				renewals.complete(t)
+
+				if aggregates != renewals.batches || leases != renewals.leases || updates != 64*aggregates || target.Revision-initial != uint64(293+65*aggregates+leases) {
+					t.Fatal("batch renewal accounting mismatch")
+				}
+
+				t.Logf("finite batch envelope headroom=%d Bmax=%d Lmax=%d U=0 B=%d L=%d", headroom, renewals.maxBatches, renewals.maxLeases, aggregates, leases)
 			}
 
 			if batch && revision-1 != 292 {

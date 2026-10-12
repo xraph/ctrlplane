@@ -448,3 +448,173 @@ func TestManagedQuiescenceBatchMemoryReserve(t *testing.T) {
 		t.Fatal("batch N+1 counter mismatch")
 	}
 }
+
+const memoryBatchCompletionHeadroom = 490 + 65*(1+33) + (64 + 1 + 33 + 64)
+
+type memoryBatchRenewalBudget struct {
+	maxBatches, maxLeases        int
+	batchAttempts, leaseAttempts int
+	batches, leases              int
+}
+
+func newMemoryBatchRenewalBudget() *memoryBatchRenewalBudget {
+	return &memoryBatchRenewalBudget{maxBatches: 34, maxLeases: 162}
+}
+func (b *memoryBatchRenewalBudget) batchAttempt(t *testing.T) {
+	t.Helper()
+
+	b.batchAttempts++
+	if b.batchAttempts > b.maxBatches {
+		t.Fatalf("batch attempt budget exceeded: %d > %d", b.batchAttempts, b.maxBatches)
+	}
+}
+func (b *memoryBatchRenewalBudget) leaseAttempt(t *testing.T) {
+	t.Helper()
+
+	b.leaseAttempts++
+	if b.leaseAttempts > b.maxLeases {
+		t.Fatalf("lease attempt budget exceeded: %d > %d", b.leaseAttempts, b.maxLeases)
+	}
+}
+func (b *memoryBatchRenewalBudget) complete(t *testing.T) {
+	t.Helper()
+
+	if b.batchAttempts != b.batches || b.leaseAttempts != b.leases || b.batches > b.maxBatches || b.leases > b.maxLeases {
+		t.Fatal("renewal attempts and accepted work differ", b)
+	}
+}
+func (b *memoryBatchRenewalBudget) log(t *testing.T) {
+	t.Helper()
+	t.Logf("renewal envelope Bmax=%d Lmax=%d batches_attempted=%d batches_accepted=%d leases_attempted=%d leases_accepted=%d", b.maxBatches, b.maxLeases, b.batchAttempts, b.batches, b.leaseAttempts, b.leases)
+}
+
+func TestManagedQuiescenceBatchMemoryPositiveReserve(t *testing.T) {
+	testMemoryFiniteSetBudget(t, true, true)
+}
+func assertMemoryPositiveBatchReserve(t *testing.T, s *Store, action managed.ActionSubmission, key managed.AttemptKey, observations []managed.QuiescenceAcceptanceRequest) {
+	t.Helper()
+
+	record, err := s.ReadManagedRemovalAttempt(t.Context(), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if record.State.Revision != "154" || len(record.Descriptor.ReservationIDs) != 64 {
+		t.Fatal("incorrect admitted positive ledger", record.State.Revision)
+	}
+
+	for _, mask := range record.State.BindingSlots {
+		if mask != 1|8 {
+			t.Fatal("missing native Begin/fence association")
+		}
+	}
+
+	positive, unissued := 0, 0
+
+	for _, mask := range record.State.ProviderSlots {
+		switch mask {
+		case 1 | 2:
+			positive++
+		case 0:
+			unissued++
+		default:
+			t.Fatal("unexpected provider slot", mask)
+		}
+	}
+
+	if positive != 24 || unissued != 9 {
+		t.Fatal("incorrect provider coverage", positive, unissued)
+	}
+
+	journalKey := managed.OperationKey{Key: key.Key, ActionID: action.ID}
+
+	journal, err := s.ReadManagedOperation(t.Context(), journalKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	setRevision := func(value uint64) {
+		s.mu.Lock()
+		s.managedTargets[key.InstanceID.String()].Revision = value
+		s.mu.Unlock()
+	}
+	setRevision(math.MaxInt64 - 206)
+
+	targetBefore, err := s.ReadManagedTarget(t.Context(), key.Key)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	q := managed.QuiescenceBatchAcceptanceRequest{Schema: managed.QuiescenceBatchRequestSchema, Command: managed.QuiescenceBatchCommand{Key: key.Key, ID: id.New(managed.PrefixOperation), Revision: managed.Decimal(strconv.FormatUint(targetBefore.Revision, 10)), LeaseEpoch: managed.Decimal(strconv.FormatUint(targetBefore.LeaseEpoch, 10)), Owner: targetBefore.LeaseOwner}, Attempt: record.State.AttemptRef}
+	for _, rid := range record.Descriptor.ReservationIDs {
+		for _, old := range observations {
+			if old.Command.ReservationID != rid {
+				continue
+			}
+
+			o := old.Observation
+			o.ObservedAt = time.Now().UTC()
+			o.ValidUntil = o.ObservedAt.Add(time.Minute)
+			o.Attestation = bytes.Repeat([]byte{255}, managed.MaxQuiescenceAttestation)
+
+			o.ChallengeDigest, err = managed.QuiescenceChallengeDigest(o.QuiescenceLeaf)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			q.Entries = append(q.Entries, managed.QuiescenceBatchEntry{OperationID: id.New(managed.PrefixOperation), Observation: o})
+		}
+	}
+
+	if len(q.Entries) != 64 {
+		t.Fatal("incomplete batch")
+	}
+
+	before := projectionSnapshot(t, s)
+
+	refused, err := s.AcceptManagedQuiescenceBatch(t.Context(), q)
+	if !errors.Is(err, managed.ErrCapacity) || !reflect.DeepEqual(refused, managed.QuiescenceBatchReceipt{}) {
+		t.Fatal("206 headroom must refuse without a receipt", err)
+	}
+
+	if !reflect.DeepEqual(before, projectionSnapshot(t, s)) {
+		t.Fatal("206 refusal changed rows or receipts")
+	}
+
+	setRevision(math.MaxInt64 - 209)
+	q.Command.Revision = managed.Decimal(strconv.FormatUint(math.MaxInt64-209, 10))
+
+	receipt, err := s.AcceptManagedQuiescenceBatch(t.Context(), q)
+	if err != nil {
+		t.Fatal("209 headroom must accept", err)
+	}
+
+	target, err := s.ReadManagedTarget(t.Context(), key.Key)
+	if err != nil || target.Revision != math.MaxInt64-144 {
+		t.Fatal("accepted batch did not leave144", err)
+	}
+
+	revision, err := receipt.Receipt.Revision.Uint64()
+	if err != nil || revision != target.Revision {
+		t.Fatal("receipt counter differs", err)
+	}
+
+	later, err := s.ReadManagedRemovalAttempt(t.Context(), key)
+	if err != nil || !reflect.DeepEqual(record, later) {
+		t.Fatal("batch changed attempt", err)
+	}
+
+	laterJournal, err := s.ReadManagedOperation(t.Context(), journalKey)
+	if err != nil || !reflect.DeepEqual(journal, laterJournal) {
+		t.Fatal("batch changed journal", err)
+	}
+
+	accepted := projectionSnapshot(t, s)
+
+	replay, err := s.AcceptManagedQuiescenceBatch(t.Context(), q)
+	if err != nil || !reflect.DeepEqual(receipt, replay) || !reflect.DeepEqual(accepted, projectionSnapshot(t, s)) {
+		t.Fatal("capacity boundary replay changed", err)
+	}
+
+	t.Log("actual64bindings/24positive/9unissued:206refused unchanged;209accepted65,left144;attempt154 unchanged")
+}
