@@ -146,7 +146,7 @@ const (
 	ActionPause    ActionKind = "pause"
 	ActionRetire   ActionKind = "retire"
 	ActionRollback ActionKind = "rollback"
-	// ActionContinue is reserved and refused until settled continuation is implemented.
+	// ActionContinue requires the typed removal continuation capability; generic submission refuses it.
 	ActionContinue ActionKind = "continue"
 )
 

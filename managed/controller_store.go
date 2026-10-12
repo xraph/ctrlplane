@@ -16,12 +16,13 @@ type OperationKey struct {
 
 // OperationState retains original commands and bounded progress without issue authority.
 type OperationState struct {
-	RemovalAttemptRoot *AttemptRootReference `json:"removal_attempt_root,omitempty"`
-	Key                OperationKey          `json:"key"`
-	Submission         ActionSubmission      `json:"submission"`
-	Receipt            ActionReceipt         `json:"receipt"`
-	Revision           uint64                `json:"revision"`
-	Observation        OperationObservation  `json:"observation"`
+	RemovalAttemptRoot      *AttemptRootReference    `json:"removal_attempt_root,omitempty"`
+	ContinuationAssociation *ContinuationAssociation `json:"continuation_association,omitempty"`
+	Key                     OperationKey             `json:"key"`
+	Submission              ActionSubmission         `json:"submission"`
+	Receipt                 ActionReceipt            `json:"receipt"`
+	Revision                uint64                   `json:"revision"`
+	Observation             OperationObservation     `json:"observation"`
 }
 
 // OperationObservation reports a finite progress fact and the original remote command.
@@ -191,6 +192,7 @@ type ProviderStepRecord struct {
 type ControllerStore interface {
 	Store
 	RemovalAttemptStore
+	RemovalContinuationStore
 	ProviderStepFailureAuthority
 	AcceptManagedQuiescence(ctx context.Context, request QuiescenceAcceptanceRequest) (Receipt, error)
 	ReadManagedQuiescence(ctx context.Context, request QuiescenceKey) (QuiescenceRecord, error)

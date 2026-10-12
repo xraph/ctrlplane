@@ -80,7 +80,9 @@ func QuiescenceBatchScope(k Key) (string, error) {
 }
 
 func batchAttemptValid(v AttemptRef) bool {
-	return originalID(v.AttemptID, PrefixOperation) && v.Generation == "1" && hexDigest(v.DescriptorDigest)
+	generation, err := v.Generation.Uint64()
+
+	return err == nil && generation > 0 && generation <= math.MaxInt64 && originalID(v.AttemptID, PrefixOperation) && hexDigest(v.DescriptorDigest)
 }
 
 // Normalize bounds and owns the complete request without selecting authority.

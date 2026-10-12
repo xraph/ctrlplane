@@ -280,6 +280,10 @@ func (r *Repository) apply(ctx context.Context, c managed.Command, kind string, 
 		}
 
 		tx, _ := r.backend.(ControllerTransaction)
+		if err := removalLocalIDAvailable(ctx, tx, c.ID); err != nil {
+			return managed.Receipt{}, err
+		}
+
 		if err := attemptLegacyGuard(ctx, tx, t, kind, now); err != nil {
 			return managed.Receipt{}, err
 		}

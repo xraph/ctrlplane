@@ -253,7 +253,7 @@ type HistoricalSettlement struct {
 }
 
 // HistoricalSettlementReader reads accepted settlement without invoking reconciliation.
-// Continuation generations remain unavailable until their separate implementation.
+// It includes retained continuation settlements within the fixed removal profile.
 type HistoricalSettlementReader interface {
 	ReadManagedHistoricalSettlement(ctx context.Context, request HistoricalSettlementRequest) (HistoricalSettlement, error)
 }

@@ -47,7 +47,7 @@ jobs:
           test "$(go env GOVERSION)" = go1.26.9
           test "$(go env GOWORK)" = off
           git ls-files '*go.mod' '*go.work*' > dependency-evidence/tracked-modules.txt
-          test "$(cat dependency-evidence/tracked-modules.txt)" = go.mod
+          python3 -c 'from pathlib import Path; assert Path("dependency-evidence/tracked-modules.txt").read_text().splitlines() == ["go.mod", "qualification/oldb23a/go.mod"]'
           go list -m -json all > dependency-evidence/modules.json
           python3 - <<'PYCODE'
           import json
@@ -64,6 +64,36 @@ jobs:
           go list -deps -json ./cmd/controlplane > dependency-evidence/program.json
           go build -o dependency-evidence/controlplane ./cmd/controlplane
           go version -m dependency-evidence/controlplane > dependency-evidence/binary-build.txt
+      - name: Verify fixed published old executable
+        working-directory: qualification/oldb23a
+        run: |
+          go mod tidy -diff
+          go mod verify
+          go vet ./...
+          go test -race -count=1 ./...
+          go list -m -json all > ../../dependency-evidence/oldb23a-modules.json
+          go build -mod=readonly -trimpath -o ../../dependency-evidence/oldb23a .
+          ../../dependency-evidence/oldb23a identity > ../../dependency-evidence/oldb23a-identity.json
+          go version -m ../../dependency-evidence/oldb23a > ../../dependency-evidence/oldb23a-build.txt
+          python3 - <<'PYCODE'
+          import json
+          from pathlib import Path
+          decoder = json.JSONDecoder()
+          data = Path("../../dependency-evidence/oldb23a-modules.json").read_text()
+          while data.strip():
+              module, offset = decoder.raw_decode(data.lstrip())
+              assert not module.get("Replace"), module["Path"]
+              data = data.lstrip()[offset:]
+          identity = json.loads(Path("../../dependency-evidence/oldb23a-identity.json").read_text())
+          assert identity["version"] == "v1.7.1-0.20261011231032-8827a4f36fad"
+          assert identity["sum"] == "h1:KKPnswqMXoylKncOYcW/PBx5xzi8i39xa4ql0wZU198="
+          assert not identity["replaced"]
+          PYCODE
+      - name: Lint old executable module
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.12.2
+          working-directory: qualification/oldb23a
       - name: Install pinned scanner
         run: go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
       - name: Scan imports, tests, program and actual binary
@@ -71,6 +101,8 @@ jobs:
           govulncheck -test -json ./... > dependency-evidence/imports-tests-vuln.json
           govulncheck -json ./cmd/controlplane > dependency-evidence/program-vuln.json
           govulncheck -mode=binary -json dependency-evidence/controlplane > dependency-evidence/binary-vuln.json
+          (cd qualification/oldb23a && govulncheck -test -json ./...) > dependency-evidence/oldb23a-imports-tests-vuln.json
+          govulncheck -mode=binary -json dependency-evidence/oldb23a > dependency-evidence/oldb23a-binary-vuln.json
           python3 - <<'PYCODE'
           import json
           from pathlib import Path
@@ -177,6 +209,30 @@ jobs:
           mkdir -p managed-maximum-evidence
           go test -race -json ./store ./store/memory -run '^TestManagedQuiescenceBatch(FullFiniteSet|PostgresFullFiniteSetNearLimit|MemoryFullFiniteSetNearLimit)$' -count=1 -timeout=30m | tee managed-maximum-evidence/batch-race.jsonl
 
+      - name: Qualify maximum successor lifecycle under race
+        env:
+          CTRLPLANE_MANAGED_MAXIMUM: successor
+          GOMAXPROCS: "2"
+          GOFLAGS: -p=1
+        run: |
+          set -euo pipefail
+          test -n "$CTRLPLANE_TEST_POSTGRES_DSN"
+          mkdir -p managed-maximum-evidence
+          go test -race -json ./store -run '^TestManagedRemovalContinuationFullFiniteSet$' -count=1 -timeout=30m | tee managed-maximum-evidence/successor-race.jsonl
+
+      - name: Qualify pinned old executable behavior
+        env:
+          CTRLPLANE_OLD_B23A_REQUIRED: "1"
+          GOMAXPROCS: "2"
+          GOFLAGS: -p=1
+        run: |
+          set -euo pipefail
+          mkdir -p managed-maximum-evidence
+          (cd qualification/oldb23a && go build -mod=readonly -trimpath -o ../../managed-maximum-evidence/oldb23a .)
+          export CTRLPLANE_OLD_B23A_BINARY="$PWD/managed-maximum-evidence/oldb23a"
+          "$CTRLPLANE_OLD_B23A_BINARY" identity > managed-maximum-evidence/oldb23a-identity.json
+          go test -race -json ./store -run '^TestManagedAttemptPostgresOldB23aBinary$' -count=1 -timeout=10m | tee managed-maximum-evidence/oldb23a-race.jsonl
+
       - name: Verify maximum campaign coverage
         run: |
           python3 - <<'PYCODE'
@@ -206,6 +262,13 @@ jobs:
               },
           }
           expected["batch-race"] = expected["batch-normal"]
+          expected["successor-race"] = {
+              "TestManagedRemovalContinuationFullFiniteSet",
+              "TestManagedRemovalContinuationFullFiniteSet/memory",
+              "TestManagedRemovalContinuationFullFiniteSet/postgres",
+          }
+          expected["oldb23a-race"] = {"TestManagedAttemptPostgresOldB23aBinary"}
+          expected["oldb23a-race"].update("TestManagedAttemptPostgresOldB23aBinary/" + case for case in ["gen1_control", "successor_refusal", "continue_envelopes", "legacy_refusal", "collision_no_change", "historical_nonissuing", "reopen_refusal", "journal_advance_limitation"])
           summary = {}
           for campaign, required in expected.items():
               rows = [json.loads(line) for line in (base / (campaign + ".jsonl")).read_text().splitlines()]
@@ -213,7 +276,10 @@ jobs:
               required = {("github.com/xraph/ctrlplane/store/memory" if "MemoryFullFiniteSetNearLimit" in name else "github.com/xraph/ctrlplane/store", name) for name in required}
               passed = {(row.get("Package"), row.get("Test")) for row in rows if row.get("Action") == "pass"}
               packages = {row.get("Package") for row in rows if row.get("Action") == "pass" and not row.get("Test")}
-              if refused or required - passed or packages != {"github.com/xraph/ctrlplane/store", "github.com/xraph/ctrlplane/store/memory"}:
+              expected_packages = {"github.com/xraph/ctrlplane/store"}
+              if campaign not in {"successor-race", "oldb23a-race"}:
+                  expected_packages.add("github.com/xraph/ctrlplane/store/memory")
+              if refused or required - passed or packages != expected_packages:
                   raise SystemExit("Incomplete maximum campaign: " + campaign)
               summary[campaign] = {"required_passes": sorted(required), "packages": sorted(packages)}
           (base / "coverage-audit.json").write_text(json.dumps(summary, indent=2) + "\n")

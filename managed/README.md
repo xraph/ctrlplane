@@ -372,8 +372,7 @@ reservations and 33 steps. Quiescence remains limited to 60 seconds, and renewin
 it does not extend the original native fence. Once that fence expires, further
 provider issuance refuses; already issued positive results can still support
 truthful Removed settlement, Finish and tombstoning. This interface has no native
-fence renewal or successor allocation. Continue and generation two remain
-unsupported.
+fence renewal. Successor allocation uses the separate typed continuation contract below.
 
 Attempt state contains fixed 64-byte binding and 33-byte provider presence masks,
 encoded as canonical base64. Each bit must agree with its exact retained row,
@@ -430,7 +429,7 @@ receipt, including after tombstoning. A missing child or receipt refuses the who
 read; the store does not rebuild it. If the batch fails, don't fall back to partial
 individual writes. Check that your store implements the optional capability.
 
-Fresh batch and individual observations reject a projected Abort on any
+Generation-one batches and individual observations reject a projected Abort on any
 reservation sharing the selected runtime. An Abort on another runtime does not
 block that observation. Historical reads still validate the retained registration,
 drain and receipts after Abort. They grant no send authority. Revocation, Removed
@@ -445,8 +444,8 @@ storage admission and the trusted transport enforce a writer floor.
 
 
 The maximum lifecycle campaigns run separately from ordinary unit tests. CI's
-persistence job requires all three against PostgreSQL and retains their structured
-logs. You can run the same selections locally with a private
+persistence job requires all three generation-one campaigns against PostgreSQL
+and retains their structured logs. You can run the same selections locally with a private
 `CTRLPLANE_TEST_POSTGRES_DSN` pointing to a throwaway database:
 
 ```sh
@@ -472,3 +471,70 @@ transitions including allocation, and 292 attempt transitions after revision 1;
 the latter includes all 33 provider permissions. Positive result retention does
 not advance either counter. Sequential individual race sweeps remain explicit
 timing diagnostics, with their actual failures reported separately.
+
+
+## Removal continuations
+
+Use `RemovalContinuationStore.BeginManagedRemovalContinuation` after the current
+attempt is permanently revoked with `not_issued` or qualified
+`settled_without_deletion` coverage. Every retained Begin needs its exact native
+fence, a settlement witness and accepted Abort. Missing receipts and expired
+leases cannot establish settlement. Generic `SubmitManagedAction` always refuses
+Continue, including replay.
+
+Build a `ContinuationRequest` with the exact predecessor, a fresh action ID,
+fresh successor attempt and provider IDs, and the existing parent authority.
+`RemovalContinuationDigest` computes its dedicated digest without authorizing it.
+The store checks the complete retained graph under the parent lock, closes the
+predecessor and allocates one successor atomically. Original target bindings,
+fences, Abort proofs and generation-one descriptors remain unchanged. Generation
+and pointer counters advance once; there is no lifetime generation quota.
+
+You can reconcile an uncertain reply with `ReadManagedRemovalContinuation` and
+exact same-ID replay. An error may follow a committed transaction. No usable
+grant accompanies that error, and timeout alone never proves rollback or permits
+a replacement identity. If authoritative reads establish absence, fresh acceptance
+still needs valid current revision, lease and predecessor. A partial graph refuses
+without repair. Historical replay returns the saved acceptance, not current send
+authority.
+
+A fresh successor Begin requires `AttemptCurrentBindingObservation`, supplied by
+the trusted native producer. It binds the original registration and process,
+current native version and removal epoch, verifier, evidence and validity window.
+The original process profile bounds that window. The store validates the exact
+supplied facts and native response association; it does not authenticate an
+external native authority. You still need that producer and transport integration.
+Synthetic storage fixtures do not establish it.
+
+Successor batches accept 1 through 64 observations. They classify every sibling
+sharing a runtime, including an original projected Abort, against its retained
+root fence, witness and Abort. Original individual-observation behavior stays the
+same. A still-live observation from before Continue can be reused with its original
+source time and 60-second maximum lifetime. Continue never refreshes it. Native
+source expiry and quiescence expiry independently deny fresh provider issue.
+
+Revocation permanently denies new Begin and provider permissions. It still permits
+an exact eligible terminal Abort or Finish and nonissuing recovery of an already
+retained command. Fresh terminal commands keep their existing settlement and
+witness prerequisites. Diagnostic observation retention alone grants no issue.
+
+The fixed old executable in `qualification/oldb23a` tests the published B23a
+library. Its recognized successor issuance paths refuse, but a valid old journal
+advance can discard the successor association. The new strict reader detects that
+loss. Passing these fixtures does not establish mixed-writer safety, rollback
+safety, a writer floor or authenticated native execution.
+
+Run the successor maximum explicitly:
+
+```sh
+GOWORK=off CTRLPLANE_MANAGED_MAXIMUM=successor go test ./store -run '^TestManagedRemovalContinuationFullFiniteSet$' -count=1 -timeout=30m -v
+```
+
+It completes a generation-three 64-binding, 33-step lifecycle with 4 KiB evidence
+fields and checks Memory and PostgreSQL. PostgreSQL combines completion with a
+synthetic near-limit parent seed before the final Continue. The required lifecycle
+uses 292 attempt transitions after allocation and 293 parent transitions including
+Continue. Optional work is counted separately: at most 34 full batches and 162
+lease renewals. The 2,864-transition fixture allowance retains the conservative
+490 reserve and two explicit spare transitions. CI requires this campaign under
+race on the exact commit and audits every required case without skips.

@@ -54,14 +54,15 @@ type attemptEvent struct {
 	Receipt       managed.Receipt    `json:"receipt"`
 }
 type attemptView struct {
-	validated  bool
-	originals  map[id.ID]managed.AttemptBindingReference
-	commands   map[managed.AttemptCommandKey]managed.AttemptCommandRecord
-	fences     map[managed.AttemptBindingKey]managed.AttemptFenceRecord
-	scope      string
-	descriptor managed.AttemptDescriptor
-	state      managed.AttemptState
-	ref        managed.AttemptRef
+	lineageRoot *attemptView
+	validated   bool
+	originals   map[id.ID]managed.AttemptBindingReference
+	commands    map[managed.AttemptCommandKey]managed.AttemptCommandRecord
+	fences      map[managed.AttemptBindingKey]managed.AttemptFenceRecord
+	scope       string
+	descriptor  managed.AttemptDescriptor
+	state       managed.AttemptState
+	ref         managed.AttemptRef
 }
 
 func attemptHash(domain string, value any) (string, error) {
@@ -139,7 +140,8 @@ func attemptWrite(ctx context.Context, tx ControllerTransaction, kind, scope, k 
 	return controllerWrite(ctx, tx, kind, scope, k, v, insert, limit)
 }
 func attemptVersion(k managed.AttemptKey) error {
-	if k.Generation != "1" {
+	generation, err := k.Generation.Uint64()
+	if err != nil || generation == 0 || generation > math.MaxInt64 {
 		return managed.ErrUnsupported
 	}
 
@@ -782,7 +784,7 @@ func (reads *attemptCheckedReads) prefetchAttempt(ctx context.Context, t *manage
 	return reads.prefetchReceipts(ctx, t.Key, operations)
 }
 
-func readAttempt(ctx context.Context, tx ControllerTransaction, t *managed.Target, k managed.AttemptKey) (attemptView, error) {
+func readAttemptBaseHeld(ctx context.Context, tx ControllerTransaction, t *managed.Target, k managed.AttemptKey) (attemptView, error) {
 	checked := &attemptCheckedReads{ControllerTransaction: tx, rows: make(map[[3]string][]byte), missing: make(map[[3]string]bool), receipts: make(map[attemptReceiptKey]managed.Receipt)}
 	tx = checked
 
@@ -803,7 +805,7 @@ func readAttempt(ctx context.Context, tx ControllerTransaction, t *managed.Targe
 		return v, err
 	}
 
-	if d.SchemaVersion != "1" || d.Generation != "1" || d.Predecessor != nil {
+	if d.SchemaVersion != "1" || (d.Generation == "1") != (d.Predecessor == nil) {
 		return v, managed.ErrUnsupported
 	}
 
@@ -819,21 +821,12 @@ func readAttempt(ctx context.Context, tx ControllerTransaction, t *managed.Targe
 	v.descriptor = d
 	v.ref = managed.AttemptRef{AttemptID: d.AttemptID, Generation: d.Generation, DescriptorDigest: dh}
 
-	current, err := attemptRead[attemptCurrent](ctx, tx, "removal_attempt_current", scope, "current", managed.MaxAttemptPointer)
-	if err != nil {
-		return v, err
-	}
-
-	if current.AttemptRef.Generation != "1" {
-		return v, managed.ErrUnsupported
-	}
-
 	root, err := attemptRead[attemptRoot](ctx, tx, "removal_attempt_root", scope, "root", managed.MaxAttemptPointer)
 	if err != nil {
 		return v, err
 	}
 
-	if current.SchemaVersion != "1" || root.SchemaVersion != "1" || current.Key != k.Key || root.Key != k.Key || current.AttemptRef != v.ref || root.AttemptRef != v.ref || current.PointerRevision != "1" || root.OriginalOperationKey != (managed.OperationKey{Key: k.Key, ActionID: d.ProjectionActionID}) || !root.AcceptedAt.Equal(d.AcceptedAt) {
+	if root.SchemaVersion != "1" || root.Key != k.Key || root.AttemptRef.Generation != "1" || root.OriginalOperationKey != (managed.OperationKey{Key: k.Key, ActionID: d.ProjectionActionID}) || d.Generation == "1" && (root.AttemptRef != v.ref || !root.AcceptedAt.Equal(d.AcceptedAt)) {
 		return v, managed.ErrUnavailable
 	}
 
@@ -856,8 +849,8 @@ func readAttempt(ctx context.Context, tx ControllerTransaction, t *managed.Targe
 		return v, err
 	}
 
-	if state.Successor != nil {
-		return v, managed.ErrUnsupported
+	if (state.Successor == nil) != (state.ClosureDigest == "") {
+		return v, managed.ErrUnavailable
 	}
 
 	revision, e := state.Revision.Uint64()
@@ -872,7 +865,7 @@ func readAttempt(ctx context.Context, tx ControllerTransaction, t *managed.Targe
 		return v, err
 	}
 
-	if original.RemovalAttemptRoot == nil || *original.RemovalAttemptRoot != v.ref {
+	if original.RemovalAttemptRoot == nil || *original.RemovalAttemptRoot != root.AttemptRef {
 		return v, managed.ErrUnavailable
 	}
 
@@ -898,7 +891,12 @@ func readAttempt(ctx context.Context, tx ControllerTransaction, t *managed.Targe
 		return v, err
 	}
 
-	if err = checked.prefetchAttempt(ctx, t, v, root.InitialOperationID); err != nil {
+	initialID := root.InitialOperationID
+	if d.Generation != "1" {
+		initialID = d.ActionID
+	}
+
+	if err = checked.prefetchAttempt(ctx, t, v, initialID); err != nil {
 		return v, err
 	}
 
@@ -923,12 +921,12 @@ func readAttempt(ctx context.Context, tx ControllerTransaction, t *managed.Targe
 		return v, managed.ErrUnavailable
 	}
 
-	initial, initialErr := attemptEventRead(ctx, tx, v, root.InitialOperationID)
+	initial, initialErr := attemptEventRead(ctx, tx, v, initialID)
 	if initialErr != nil {
 		return v, initialErr
 	}
 
-	if initial.Kind != "begin_attempt" || initial.FactKind != "removal_attempt" || initial.FactKey != d.AttemptID.String() || initial.FactDigest != dh || !initial.Receipt.AcceptedAt.Equal(d.AcceptedAt) {
+	if !initial.Receipt.AcceptedAt.Equal(d.AcceptedAt) || d.Generation == "1" && (initial.Kind != "begin_attempt" || initial.FactKind != "removal_attempt" || initial.FactKey != d.AttemptID.String() || initial.FactDigest != dh) || d.Generation != "1" && (initial.Kind != "continue_attempt" || initial.FactKind != "removal_attempt_closure" || initial.FactKey != d.Predecessor.AttemptID.String()) {
 		return v, managed.ErrUnavailable
 	}
 
@@ -1093,9 +1091,22 @@ func attemptMutate(ctx context.Context, r *Repository, q managed.AttemptRequest,
 				return managed.Receipt{}, managed.ErrConflict
 			}
 
+			if e := removalLocalIDAvailable(ctx, tx, q.ID); e != nil {
+				return managed.Receipt{}, e
+			}
+
 			held, e := readAttempt(ctx, tx, current, attemptLocal(q))
 			if e != nil {
 				return managed.Receipt{}, e
+			}
+
+			selected, e := selectedAttempt(ctx, tx, current)
+			if e != nil {
+				return managed.Receipt{}, e
+			}
+
+			if selected.ref != held.ref || held.state.Successor != nil {
+				return managed.Receipt{}, managed.ErrBlocked
 			}
 
 			if current.Phase == managed.Deleted || current.Revision >= math.MaxInt64 {
@@ -1151,6 +1162,18 @@ func attemptMutate(ctx context.Context, r *Repository, q managed.AttemptRequest,
 			return managed.ErrUnavailable
 		}
 
+		if e == nil {
+			current, readErr := tx.Read(ctx, q.Key)
+			if readErr != nil {
+				return readErr
+			}
+
+			accepted, readErr = readAttempt(ctx, tx, current, attemptLocal(q))
+			if readErr != nil {
+				return readErr
+			}
+		}
+
 		return e
 	})
 
@@ -1180,7 +1203,7 @@ func (r *Repository) BeginManagedRemovalAttempt(ctx context.Context, q managed.A
 			return e
 		}
 
-		existing, e := selectedAttempt(ctx, tx, t)
+		existing, e := readAttempt(ctx, tx, t, managed.AttemptKey{Key: q.Key, AttemptID: q.AttemptID, Generation: "1"})
 		if e == nil {
 			saved, se := attemptEventRead(ctx, tx, existing, q.ID)
 			if se != nil {
@@ -1388,6 +1411,18 @@ func attemptCommandRead(ctx context.Context, tx ControllerTransaction, t *manage
 		return out, managed.ErrUnavailable
 	}
 
+	if v.descriptor.Generation != "1" && k.Kind == managed.AttemptBegin {
+		if out.CurrentBindingDigest == "" {
+			return out, managed.ErrUnavailable
+		}
+
+		if _, err = attemptCurrentBindingRead(ctx, tx, t, v, out); err != nil {
+			return out, err
+		}
+	} else if out.CurrentBindingDigest != "" {
+		return out, managed.ErrUnavailable
+	}
+
 	v.commands[k] = out
 
 	return out, nil
@@ -1427,6 +1462,20 @@ func attemptFenceRead(ctx context.Context, tx ControllerTransaction, t *managed.
 		return out, err
 	}
 
+	if v.descriptor.Generation != "1" {
+		observation, e := attemptCurrentBindingRead(ctx, tx, t, v, c)
+		if e != nil {
+			return out, e
+		}
+
+		version, _ := observation.BindingVersion.Uint64()
+
+		epoch, _ := observation.RemovalEpoch.Uint64()
+		if out.NativeAcceptance.BindingVersion != continuationDecimal(version+1) || out.NativeAcceptance.RemovalEpoch != continuationDecimal(epoch+1) {
+			return out, managed.ErrUnavailable
+		}
+	}
+
 	v.fences[k] = out
 
 	return out, nil
@@ -1462,8 +1511,15 @@ func attemptSetFact(ctx context.Context, tx ControllerTransaction, v *attemptVie
 // AuthorizeManagedAttemptCommand retains a finite original command before native issue.
 func (r *Repository) AuthorizeManagedAttemptCommand(ctx context.Context, q managed.AttemptCommandRequest) (managed.AttemptCommandGrant, error) {
 	var out managed.AttemptCommandGrant
-	if q.NativeCommand.Validate() != nil {
+	if q.NativeCommand.Validate() != nil || q.CurrentBinding != nil && (q.Generation == "1" || q.Kind != managed.AttemptBegin) || q.Generation != "1" && q.Kind == managed.AttemptBegin && q.CurrentBinding == nil {
 		return out, managed.ErrInvalid
+	}
+
+	if q.Generation != "1" {
+		raw, e := json.Marshal(q)
+		if e != nil || len(raw) > managed.MaxSuccessorCommandRequest {
+			return out, managed.ErrInvalid
+		}
 	}
 
 	version, err := q.ExpectedNativeVersion.Uint64()
@@ -1477,6 +1533,10 @@ func (r *Repository) AuthorizeManagedAttemptCommand(ctx context.Context, q manag
 	}
 
 	receipt, fresh, accepted, err := attemptMutate(ctx, r, q.AttemptRequest, "attempt_command", q, func(tx ControllerTransaction, t *managed.Target, v *attemptView, now time.Time) error {
+		if e := removalLocalIDAvailable(ctx, tx, q.NativeCommand.OperationID); e != nil {
+			return e
+		}
+
 		ref, e := attemptOriginal(ctx, tx, t, q.ReservationID)
 		if e != nil {
 			return e
@@ -1484,7 +1544,7 @@ func (r *Repository) AuthorizeManagedAttemptCommand(ctx context.Context, q manag
 
 		switch q.Kind {
 		case managed.AttemptBegin:
-			if v.state.RevocationDigest != "" || v.state.SettlementDigest != "" || v.state.AdmissionDigest != "" || q.ExpectedNativeVersion != ref.ReservationVersion {
+			if v.state.RevocationDigest != "" || v.state.SettlementDigest != "" || v.state.AdmissionDigest != "" || v.descriptor.Generation == "1" && q.ExpectedNativeVersion != ref.ReservationVersion {
 				return managed.ErrBlocked
 			}
 		case managed.AttemptAbort:
@@ -1536,6 +1596,40 @@ func (r *Repository) AuthorizeManagedAttemptCommand(ctx context.Context, q manag
 		}
 
 		c := managed.AttemptCommandRecord{SchemaVersion: "1", Key: k, DescriptorDigest: v.ref.DescriptorDigest, BindingReference: ref, ExpectedNativeVersion: q.ExpectedNativeVersion, NativeCommand: q.NativeCommand, AuthorizationID: q.ID, AuthorizationDigest: fingerprint, IssuedAt: now.UTC()}
+		if q.CurrentBinding != nil {
+			if e = currentBindingCheck(ctx, tx, t, *v, c, *q.CurrentBinding, now); e != nil {
+				return e
+			}
+
+			if v.descriptor.Predecessor != nil {
+				previousKey := managed.AttemptBindingKey{AttemptKey: managed.AttemptKey{Key: t.Key, AttemptID: v.descriptor.Predecessor.AttemptID, Generation: v.descriptor.Predecessor.Generation}, ReservationID: q.ReservationID}
+
+				previousSlot, err := attemptSlot(previousKey, "binding")
+				if err != nil {
+					return err
+				}
+
+				previous, err := attemptRead[managed.AttemptTerminalRecord](ctx, tx, "removal_abort", v.scope, previousSlot, managed.MaxAttemptCommand)
+				if err == nil {
+					minimum, err := previous.NativeAcceptance.BindingVersion.Uint64()
+					if err != nil || version < minimum {
+						return managed.ErrConflict
+					}
+				} else if !controllerAbsent(err) {
+					return err
+				}
+			}
+
+			c.CurrentBindingDigest, e = attemptHash("ctrlplane.managed.current-binding.v1", *q.CurrentBinding)
+			if e != nil {
+				return e
+			}
+
+			if e = attemptWrite(ctx, tx, "removal_current_binding", v.scope, slot, *q.CurrentBinding, true, managed.MaxAttemptCurrentBinding); e != nil {
+				return e
+			}
+		}
+
 		if e = attemptWrite(ctx, tx, "removal_command", v.scope, slot, c, true, managed.MaxAttemptCommand); e != nil {
 			return e
 		}
@@ -1721,7 +1815,7 @@ func (r *Repository) RecordManagedAttemptFence(ctx context.Context, q managed.At
 			return e
 		}
 
-		if v.state.RevocationDigest == "" && f.ValidUntil.After(now) && t.Phase == managed.Sealed {
+		if v.descriptor.Generation == "1" && v.state.RevocationDigest == "" && f.ValidUntil.After(now) && t.Phase == managed.Sealed {
 			if binding.Fence != nil && !reflect.DeepEqual(*binding.Fence, f) {
 				return managed.ErrConflict
 			}
@@ -1742,31 +1836,33 @@ func (r *Repository) AdmitManagedRemovalAttempt(ctx context.Context, q managed.A
 			return managed.ErrConflict
 		}
 
-		if v.state.RevocationDigest != "" || t.Deletion != nil || t.Phase != managed.Sealed || q.VerifierID != v.descriptor.VerifierID {
+		if v.state.RevocationDigest != "" || v.descriptor.Generation == "1" && (t.Deletion != nil || t.Phase != managed.Sealed) || q.VerifierID != v.descriptor.VerifierID {
 			return managed.ErrBlocked
 		}
 
-		for _, binding := range t.Reservations {
-			if binding.Phase == managed.Revoked {
-				continue
-			}
+		if v.descriptor.Generation == "1" {
+			for _, binding := range t.Reservations {
+				if binding.Phase == managed.Revoked {
+					continue
+				}
 
-			f, e := attemptFenceRead(ctx, tx, t, *v, attemptBinding(*v, binding.ID))
-			if e != nil {
-				return e
-			}
+				f, e := attemptFenceRead(ctx, tx, t, *v, attemptBinding(*v, binding.ID))
+				if e != nil {
+					return e
+				}
 
-			native, e := f.Fence.Value()
-			if e != nil {
-				return e
-			}
+				native, e := f.Fence.Value()
+				if e != nil {
+					return e
+				}
 
-			if binding.Fence == nil || !reflect.DeepEqual(*binding.Fence, native) {
-				return managed.ErrUnavailable
+				if binding.Fence == nil || !reflect.DeepEqual(*binding.Fence, native) {
+					return managed.ErrUnavailable
+				}
 			}
 		}
 
-		fence, e := closure(ctx, tx, t, now)
+		fence, e := attemptLiveClosureHeld(ctx, tx, t, *v, now)
 		if e != nil {
 			return e
 		}
@@ -1779,9 +1875,12 @@ func (r *Repository) AdmitManagedRemovalAttempt(ctx context.Context, q managed.A
 		}
 
 		v.state.AdmissionDigest = h
+
 		v.state.Phase = "admitted"
-		t.Deletion = &managed.Deletion{OperationID: v.descriptor.ProviderOperationID, FenceDigest: fence, Verifier: q.VerifierID}
-		t.Phase = managed.Admitted
+		if v.descriptor.Generation == "1" {
+			t.Deletion = &managed.Deletion{OperationID: v.descriptor.ProviderOperationID, FenceDigest: fence, Verifier: q.VerifierID}
+			t.Phase = managed.Admitted
+		}
 
 		return nil
 	})
@@ -1829,7 +1928,7 @@ func attemptCoverage(ctx context.Context, tx ControllerTransaction, t *managed.T
 				resourceName = "network"
 			}
 
-			if record.Permission.Step != step || record.Permission.ResourceID != t.Resources[resourceName] || record.Permission.SpecDigest != t.Manifest.SpecDigest || record.Permission.Physical != t.Physical || record.Permission.Seal != t.Seal || record.Permission.CreateProfile != "ctrlplane.managed.create.v1" || t.Deletion == nil || record.Permission.FenceDigest != t.Deletion.FenceDigest {
+			if record.Permission.Step != step || record.Permission.ResourceID != t.Resources[resourceName] || record.Permission.SpecDigest != t.Manifest.SpecDigest || record.Permission.Physical != t.Physical || record.Permission.Seal != t.Seal || record.Permission.CreateProfile != "ctrlplane.managed.create.v1" {
 				return nil, nil, "", managed.ErrUnavailable
 			}
 
@@ -1960,7 +2059,7 @@ func (r *Repository) RevokeManagedRemovalAttempt(ctx context.Context, q managed.
 			return e
 		}
 
-		if t.Deletion != nil && !t.Deletion.Issued {
+		if v.descriptor.Generation == "1" && t.Deletion != nil && !t.Deletion.Issued {
 			t.Deletion.Settlement = &managed.Settlement{OperationID: v.descriptor.ProviderOperationID, FenceDigest: t.Deletion.FenceDigest, Disposition: managed.NotIssued, Verifier: v.descriptor.VerifierID, Evidence: []byte(q.ID.String()), SettledAt: now.UTC()}
 			t.Phase = managed.Sealed
 		}
@@ -1989,7 +2088,7 @@ func (r *Repository) SettleManagedRemovalAttempt(ctx context.Context, q managed.
 
 		switch q.Disposition {
 		case managed.Removed:
-			if q.ProducerProfile != "ctrlplane.managed.remove.v1" || t.Deletion == nil || !t.Deletion.Issued {
+			if q.ProducerProfile != "ctrlplane.managed.remove.v1" || v.state.ProviderIssuedAt == nil {
 				return managed.ErrBlocked
 			}
 
@@ -2036,7 +2135,7 @@ func (r *Repository) SettleManagedRemovalAttempt(ctx context.Context, q managed.
 			}
 		}
 
-		if t.Deletion != nil {
+		if v.descriptor.Generation == "1" && t.Deletion != nil {
 			t.Deletion.Settlement = &managed.Settlement{OperationID: v.descriptor.ProviderOperationID, FenceDigest: t.Deletion.FenceDigest, Disposition: q.Disposition, Verifier: q.VerifierID, Evidence: q.Evidence, SettledAt: q.SettledAt}
 		}
 
@@ -2209,7 +2308,7 @@ func attemptTerminal(ctx context.Context, r *Repository, q managed.AttemptReques
 			return e
 		}
 
-		if binding.Fence != nil && t.Deletion != nil && t.Deletion.Settlement != nil {
+		if v.descriptor.Generation == "1" && binding.Fence != nil && t.Deletion != nil && t.Deletion.Settlement != nil {
 			if kind == managed.AttemptFinish {
 				binding.Finished = a.Receipt
 			} else {
@@ -2300,6 +2399,33 @@ func attemptBindingRead(ctx context.Context, tx ControllerTransaction, t *manage
 		} else if !controllerAbsent(err) {
 			return out, err
 		}
+	}
+
+	sourceSlot, err := attemptSlot(k, managed.AttemptBegin)
+	if err != nil {
+		return out, err
+	}
+
+	var begin *managed.AttemptCommandRecord
+
+	for i := range out.Commands {
+		if out.Commands[i].Key.Kind == managed.AttemptBegin {
+			begin = &out.Commands[i]
+		}
+	}
+
+	wanted := v.descriptor.Generation != "1" && begin != nil
+	if err = attemptPresence(ctx, tx, "removal_current_binding", v.scope, sourceSlot, wanted); err != nil {
+		return out, err
+	}
+
+	if wanted {
+		source, e := attemptCurrentBindingRead(ctx, tx, t, v, *begin)
+		if e != nil {
+			return out, e
+		}
+
+		out.CurrentBinding = &source
 	}
 
 	f, err := attemptFenceRead(ctx, tx, t, v, k)
@@ -2401,12 +2527,17 @@ func (r *Repository) ReadManagedRemovalAttempt(ctx context.Context, k managed.At
 			return e
 		}
 
-		event, e := attemptEventRead(ctx, tx, v, root.InitialOperationID)
+		initialID := root.InitialOperationID
+		if v.descriptor.Generation != "1" {
+			initialID = v.descriptor.ActionID
+		}
+
+		event, e := attemptEventRead(ctx, tx, v, initialID)
 		if e != nil {
 			return e
 		}
 
-		if event.Kind != "begin_attempt" || event.FactDigest != v.ref.DescriptorDigest {
+		if v.descriptor.Generation == "1" && (event.Kind != "begin_attempt" || event.FactDigest != v.ref.DescriptorDigest) {
 			return managed.ErrUnavailable
 		}
 
@@ -2558,7 +2689,30 @@ func (r *Repository) ReadManagedHistoricalSettlement(ctx context.Context, q mana
 			return e
 		}
 
-		if t.Deletion == nil || t.Deletion.Settlement == nil || q.ProviderOperationID != v.descriptor.ProviderOperationID || q.FenceDigest != t.Deletion.FenceDigest || q.ManifestDigest != v.descriptor.ManifestDigest || q.Seal != v.descriptor.Seal {
+		var settlement managed.Settlement
+
+		revokedBeforeIssue := v.state.ProviderIssuedAt == nil
+		if v.ref.Generation == "1" {
+			if t.Deletion == nil || t.Deletion.Settlement == nil {
+				return managed.ErrAuthority
+			}
+
+			settlement = *t.Deletion.Settlement
+		} else {
+			saved, e := attemptSettlementRead(ctx, tx, v)
+			if e != nil {
+				return e
+			}
+
+			admission, e := attemptRead[managed.AttemptAdmission](ctx, tx, "removal_admission", v.scope, v.ref.AttemptID.String(), managed.MaxAttemptFact)
+			if e != nil {
+				return e
+			}
+
+			settlement = managed.Settlement{OperationID: v.descriptor.ProviderOperationID, FenceDigest: admission.FenceSetDigest, Disposition: saved.Disposition, Verifier: saved.VerifierID, Evidence: saved.Evidence, SettledAt: saved.SettledAt}
+		}
+
+		if q.ProviderOperationID != v.descriptor.ProviderOperationID || q.FenceDigest != settlement.FenceDigest || q.ManifestDigest != v.descriptor.ManifestDigest || q.Seal != v.descriptor.Seal {
 			return managed.ErrAuthority
 		}
 
@@ -2601,12 +2755,17 @@ func (r *Repository) ReadManagedHistoricalSettlement(ctx context.Context, q mana
 			return e
 		}
 
-		event, e := attemptEventRead(ctx, tx, v, root.InitialOperationID)
+		birthID := root.InitialOperationID
+		if v.ref.Generation != "1" {
+			birthID = v.descriptor.ActionID
+		}
+
+		event, e := attemptEventRead(ctx, tx, v, birthID)
 		if e != nil {
 			return e
 		}
 
-		out = managed.HistoricalSettlement{Request: q, Physical: t.Physical, Resources: t.Resources, Steps: records, Disposition: t.Deletion.Settlement.Disposition, RevokedBeforeIssue: !t.Deletion.Issued, Settlement: *t.Deletion.Settlement, Receipt: managed.ReceiptWire(event.Receipt)}
+		out = managed.HistoricalSettlement{Request: q, Physical: t.Physical, Resources: t.Resources, Steps: records, Disposition: settlement.Disposition, RevokedBeforeIssue: revokedBeforeIssue, Settlement: settlement, Receipt: managed.ReceiptWire(event.Receipt)}
 
 		raw, e := json.Marshal(out)
 		if e != nil {
@@ -2646,7 +2805,7 @@ func (r *Repository) RecordManagedProviderStepFailure(ctx context.Context, q man
 			return e
 		}
 
-		v, e := selectedAttempt(ctx, tx, t)
+		v, e := providerAttemptHeld(ctx, tx, t, q.Permission.Step)
 		if e != nil {
 			return e
 		}
@@ -2727,7 +2886,7 @@ func (r *Repository) ReadManagedProviderStepFailure(ctx context.Context, q manag
 			return e
 		}
 
-		v, e := selectedAttempt(ctx, tx, t)
+		v, e := providerAttemptHeld(ctx, tx, t, q)
 		if e != nil {
 			return e
 		}
@@ -3439,7 +3598,22 @@ func attemptProviderRead(ctx context.Context, tx ControllerTransaction, t *manag
 		resource = "network"
 	}
 
-	if association.SchemaVersion != "1" || association.AttemptRef != v.ref || association.ProviderOperationID != v.descriptor.ProviderOperationID || association.Index != expectedIndex || association.PermissionDigest != managed.Digest(raw) || record.Permission.Step != step || record.Permission.ResourceID != t.Resources[resource] || record.Permission.SpecDigest != t.Manifest.SpecDigest || record.Permission.Physical != t.Physical || record.Permission.Seal != t.Seal || record.Permission.CreateProfile != "ctrlplane.managed.create.v1" || t.Deletion == nil || record.Permission.FenceDigest != t.Deletion.FenceDigest {
+	expectedFence := ""
+
+	if v.descriptor.Generation == "1" {
+		if t.Deletion != nil {
+			expectedFence = t.Deletion.FenceDigest
+		}
+	} else {
+		admission, e := attemptRead[managed.AttemptAdmission](ctx, tx, "removal_admission", v.scope, v.ref.AttemptID.String(), managed.MaxAttemptFact)
+		if e != nil {
+			return record, association, e
+		}
+
+		expectedFence = admission.FenceSetDigest
+	}
+
+	if association.SchemaVersion != "1" || association.AttemptRef != v.ref || association.ProviderOperationID != v.descriptor.ProviderOperationID || association.Index != expectedIndex || association.PermissionDigest != managed.Digest(raw) || record.Permission.Step != step || record.Permission.ResourceID != t.Resources[resource] || record.Permission.SpecDigest != t.Manifest.SpecDigest || record.Permission.Physical != t.Physical || record.Permission.Seal != t.Seal || record.Permission.CreateProfile != "ctrlplane.managed.create.v1" || expectedFence == "" || record.Permission.FenceDigest != expectedFence {
 		return record, association, managed.ErrUnavailable
 	}
 

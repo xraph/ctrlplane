@@ -309,6 +309,10 @@ func (r *Repository) RecordManagedAccessAudit(ctx context.Context, q managed.Acc
 			return readErr
 		}
 
+		if err := removalLocalIDAvailable(ctx, tx, q.AttemptID); err != nil {
+			return err
+		}
+
 		if _, collision := tx.ReadRecord(ctx, "action", "", q.AttemptID.String()); !controllerAbsent(collision) {
 			if collision == nil {
 				return managed.ErrConflict
@@ -354,6 +358,13 @@ func (r *Repository) ReadManagedOperation(ctx context.Context, q managed.Operati
 			return managed.ErrAuthority
 		}
 
+		if saved.Submission.Kind == managed.ActionContinue || saved.ContinuationAssociation != nil {
+			saved, err = acceptedOperation(ctx, tx, q)
+			if err != nil {
+				return err
+			}
+		}
+
 		out = saved
 
 		return nil
@@ -365,6 +376,9 @@ func (r *Repository) ReadManagedOperation(ctx context.Context, q managed.Operati
 // SubmitManagedAction accepts the desired decision, reserved identities and audit together.
 func (r *Repository) SubmitManagedAction(ctx context.Context, q managed.ActionSubmission) (managed.ActionReceipt, error) {
 	var out managed.ActionReceipt
+	if q.Kind == managed.ActionContinue {
+		return out, managed.ErrUnsupported
+	}
 
 	fingerprint, err := managed.ActionDigest(q)
 	if err != nil {
@@ -390,6 +404,10 @@ func (r *Repository) SubmitManagedAction(ctx context.Context, q managed.ActionSu
 			out = saved
 
 			return nil
+		}
+
+		if err := removalLocalIDAvailable(ctx, tx, q.ID); err != nil {
+			return err
 		}
 
 		if !controllerAbsent(readErr) {
@@ -612,6 +630,21 @@ func acceptedOperation(ctx context.Context, tx ControllerTransaction, k managed.
 
 		if _, readErr = readAttempt(ctx, tx, target, managed.AttemptKey{Key: k.Key, AttemptID: state.RemovalAttemptRoot.AttemptID, Generation: state.RemovalAttemptRoot.Generation}); readErr != nil {
 			return state, readErr
+		}
+	}
+
+	if state.Submission.Kind == managed.ActionContinue || state.ContinuationAssociation != nil {
+		if state.ContinuationAssociation == nil || state.Submission.Kind != managed.ActionContinue {
+			return state, managed.ErrUnavailable
+		}
+
+		target, e := tx.Read(ctx, k.Key)
+		if e != nil {
+			return state, e
+		}
+
+		if _, e = readAttempt(ctx, tx, target, managed.AttemptKey{Key: k.Key, AttemptID: state.ContinuationAssociation.Successor.AttemptID, Generation: state.ContinuationAssociation.Successor.Generation}); e != nil {
+			return state, e
 		}
 	}
 
@@ -1040,6 +1073,10 @@ func (r *Repository) AdvanceManagedOperation(ctx context.Context, q managed.Oper
 			return readErr
 		}
 
+		if err := removalLocalIDAvailable(ctx, tx, q.ID); err != nil {
+			return err
+		}
+
 		if _, err := controllerParent(ctx, tx, q.Command); err != nil {
 			return err
 		}
@@ -1053,7 +1090,7 @@ func (r *Repository) AdvanceManagedOperation(ctx context.Context, q managed.Oper
 			return managed.ErrConflict
 		}
 
-		if state.Revision >= 1<<63-1 {
+		if state.Revision >= 1<<63-1 || state.ContinuationAssociation != nil && state.Revision == 1<<63-2 && o.Kind != "completed" {
 			return managed.ErrCapacity
 		}
 
@@ -1427,7 +1464,7 @@ func (r *Repository) AuthorizeManagedProviderStep(ctx context.Context, q managed
 				}
 
 				if fixedAttemptProfile(current) {
-					selected, associationErr := selectedAttempt(ctx, tx, current)
+					selected, associationErr := providerAttemptHeld(ctx, tx, current, existing.Permission.Step)
 					if associationErr != nil {
 						return associationErr
 					}
@@ -1497,7 +1534,22 @@ func (r *Repository) AuthorizeManagedProviderStep(ctx context.Context, q managed
 
 		removal := q.Step.Kind == managed.StepRemoveContainer || q.Step.Kind == managed.StepRemoveNetwork
 
+		var currentAttempt *attemptView
+
+		if removal && fixedAttemptProfile(target) {
+			selected, e := selectedAttempt(ctx, tx, target)
+			if e != nil {
+				return e
+			}
+
+			currentAttempt = &selected
+		}
+
 		steps, err := expectedSteps(target, q.Step.ActionID, removal)
+		if currentAttempt != nil {
+			steps, err = attemptSteps(target, *currentAttempt)
+		}
+
 		if err != nil {
 			return err
 		}
@@ -1532,7 +1584,7 @@ func (r *Repository) AuthorizeManagedProviderStep(ctx context.Context, q managed
 			}
 		}
 
-		if removal {
+		if removal && (currentAttempt == nil || currentAttempt.descriptor.Generation == "1") {
 			if target.Deletion == nil || target.Deletion.OperationID != q.Step.ProviderOperationID || target.Deletion.Settlement != nil || target.Seal == 0 {
 				return managed.ErrBlocked
 			}
@@ -1551,7 +1603,7 @@ func (r *Repository) AuthorizeManagedProviderStep(ctx context.Context, q managed
 			if target.Phase != managed.Admitted && target.Phase != managed.DeleteIssued {
 				return managed.ErrBlocked
 			}
-		} else if target.Phase != managed.Open || target.Desired != managed.Active || target.Provision.Revoked || target.Provision.Complete || q.Step.ProviderOperationID != target.ProvisionOperationID {
+		} else if !removal && (target.Phase != managed.Open || target.Desired != managed.Active || target.Provision.Revoked || target.Provision.Complete || q.Step.ProviderOperationID != target.ProvisionOperationID) {
 			return managed.ErrBlocked
 		}
 
@@ -1595,23 +1647,35 @@ func (r *Repository) AuthorizeManagedProviderStep(ctx context.Context, q managed
 					}
 				}
 
-				fence, checkErr := closure(ctx, tx, current, now)
+				fence, checkErr := attemptLiveClosureHeld(ctx, tx, current, selected, now)
 				if checkErr != nil {
 					return checkErr
 				}
 
-				if current.Deletion == nil || fence != current.Deletion.FenceDigest {
+				admission, checkErr := attemptRead[managed.AttemptAdmission](ctx, tx, "removal_admission", selected.scope, selected.ref.AttemptID.String(), managed.MaxAttemptFact)
+				if checkErr != nil {
+					return checkErr
+				}
+
+				if fence != admission.FenceSetDigest {
 					return managed.ErrConflict
 				}
 
 				if index == 0 {
-					if current.Deletion.Issued {
+					if selected.state.ProviderIssuedAt != nil {
 						return managed.ErrBlocked
 					}
 
-					current.Deletion.Issued = true
-					current.Deletion.IssuedAt = now
-					current.Phase = managed.DeleteIssued
+					if selected.descriptor.Generation == "1" {
+						if current.Deletion == nil || current.Deletion.Issued {
+							return managed.ErrBlocked
+						}
+
+						current.Deletion.Issued = true
+						current.Deletion.IssuedAt = now
+						current.Phase = managed.DeleteIssued
+					}
+
 					stamp := now.UTC()
 					selected.state.ProviderIssuedAt = &stamp
 					selected.state.Phase = "issued"
@@ -1690,8 +1754,18 @@ func (r *Repository) AuthorizeManagedProviderStep(ctx context.Context, q managed
 		}
 
 		out = managed.ProviderStepPermission{CreateProfile: "ctrlplane.managed.create.v1", Step: q.Step, CommandID: q.ID, Digest: fingerprint, SpecDigest: target.Manifest.SpecDigest, Physical: target.Physical, Seal: target.Seal, ResourceID: resource, IssuedAt: tx.Now(), Revision: receipt.Revision}
+
 		if removal {
-			out.FenceDigest = target.Deletion.FenceDigest
+			if issuedAttempt != nil && issuedAttempt.descriptor.Generation != "1" {
+				admission, e := attemptRead[managed.AttemptAdmission](ctx, tx, "removal_admission", issuedAttempt.scope, issuedAttempt.ref.AttemptID.String(), managed.MaxAttemptFact)
+				if e != nil {
+					return e
+				}
+
+				out.FenceDigest = admission.FenceSetDigest
+			} else {
+				out.FenceDigest = target.Deletion.FenceDigest
+			}
 		}
 
 		if removal && fixedAttemptProfile(target) {
@@ -1766,7 +1840,7 @@ func (r *Repository) RecordManagedProviderStepResult(ctx context.Context, q mana
 			}
 
 			if fixedAttemptProfile(current) {
-				selected, associationErr := selectedAttempt(ctx, tx, current)
+				selected, associationErr := providerAttemptHeld(ctx, tx, current, q.Permission.Step)
 				if associationErr != nil {
 					return associationErr
 				}
@@ -1901,7 +1975,7 @@ func (r *Repository) ReadManagedProviderStep(ctx context.Context, q managed.Prov
 			}
 
 			if fixedAttemptProfile(target) {
-				selected, readErr := selectedAttempt(ctx, tx, target)
+				selected, readErr := providerAttemptHeld(ctx, tx, target, q)
 				if readErr != nil {
 					return readErr
 				}

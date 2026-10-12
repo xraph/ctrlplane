@@ -2092,3 +2092,194 @@ func TestManagedAttemptMemoryInvalidCommand(t *testing.T) {
 		})
 	}
 }
+
+func memoryContinuationInput(t *testing.T) (*Store, managed.ContinuationRequest) {
+	t.Helper()
+	s, action, _ := memoryQuiescenceProviderSetup(t, false)
+	start := managed.AttemptStartRequest{Command: projectionCommand(t, s, action.Key), ActionID: action.ID, AttemptID: id.New(managed.PrefixOperation), ProviderOperationID: id.New(managed.PrefixOperation), VerifierID: "provider"}
+
+	first, err := s.BeginManagedRemovalAttempt(t.Context(), start)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err = s.RevokeManagedRemovalAttempt(t.Context(), managed.AttemptRequest{Command: projectionCommand(t, s, action.Key), AttemptID: first.AttemptID, Generation: "1"}); err != nil {
+		t.Fatal(err)
+	}
+
+	action.Command = projectionCommand(t, s, action.Key)
+	action.Kind = managed.ActionContinue
+	action.NewTarget = nil
+	action.ReleaseID = id.Nil
+	action.RollbackReleaseID = id.Nil
+	action.CanonicalDigest = ""
+
+	target, err := s.ReadManagedTarget(t.Context(), action.Key)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	action.ExpectedDesiredRevision = target.DesiredRevision
+	action.OriginalCommand = []byte("continue")
+	action.OriginalDigest = managed.Digest(action.OriginalCommand)
+	q := managed.ContinuationRequest{Action: action, Predecessor: managed.AttemptRef{AttemptID: first.AttemptID, Generation: first.Generation, DescriptorDigest: first.DescriptorDigest}, SuccessorAttemptID: id.New(managed.PrefixOperation), ProviderOperationID: id.New(managed.PrefixOperation)}
+
+	q.Action.CanonicalDigest, err = managed.RemovalContinuationDigest(q)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return s, q
+}
+
+func TestManagedRemovalContinuationMemoryAtomicity(t *testing.T) {
+	for n := 1; n <= 32; n++ {
+		s, q := memoryContinuationInput(t)
+		before := projectionSnapshot(t, s)
+		fault := &attemptFault{fail: n}
+		repo := managedstate.New(attemptFaultBackend{managedBackend{store: s}, fault})
+
+		result, err := repo.BeginManagedRemovalContinuation(t.Context(), q)
+		if err == nil {
+			t.Logf("checked %d write/commit boundaries: %v", n-1, fault.actions)
+
+			return
+		}
+
+		if !reflect.DeepEqual(result, managed.ContinuationReceipt{}) {
+			t.Fatal("failed commit exposed receipt")
+		}
+
+		if after := projectionSnapshot(t, s); after != before {
+			t.Fatalf("boundary %d leaked a graph member", n)
+		}
+
+		if _, err = s.BeginManagedRemovalContinuation(t.Context(), q); err != nil {
+			t.Fatalf("same request after rollback: %v", err)
+		}
+	}
+
+	t.Fatal("no successful boundary")
+}
+
+func TestManagedRemovalContinuationMemoryAmbiguousCommit(t *testing.T) {
+	t.Run("persisted", func(t *testing.T) {
+		s, q := memoryContinuationInput(t)
+		repo := managedstate.New(attemptAmbiguousBackend{managedBackend{store: s}})
+
+		result, err := repo.BeginManagedRemovalContinuation(t.Context(), q)
+		if !errors.Is(err, managed.ErrUnavailable) || !reflect.DeepEqual(result, managed.ContinuationReceipt{}) {
+			t.Fatalf("ambiguous commit exposed result: %+v %v", result, err)
+		}
+
+		saved, err := s.ReadManagedRemovalContinuation(t.Context(), managed.ContinuationKey{Key: q.Action.Key, ActionID: q.Action.ID})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		before := projectionSnapshot(t, s)
+
+		replay, err := s.BeginManagedRemovalContinuation(t.Context(), q)
+		if err != nil || !reflect.DeepEqual(replay, saved.Receipt) || projectionSnapshot(t, s) != before {
+			t.Fatalf("reconciliation mutated graph: %v", err)
+		}
+	})
+	t.Run("absent", func(t *testing.T) {
+		s, q := memoryContinuationInput(t)
+		before := projectionSnapshot(t, s)
+		repo := managedstate.New(continuationAbsentCommitBackend{managedBackend{store: s}})
+
+		result, err := repo.BeginManagedRemovalContinuation(t.Context(), q)
+		if err == nil || !reflect.DeepEqual(result, managed.ContinuationReceipt{}) || projectionSnapshot(t, s) != before {
+			t.Fatal("failed acceptance leaked result or graph")
+		}
+
+		if _, err = s.ReadManagedRemovalContinuation(t.Context(), managed.ContinuationKey{Key: q.Action.Key, ActionID: q.Action.ID}); !errors.Is(err, managed.ErrNotFound) {
+			t.Fatalf("absent graph: %v", err)
+		}
+
+		if _, err = s.BeginManagedRemovalContinuation(t.Context(), q); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+func TestManagedRemovalContinuationMemoryAbsentStaleAuthority(t *testing.T) {
+	s, q := memoryContinuationInput(t)
+	repo := managedstate.New(continuationAbsentCommitBackend{managedBackend{store: s}})
+
+	result, err := repo.BeginManagedRemovalContinuation(t.Context(), q)
+	if !errors.Is(err, managed.ErrUnavailable) || !reflect.DeepEqual(result, managed.ContinuationReceipt{}) {
+		t.Fatal("uncertain absence result", err)
+	}
+
+	if _, err = s.ReadManagedRemovalContinuation(t.Context(), managed.ContinuationKey{Key: q.Action.Key, ActionID: q.Action.ID}); !errors.Is(err, managed.ErrNotFound) {
+		t.Fatal("authoritative absence", err)
+	}
+
+	if _, err = s.ClaimManagedLease(t.Context(), managed.LeaseRequest{Command: projectionCommand(t, s, q.Action.Key), Duration: managed.MaxLease}); err != nil {
+		t.Fatal(err)
+	}
+
+	before := projectionSnapshot(t, s)
+	if _, err = s.BeginManagedRemovalContinuation(t.Context(), q); !errors.Is(err, managed.ErrConflict) {
+		t.Fatal("same-ID stale authority accepted", err)
+	}
+
+	if projectionSnapshot(t, s) != before {
+		t.Fatal("stale uncertain retry mutated graph")
+	}
+}
+
+func TestManagedRemovalContinuationMemoryCorruption(t *testing.T) {
+	s, q := memoryContinuationInput(t)
+
+	receipt, err := s.BeginManagedRemovalContinuation(t.Context(), q)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	scope := memoryAttemptScope(t, q.Action.Key)
+
+	cases := [][3]string{{"removal_continuation", scope, q.Action.ID.String()}, {"removal_attempt_closure", scope, q.Predecessor.AttemptID.String()}, {"removal_attempt", scope, q.SuccessorAttemptID.String()}, {"removal_attempt_state", scope, q.Predecessor.AttemptID.String()}, {"removal_attempt_current", scope, "current"}, {"removal_identity", "", q.ProviderOperationID.String()}, {"removal_attempt_event", scope, q.Action.ID.String()}, {"action", "", q.Action.ID.String()}, {"operation", q.Action.TenantID, q.Action.ID.String()}}
+	for _, entry := range cases {
+		t.Run(entry[0], func(t *testing.T) {
+			rows := s.managedControllerRecords[entry[0]+":"+entry[1]]
+			old := rows[entry[2]]
+
+			delete(rows, entry[2])
+			defer func() { rows[entry[2]] = old }()
+
+			before := projectionSnapshot(t, s)
+			if _, e := s.ReadManagedRemovalContinuation(t.Context(), managed.ContinuationKey{Key: q.Action.Key, ActionID: q.Action.ID}); e == nil {
+				t.Fatal("partial graph read accepted")
+			}
+
+			if _, e := s.BeginManagedRemovalContinuation(t.Context(), q); e == nil {
+				t.Fatal("partial graph replay accepted")
+			}
+
+			if _, e := s.ReadManagedRemovalAttempt(t.Context(), managed.AttemptKey{Key: q.Action.Key, AttemptID: receipt.Successor.AttemptID, Generation: receipt.Successor.Generation}); e == nil {
+				t.Fatal("broken current lineage accepted")
+			}
+
+			if projectionSnapshot(t, s) != before {
+				t.Fatal("partial graph repaired")
+			}
+		})
+	}
+}
+
+// continuationAbsentCommitBackend returns the same uncertainty class after staging
+// a complete graph, while the backing transaction rolls it back.
+type continuationAbsentCommitBackend struct{ managedBackend }
+
+func (b continuationAbsentCommitBackend) ControllerAtomic(ctx context.Context, serial string, keys []managed.Key, change func(managedstate.ControllerTransaction) error) error {
+	return b.managedBackend.ControllerAtomic(ctx, serial, keys, func(tx managedstate.ControllerTransaction) error {
+		if err := change(tx); err != nil {
+			return err
+		}
+
+		return managed.ErrUnavailable
+	})
+}

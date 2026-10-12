@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"math"
+	"slices"
 	"strconv"
 	"time"
 
@@ -131,6 +132,7 @@ type AttemptState struct {
 	SettlementDigest string      `json:"settlement_digest,omitempty"`
 	TerminalDigest   string      `json:"terminal_digest,omitempty"`
 	Successor        *AttemptRef `json:"successor,omitempty"`
+	ClosureDigest    string      `json:"closure_digest,omitempty"`
 }
 
 // AttemptRecord returns the selected immutable descriptor and bounded state.
@@ -144,10 +146,11 @@ type AttemptRecord struct {
 type AttemptCommandRequest struct {
 	AttemptRequest
 
-	ReservationID         id.ID       `json:"reservation_id"`
-	Kind                  string      `json:"kind"`
-	ExpectedNativeVersion Decimal     `json:"expected_native_version"`
-	NativeCommand         PortCommand `json:"native_command"`
+	ReservationID         id.ID                             `json:"reservation_id"`
+	Kind                  string                            `json:"kind"`
+	ExpectedNativeVersion Decimal                           `json:"expected_native_version"`
+	NativeCommand         PortCommand                       `json:"native_command"`
+	CurrentBinding        *AttemptCurrentBindingObservation `json:"current_binding,omitempty"`
 }
 
 // AttemptCommandRecord is immutable may-have-issued evidence, including before transport.
@@ -161,6 +164,7 @@ type AttemptCommandRecord struct {
 	AuthorizationID       id.ID                   `json:"authorization_id"`
 	AuthorizationDigest   string                  `json:"authorization_digest"`
 	IssuedAt              time.Time               `json:"issued_at"`
+	CurrentBindingDigest  string                  `json:"current_binding_digest,omitempty"`
 }
 
 // AttemptCommandGrant permits only a newly accepted original native invocation.
@@ -354,13 +358,14 @@ type AttemptFinishRequest struct {
 
 // AttemptBindingRecord returns one complete exact binding, never a page of obligations.
 type AttemptBindingRecord struct {
-	Key              AttemptBindingKey         `json:"key"`
-	DescriptorDigest string                    `json:"descriptor_digest"`
-	Commands         []AttemptCommandRecord    `json:"commands"`
-	Fence            *AttemptFenceRecord       `json:"fence,omitempty"`
-	Abort            *AttemptTerminalRecord    `json:"abort,omitempty"`
-	Finish           *AttemptTerminalRecord    `json:"finish,omitempty"`
-	Witness          *AttemptBindingSettlement `json:"witness,omitempty"`
+	Key              AttemptBindingKey                 `json:"key"`
+	DescriptorDigest string                            `json:"descriptor_digest"`
+	Commands         []AttemptCommandRecord            `json:"commands"`
+	Fence            *AttemptFenceRecord               `json:"fence,omitempty"`
+	Abort            *AttemptTerminalRecord            `json:"abort,omitempty"`
+	Finish           *AttemptTerminalRecord            `json:"finish,omitempty"`
+	Witness          *AttemptBindingSettlement         `json:"witness,omitempty"`
+	CurrentBinding   *AttemptCurrentBindingObservation `json:"current_binding,omitempty"`
 }
 
 // AttemptSettlementReadRequest selects a native binding independently of aggregate A fences.
@@ -553,11 +558,12 @@ func (v AttemptCommandRequest) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		attemptRequestWire
 
-		ReservationID         id.ID       `json:"reservation_id"`
-		Kind                  string      `json:"kind"`
-		ExpectedNativeVersion Decimal     `json:"expected_native_version"`
-		NativeCommand         PortCommand `json:"native_command"`
-	}{attemptRequestWire{parentAttemptWire(v.Command), v.AttemptID, v.Generation}, v.ReservationID, v.Kind, v.ExpectedNativeVersion, v.NativeCommand})
+		ReservationID         id.ID                             `json:"reservation_id"`
+		Kind                  string                            `json:"kind"`
+		ExpectedNativeVersion Decimal                           `json:"expected_native_version"`
+		NativeCommand         PortCommand                       `json:"native_command"`
+		CurrentBinding        *AttemptCurrentBindingObservation `json:"current_binding,omitempty"`
+	}{attemptRequestWire{parentAttemptWire(v.Command), v.AttemptID, v.Generation}, v.ReservationID, v.Kind, v.ExpectedNativeVersion, v.NativeCommand, v.CurrentBinding})
 }
 
 // UnmarshalJSON validates the exact accepted AttemptCommandRequest encoding.
@@ -565,10 +571,11 @@ func (v *AttemptCommandRequest) UnmarshalJSON(raw []byte) error {
 	var wire struct {
 		attemptRequestWire
 
-		ReservationID         id.ID       `json:"reservation_id"`
-		Kind                  string      `json:"kind"`
-		ExpectedNativeVersion Decimal     `json:"expected_native_version"`
-		NativeCommand         PortCommand `json:"native_command"`
+		ReservationID         id.ID                             `json:"reservation_id"`
+		Kind                  string                            `json:"kind"`
+		ExpectedNativeVersion Decimal                           `json:"expected_native_version"`
+		NativeCommand         PortCommand                       `json:"native_command"`
+		CurrentBinding        *AttemptCurrentBindingObservation `json:"current_binding,omitempty"`
 	}
 	if err := attemptDecodeJSON(raw, &wire); err != nil {
 		return err
@@ -579,7 +586,7 @@ func (v *AttemptCommandRequest) UnmarshalJSON(raw []byte) error {
 		return err
 	}
 
-	*v = AttemptCommandRequest{AttemptRequest: AttemptRequest{Command: command, AttemptID: wire.AttemptID, Generation: wire.Generation}, ReservationID: wire.ReservationID, Kind: wire.Kind, ExpectedNativeVersion: wire.ExpectedNativeVersion, NativeCommand: wire.NativeCommand}
+	*v = AttemptCommandRequest{AttemptRequest: AttemptRequest{Command: command, AttemptID: wire.AttemptID, Generation: wire.Generation}, ReservationID: wire.ReservationID, Kind: wire.Kind, ExpectedNativeVersion: wire.ExpectedNativeVersion, NativeCommand: wire.NativeCommand, CurrentBinding: wire.CurrentBinding}
 
 	canonical, err := v.MarshalJSON()
 	if err != nil || !bytes.Equal(canonical, raw) {
@@ -940,6 +947,357 @@ func (v *ProviderStepFailure) UnmarshalJSON(raw []byte) error {
 	if err != nil || !bytes.Equal(canonical, raw) {
 		return ErrInvalid
 	}
+
+	return nil
+}
+
+// Removal continuation limits bound complete encoded records.
+const (
+	MaxRemovalContinuationMaterial    = 16384
+	MaxRemovalContinuationClosure     = 8192
+	MaxRemovalContinuationAssociation = 1024
+	MaxRemovalContinuationReceipt     = 2048
+	MaxRemovalContinuationRecord      = 32768
+	MaxRemovalContinuationRequest     = 16384
+	MaxSuccessorCommandRequest        = 32768
+	MaxAttemptCurrentBinding          = 8192
+)
+
+// ContinuationKey selects an immutable typed acceptance.
+type ContinuationKey struct {
+	Key      Key   `json:"key"`
+	ActionID id.ID `json:"action_id"`
+}
+
+// ContinuationRequest closes one settled predecessor without granting a send.
+type ContinuationRequest struct {
+	Action              ActionSubmission `json:"action"`
+	Predecessor         AttemptRef       `json:"predecessor"`
+	SuccessorAttemptID  id.ID            `json:"successor_attempt_id"`
+	ProviderOperationID id.ID            `json:"provider_operation_id"`
+}
+
+// ContinuationReceipt retains the original acceptance, never current authority.
+type ContinuationReceipt struct {
+	Receipt             Receipt       `json:"receipt"`
+	ActionReceipt       ActionReceipt `json:"action_receipt"`
+	Successor           AttemptRef    `json:"successor"`
+	ProviderOperationID id.ID         `json:"provider_operation_id"`
+}
+
+// ContinuationAssociation binds a journal to its typed acceptance.
+type ContinuationAssociation struct {
+	MaterialID          id.ID      `json:"material_id"`
+	MaterialDigest      string     `json:"material_digest"`
+	Predecessor         AttemptRef `json:"predecessor"`
+	Successor           AttemptRef `json:"successor"`
+	ProviderOperationID id.ID      `json:"provider_operation_id"`
+}
+
+// ContinuationRecord returns immutable historical acceptance material.
+type ContinuationRecord struct {
+	Material ContinuationMaterial `json:"material"`
+	Closure  ContinuationClosure  `json:"closure"`
+	Receipt  ContinuationReceipt  `json:"receipt"`
+}
+
+// ContinuationMaterial retains the exact request and independently derived generation.
+type ContinuationMaterial struct {
+	SchemaVersion       Decimal             `json:"schema_version"`
+	Request             ContinuationRequest `json:"request"`
+	SuccessorGeneration Decimal             `json:"successor_generation"`
+	Digest              string              `json:"digest"`
+}
+
+// ContinuationLineage retains the fixed root and first accepted link.
+type ContinuationLineage struct {
+	SchemaVersion          Decimal      `json:"schema_version"`
+	Root                   AttemptRef   `json:"root"`
+	RootInitialOperationID id.ID        `json:"root_initial_operation_id"`
+	OriginalOperationKey   OperationKey `json:"original_operation_key"`
+	FirstMaterialID        id.ID        `json:"first_material_id"`
+	FirstMaterialDigest    string       `json:"first_material_digest"`
+	FirstSuccessor         AttemptRef   `json:"first_successor"`
+}
+
+// ContinuationClosure commits a definitive nondeletion predecessor transition.
+type ContinuationClosure struct {
+	SchemaVersion       Decimal             `json:"schema_version"`
+	Key                 Key                 `json:"key"`
+	ActionID            id.ID               `json:"action_id"`
+	MaterialDigest      string              `json:"material_digest"`
+	Predecessor         AttemptRef          `json:"predecessor"`
+	Successor           AttemptRef          `json:"successor"`
+	ProviderOperationID id.ID               `json:"provider_operation_id"`
+	Lineage             ContinuationLineage `json:"lineage"`
+	Disposition         Disposition         `json:"disposition"`
+	RevocationDigest    string              `json:"revocation_digest"`
+	SettlementDigest    string              `json:"settlement_digest"`
+	CoverageDigest      string              `json:"coverage_digest"`
+	PredecessorRevision Decimal             `json:"predecessor_revision"`
+	PointerRevision     Decimal             `json:"pointer_revision"`
+	ParentRevision      Decimal             `json:"parent_revision"`
+	AcceptedAt          time.Time           `json:"accepted_at"`
+}
+
+// RemovalContinuationStore provides typed acceptance and exact historical reads.
+type RemovalContinuationStore interface {
+	BeginManagedRemovalContinuation(ctx context.Context, request ContinuationRequest) (ContinuationReceipt, error)
+	ReadManagedRemovalContinuation(ctx context.Context, key ContinuationKey) (ContinuationRecord, error)
+}
+
+// AttemptCurrentBindingObservation is supplied by the trusted native producer.
+// Store validation binds supplied facts; it does not authenticate live native provenance.
+type AttemptCurrentBindingObservation struct {
+	SchemaVersion    Decimal                 `json:"schema_version"`
+	Key              AttemptBindingKey       `json:"key"`
+	DescriptorDigest string                  `json:"descriptor_digest"`
+	BindingReference AttemptBindingReference `json:"binding_reference"`
+	BindingVersion   Decimal                 `json:"binding_version"`
+	RemovalEpoch     Decimal                 `json:"removal_epoch"`
+	State            string                  `json:"state"`
+	ObservedAt       time.Time               `json:"observed_at"`
+	ValidUntil       time.Time               `json:"valid_until"`
+	VerifierID       string                  `json:"verifier_id"`
+	Evidence         []byte                  `json:"evidence"`
+	EvidenceDigest   string                  `json:"evidence_digest"`
+}
+
+type continuationActionWire struct {
+	Key                     Key        `json:"key"`
+	ID                      id.ID      `json:"id"`
+	Revision                Decimal    `json:"revision"`
+	LeaseEpoch              Decimal    `json:"lease_epoch"`
+	Owner                   string     `json:"owner"`
+	Kind                    ActionKind `json:"kind"`
+	Installation            string     `json:"installation"`
+	Authority               string     `json:"authority"`
+	ApplicationID           string     `json:"application_id"`
+	OrganizationID          string     `json:"organization_id"`
+	Actor                   AuditActor `json:"actor"`
+	OriginalCommand         []byte     `json:"original_command"`
+	OriginalDigest          string     `json:"original_digest"`
+	CanonicalDigest         string     `json:"canonical_digest"`
+	ExpectedDesiredRevision Decimal    `json:"expected_desired_revision"`
+	OccurredAt              time.Time  `json:"occurred_at"`
+}
+
+func continuationAction(q ActionSubmission) continuationActionWire {
+	return continuationActionWire{q.Key, q.ID, Decimal(strconv.FormatUint(q.Revision, 10)), Decimal(strconv.FormatUint(q.LeaseEpoch, 10)), q.Owner, q.Kind, q.Installation, q.Authority, q.ApplicationID, q.OrganizationID, q.Actor, q.OriginalCommand, q.OriginalDigest, q.CanonicalDigest, Decimal(strconv.FormatUint(q.ExpectedDesiredRevision, 10)), q.OccurredAt.UTC()}
+}
+
+func (q continuationActionWire) value() (ActionSubmission, error) {
+	rev, e := q.Revision.Uint64()
+	if e != nil {
+		return ActionSubmission{}, e
+	}
+
+	epoch, e := q.LeaseEpoch.Uint64()
+	if e != nil {
+		return ActionSubmission{}, e
+	}
+
+	desired, e := q.ExpectedDesiredRevision.Uint64()
+	if e != nil {
+		return ActionSubmission{}, e
+	}
+
+	return ActionSubmission{Command: Command{Key: q.Key, ID: q.ID, Revision: rev, LeaseEpoch: epoch, Owner: q.Owner}, Kind: q.Kind, Installation: q.Installation, Authority: q.Authority, ApplicationID: q.ApplicationID, OrganizationID: q.OrganizationID, Actor: q.Actor, OriginalCommand: q.OriginalCommand, OriginalDigest: q.OriginalDigest, CanonicalDigest: q.CanonicalDigest, ExpectedDesiredRevision: desired, OccurredAt: q.OccurredAt}, nil
+}
+
+// MarshalJSON encodes all new request counters as canonical decimal strings.
+func (q ContinuationRequest) MarshalJSON() ([]byte, error) {
+	if _, err := RemovalContinuationDigest(q); err != nil {
+		return nil, err
+	}
+
+	return json.Marshal(struct {
+		Action              continuationActionWire `json:"action"`
+		Predecessor         AttemptRef             `json:"predecessor"`
+		SuccessorAttemptID  id.ID                  `json:"successor_attempt_id"`
+		ProviderOperationID id.ID                  `json:"provider_operation_id"`
+	}{continuationAction(q.Action), q.Predecessor, q.SuccessorAttemptID, q.ProviderOperationID})
+}
+
+// UnmarshalJSON refuses noncanonical, unknown and unbound request fields.
+func (q *ContinuationRequest) UnmarshalJSON(raw []byte) error {
+	if len(raw) > MaxRemovalContinuationRequest {
+		return ErrInvalid
+	}
+
+	var w struct {
+		Action              continuationActionWire `json:"action"`
+		Predecessor         AttemptRef             `json:"predecessor"`
+		SuccessorAttemptID  id.ID                  `json:"successor_attempt_id"`
+		ProviderOperationID id.ID                  `json:"provider_operation_id"`
+	}
+	if e := strictObject(raw, &w); e != nil {
+		return e
+	}
+
+	action, e := w.Action.value()
+	if e != nil {
+		return e
+	}
+
+	value := ContinuationRequest{action, w.Predecessor, w.SuccessorAttemptID, w.ProviderOperationID}
+
+	digest, e := RemovalContinuationDigest(value)
+	if e != nil || digest != action.CanonicalDigest {
+		return ErrInvalid
+	}
+
+	encoded, e := value.MarshalJSON()
+	if e != nil || !bytes.Equal(encoded, raw) {
+		return ErrInvalid
+	}
+
+	*q = value
+
+	return nil
+}
+
+// RemovalContinuationDigest binds typed inputs, without reading or authorizing state.
+func RemovalContinuationDigest(q ContinuationRequest) (string, error) {
+	a := q.Action
+
+	generation, e := q.Predecessor.Generation.Uint64()
+	if e != nil || generation == 0 || generation >= math.MaxInt64 || !hexDigest(q.Predecessor.DescriptorDigest) || a.Kind != ActionContinue || a.NewTarget != nil || !a.ReleaseID.IsNil() || !a.RollbackReleaseID.IsNil() || a.InstanceID.Prefix() != id.PrefixInstance || !plainToken(a.TenantID) || !plainToken(a.Owner) || a.Revision == 0 || a.Revision > math.MaxInt64 || a.LeaseEpoch > math.MaxInt64 || a.ExpectedDesiredRevision == 0 || a.ExpectedDesiredRevision > math.MaxInt64 || !plainToken(a.Installation) || !plainToken(a.Authority) || !plainToken(a.ApplicationID) || !plainToken(a.OrganizationID) || !plainToken(a.Actor.Subject) || a.Actor.Unauthenticated || len(a.OriginalCommand) == 0 || len(a.OriginalCommand) > 4096 || Digest(a.OriginalCommand) != a.OriginalDigest || a.OccurredAt.IsZero() || a.OccurredAt.Year() < 1 || a.OccurredAt.Year() > 9999 || a.CanonicalDigest != "" && !hexDigest(a.CanonicalDigest) {
+		return "", ErrInvalid
+	}
+
+	ids := []id.ID{a.ID, q.Predecessor.AttemptID, q.SuccessorAttemptID, q.ProviderOperationID}
+	for i, x := range ids {
+		if x.Prefix() != PrefixOperation {
+			return "", ErrInvalid
+		}
+
+		if slices.Contains(ids[:i], x) {
+			return "", ErrInvalid
+		}
+	}
+
+	type actionInput struct {
+		Key                     Key        `json:"key"`
+		ID                      id.ID      `json:"id"`
+		Revision                Decimal    `json:"revision"`
+		LeaseEpoch              Decimal    `json:"lease_epoch"`
+		Owner                   string     `json:"owner"`
+		Kind                    ActionKind `json:"kind"`
+		Installation            string     `json:"installation"`
+		Authority               string     `json:"authority"`
+		ApplicationID           string     `json:"application_id"`
+		OrganizationID          string     `json:"organization_id"`
+		Actor                   AuditActor `json:"actor"`
+		OriginalCommand         []byte     `json:"original_command"`
+		OriginalDigest          string     `json:"original_digest"`
+		ExpectedDesiredRevision Decimal    `json:"expected_desired_revision"`
+		NewTarget               *struct{}  `json:"new_target"`
+		ReleaseID               string     `json:"release_id"`
+		RollbackReleaseID       string     `json:"rollback_release_id"`
+		OccurredAt              time.Time  `json:"occurred_at"`
+	}
+
+	type auditInput struct {
+		MappingVersion Decimal    `json:"mapping_version"`
+		SourceKey      string     `json:"source_key"`
+		Scope          AuditScope `json:"scope"`
+		Action         string     `json:"action"`
+		ResourceKind   string     `json:"resource_kind"`
+		ResourceID     string     `json:"resource_id"`
+		Outcome        string     `json:"outcome"`
+		Reason         string     `json:"reason"`
+		SelectorDigest string     `json:"selector_digest"`
+		DecisionID     string     `json:"decision_id"`
+		CorrelationID  string     `json:"correlation_id"`
+	}
+
+	w := continuationAction(a)
+
+	raw, e := json.Marshal(struct {
+		SchemaVersion       string      `json:"schema_version"`
+		Action              actionInput `json:"action"`
+		Predecessor         AttemptRef  `json:"predecessor"`
+		SuccessorAttemptID  id.ID       `json:"successor_attempt_id"`
+		SuccessorGeneration Decimal     `json:"successor_generation"`
+		ProviderOperationID id.ID       `json:"provider_operation_id"`
+		Audit               auditInput  `json:"audit"`
+	}{"1", actionInput{w.Key, w.ID, w.Revision, w.LeaseEpoch, w.Owner, w.Kind, w.Installation, w.Authority, w.ApplicationID, w.OrganizationID, w.Actor, w.OriginalCommand, w.OriginalDigest, w.ExpectedDesiredRevision, nil, "", "", w.OccurredAt}, q.Predecessor, q.SuccessorAttemptID, Decimal(strconv.FormatUint(generation+1, 10)), q.ProviderOperationID, auditInput{"1", a.ID.String(), AuditScope{Kind: "tenant", TenantID: a.TenantID}, "managed.continue", "instance", a.InstanceID.String(), "allowed", "authorized", "", "", ""}})
+	if e != nil {
+		return "", e
+	}
+
+	return Digest(append([]byte("ctrlplane.managed.removal-continuation.v1\n"), raw...)), nil
+}
+
+type continuationActionReceiptWire struct {
+	ID              id.ID     `json:"id"`
+	Key             Key       `json:"key"`
+	Target          Key       `json:"target"`
+	CanonicalDigest string    `json:"canonical_digest"`
+	OriginalDigest  string    `json:"original_digest"`
+	Revision        Decimal   `json:"revision"`
+	DesiredRevision Decimal   `json:"desired_revision"`
+	AuditID         id.ID     `json:"audit_id"`
+	AcceptedAt      time.Time `json:"accepted_at"`
+}
+
+// MarshalJSON retains receipt counters as canonical decimal strings.
+func (v ContinuationReceipt) MarshalJSON() ([]byte, error) {
+	a := v.ActionReceipt
+	if !a.ReleaseID.IsNil() {
+		return nil, ErrInvalid
+	}
+
+	return json.Marshal(struct {
+		Receipt             WireReceipt                   `json:"receipt"`
+		ActionReceipt       continuationActionReceiptWire `json:"action_receipt"`
+		Successor           AttemptRef                    `json:"successor"`
+		ProviderOperationID id.ID                         `json:"provider_operation_id"`
+	}{ReceiptWire(v.Receipt), continuationActionReceiptWire{a.ID, a.Key, a.Target, a.CanonicalDigest, a.OriginalDigest, Decimal(strconv.FormatUint(a.Revision, 10)), Decimal(strconv.FormatUint(a.DesiredRevision, 10)), a.AuditID, a.AcceptedAt}, v.Successor, v.ProviderOperationID})
+}
+
+// UnmarshalJSON validates exact decimal receipt encodings.
+func (v *ContinuationReceipt) UnmarshalJSON(raw []byte) error {
+	if len(raw) > MaxRemovalContinuationReceipt {
+		return ErrInvalid
+	}
+
+	var w struct {
+		Receipt             WireReceipt                   `json:"receipt"`
+		ActionReceipt       continuationActionReceiptWire `json:"action_receipt"`
+		Successor           AttemptRef                    `json:"successor"`
+		ProviderOperationID id.ID                         `json:"provider_operation_id"`
+	}
+	if e := strictObject(raw, &w); e != nil {
+		return e
+	}
+
+	r, e := w.Receipt.Value()
+	if e != nil {
+		return e
+	}
+
+	a := w.ActionReceipt
+
+	rev, e := a.Revision.Uint64()
+	if e != nil || rev == 0 || rev > math.MaxInt64 {
+		return ErrInvalid
+	}
+
+	desired, e := a.DesiredRevision.Uint64()
+	if e != nil || desired == 0 || desired > math.MaxInt64 {
+		return ErrInvalid
+	}
+
+	value := ContinuationReceipt{r, ActionReceipt{ID: a.ID, Key: a.Key, Target: a.Target, CanonicalDigest: a.CanonicalDigest, OriginalDigest: a.OriginalDigest, Revision: rev, DesiredRevision: desired, AuditID: a.AuditID, AcceptedAt: a.AcceptedAt}, w.Successor, w.ProviderOperationID}
+
+	canonical, e := value.MarshalJSON()
+	if e != nil || !bytes.Equal(raw, canonical) {
+		return ErrInvalid
+	}
+
+	*v = value
 
 	return nil
 }

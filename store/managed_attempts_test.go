@@ -32,13 +32,14 @@ import (
 )
 
 type removalFixture struct {
-	t            *testing.T
-	s            *quiescenceActionStore
-	key          managed.AttemptKey
-	provider     id.ID
-	reservations []id.ID
-	observations []managed.QuiescenceAcceptanceRequest
-	batches      []managed.QuiescenceBatchAcceptanceRequest
+	maximumEvidence bool
+	t               *testing.T
+	s               *quiescenceActionStore
+	key             managed.AttemptKey
+	provider        id.ID
+	reservations    []id.ID
+	observations    []managed.QuiescenceAcceptanceRequest
+	batches         []managed.QuiescenceBatchAcceptanceRequest
 }
 
 func newRemovalFixture(t *testing.T, backend string) *removalFixture {
@@ -81,14 +82,29 @@ func newRemovalFixture(t *testing.T, backend string) *removalFixture {
 	return &removalFixture{t: t, s: s, key: managed.AttemptKey{Key: a.Command.Key, AttemptID: receipt.AttemptID, Generation: "1"}, provider: receipt.ProviderOperationID, observations: observations, reservations: []id.ID{a.Command.ReservationID, b.Command.ReservationID}}
 }
 func (f *removalFixture) request() managed.AttemptRequest {
-	return managed.AttemptRequest{Command: quiescenceCommand(f.t, f.s, f.key.Key), AttemptID: f.key.AttemptID, Generation: "1"}
+	return managed.AttemptRequest{Command: quiescenceCommand(f.t, f.s, f.key.Key), AttemptID: f.key.AttemptID, Generation: f.key.Generation}
 }
 func (f *removalFixture) command(rid id.ID, kind string) managed.AttemptCommandGrant {
 	f.t.Helper()
 
 	raw := []byte("synthetic-original-" + kind)
 	native := []byte("synthetic-native-" + kind)
+
+	if f.maximumEvidence {
+		raw = bytes.Repeat([]byte{0xff}, managed.MaxEvidence)
+		native = bytes.Repeat([]byte{0xfe}, managed.MaxEvidence)
+	}
+
 	q := managed.AttemptCommandRequest{AttemptRequest: f.request(), ReservationID: rid, Kind: kind, ExpectedNativeVersion: "1", NativeCommand: managed.PortCommand{SchemaVersion: "1", OperationID: id.New(managed.PrefixOperation), RequestID: "original-" + rid.String() + kind, Original: raw, OriginalDigest: managed.Digest(raw), Native: native, NativeDigest: managed.Digest(native)}}
+
+	if f.key.Generation != "1" {
+		if kind == managed.AttemptBegin {
+			q.CurrentBinding = successorCommandProof(f.t, f, rid)
+			q.ExpectedNativeVersion = q.CurrentBinding.BindingVersion
+		} else {
+			q.ExpectedNativeVersion = "11"
+		}
+	}
 
 	grant, err := f.s.AuthorizeManagedAttemptCommand(f.t.Context(), q)
 	if err != nil {
@@ -112,12 +128,28 @@ func (f *removalFixture) acceptance(c managed.AttemptCommandRecord) managed.Atte
 	receipt := []byte("synthetic-native-receipt-" + c.Key.Kind)
 	proof := []byte("synthetic-authenticated-binding-proof")
 
-	return managed.AttemptNativeAcceptance{NativeAcceptance: managed.AttemptNativeFacts{RequestID: c.NativeCommand.RequestID, RequestDigest: c.NativeCommand.NativeDigest, CommandDigest: managed.Digest([]byte("operator-command")), ResponseVersion: "1", BindingVersion: "1", RemovalEpoch: "1", AcceptedAt: quiescenceClock(f.t, f.s)}, NativeFenceDigest: managed.Digest([]byte("native-fence-" + c.Key.ReservationID.String())), ReceiptID: "accepted-" + c.Key.Kind, Receipt: receipt, ReceiptDigest: managed.Digest(receipt), OriginalBindingProof: proof, ProofDigest: managed.Digest(proof)}
+	if f.maximumEvidence {
+		receipt = bytes.Repeat([]byte{0xff}, managed.MaxEvidence)
+		proof = bytes.Repeat([]byte{0xfe}, managed.MaxEvidence)
+	}
+
+	result := managed.AttemptNativeAcceptance{NativeAcceptance: managed.AttemptNativeFacts{RequestID: c.NativeCommand.RequestID, RequestDigest: c.NativeCommand.NativeDigest, CommandDigest: managed.Digest([]byte("operator-command")), ResponseVersion: "1", BindingVersion: "1", RemovalEpoch: "1", AcceptedAt: quiescenceClock(f.t, f.s)}, NativeFenceDigest: managed.Digest([]byte("native-fence-" + c.Key.ReservationID.String())), ReceiptID: "accepted-" + c.Key.Kind, Receipt: receipt, ReceiptDigest: managed.Digest(receipt), OriginalBindingProof: proof, ProofDigest: managed.Digest(proof)}
+	if f.key.Generation != "1" {
+		result.NativeAcceptance.BindingVersion = "11"
+		result.NativeAcceptance.RemovalEpoch = "5"
+	}
+
+	return result
 }
 func (f *removalFixture) fence(rid id.ID) managed.AttemptCommandGrant {
 	f.t.Helper()
 	grant := f.command(rid, managed.AttemptBegin)
+
 	proof := []byte("opaque-fence-" + rid.String())
+	if f.maximumEvidence {
+		proof = bytes.Repeat([]byte{0xfd}, managed.MaxEvidence)
+	}
+
 	q := managed.AttemptFenceRequest{AttemptRequest: f.request(), ReservationID: rid, Acceptance: f.acceptance(grant.Command), Fence: managed.FenceWire(managed.Fence{CompatibilityEvidence: []byte("retired"), Epoch: 1, Evidence: proof, Digest: managed.Digest(proof), ValidUntil: quiescenceClock(f.t, f.s).Add(time.Hour), Survivors: []string{"off-instance"}})}
 
 	receipt, err := f.s.RecordManagedAttemptFence(f.t.Context(), q)
@@ -297,7 +329,7 @@ func TestManagedAttemptLegacyAndUnsupported(t *testing.T) {
 	newer := f.key
 
 	newer.Generation = "2"
-	if _, err = f.s.ReadManagedRemovalAttempt(t.Context(), newer); !errors.Is(err, managed.ErrUnsupported) {
+	if _, err = f.s.ReadManagedRemovalAttempt(t.Context(), newer); !errors.Is(err, managed.ErrAuthority) {
 		t.Fatalf("generation2: %v", err)
 	}
 
@@ -511,8 +543,13 @@ func removalActionFixture(t *testing.T, authority managedservice.Authority, acti
 
 	return removalActionSetup(t, authority, action, copies, true)
 }
-func removalActionSetup(t *testing.T, authority managedservice.Authority, action managed.ActionSubmission, copies int, startAttempt bool) (*removalFixture, *managedFixture) {
+func removalActionSetup(t *testing.T, authority managedservice.Authority, action managed.ActionSubmission, copies int, startAttempt bool, nativeValidity ...time.Duration) (*removalFixture, *managedFixture) {
 	t.Helper()
+
+	nativeWindow := time.Minute
+	if len(nativeValidity) > 0 {
+		nativeWindow = nativeValidity[0]
+	}
 
 	if _, err := authority.SubmitManagedAction(t.Context(), action); err != nil {
 		t.Fatal(err)
@@ -539,7 +576,7 @@ func removalActionSetup(t *testing.T, authority managedservice.Authority, action
 	}
 
 	parent.must(authority.BindManagedResources(t.Context(), managed.ResourcesRequest{Command: parent.command(), OperationID: action.NewTarget.ProvisionOperationID, Receipt: []byte("full provider fixture result"), Resources: resources}))
-	f := &removalFixture{t: t, s: &quiescenceActionStore{Authority: authority, t: t, action: action}}
+	f := &removalFixture{t: t, s: &quiescenceActionStore{Authority: authority, t: t, action: action}, maximumEvidence: len(nativeValidity) > 0}
 
 	var roles managed.ManagedSpec
 	if err = json.Unmarshal(action.NewTarget.Manifest.Spec, &roles); err != nil {
@@ -552,10 +589,15 @@ func removalActionSetup(t *testing.T, authority managedservice.Authority, action
 			reg := parent.reserve(member.Name, "runtime-"+strconv.Itoa(n)+"-"+strconv.Itoa(copyIndex))
 			parent.must(authority.IssueManagedRegistration(t.Context(), managed.ReservationRequest{Command: parent.command(), ReservationID: reg.ID}))
 			stamp := quiescenceClock(t, authority).Add(-time.Millisecond)
+
 			raw := []byte("original registration storage fixture")
+			if f.maximumEvidence {
+				raw = bytes.Repeat([]byte{0xff}, managed.MaxEvidence)
+			}
+
 			c := originalCommand(t, authority, action.Key)
 			c.ReservationID = reg.ID
-			process := managed.OriginalProcessFacts{Installation: member.Installation, Namespace: member.Namespace, Build: member.Build, Queue: member.Queue, RuntimeID: reg.RuntimeID, InstanceID: reg.InstanceID, HostID: reg.HostID, IdentityVersion: "1", ArtifactDigest: member.ArtifactDigest, ConfigurationDigest: member.ConfigurationDigest, ConfigurationVersion: "config-v1", EnrollmentEvidenceDigest: managed.Digest([]byte("enrollment")), ProbePolicyID: "policy", ProbePolicyVersion: "1", MaximumProofValidityNS: "60000000000", VerifierID: "native-verifier", Descriptor: spec.Services[n].Startup, ProducerVerifier: "trusted-descriptor-verifier"}
+			process := managed.OriginalProcessFacts{Installation: member.Installation, Namespace: member.Namespace, Build: member.Build, Queue: member.Queue, RuntimeID: reg.RuntimeID, InstanceID: reg.InstanceID, HostID: reg.HostID, IdentityVersion: "1", ArtifactDigest: member.ArtifactDigest, ConfigurationDigest: member.ConfigurationDigest, ConfigurationVersion: "config-v1", EnrollmentEvidenceDigest: managed.Digest([]byte("enrollment")), ProbePolicyID: "policy", ProbePolicyVersion: "1", MaximumProofValidityNS: managed.Decimal(strconv.FormatInt(int64(nativeWindow), 10)), VerifierID: "native-verifier", Descriptor: spec.Services[n].Startup, ProducerVerifier: "trusted-descriptor-verifier"}
 
 			q := managed.OriginalRegistrationAcceptanceRequest{Command: c, Facts: managed.OriginalRegistrationFacts{Process: process, Native: managed.OriginalNativeAcceptance{Operation: "query_runtime.register", RequestID: reg.RequestID, RequestDigest: managed.Digest([]byte("native request")), CommandDigest: managed.Digest([]byte("operator command")), ResponseVersion: "1", DeliveryID: "delivery", AcceptedAt: stamp}, Member: member.Name, Role: role, StoredCommandDigest: reg.CommandDigest, BindingVersion: "1", BindingState: "active", RemovalEpoch: "0", CreatedAt: stamp, ChangedAt: stamp}, NativeReceipt: raw, NativeReceiptDigest: managed.Digest(raw)}
 			if _, err = authority.AcceptManagedOriginalRegistration(t.Context(), q); err != nil {
@@ -563,6 +605,11 @@ func removalActionSetup(t *testing.T, authority managedservice.Authority, action
 			}
 			{
 				d := originalDrain(t, authority, q)
+				if f.maximumEvidence {
+					d.NativeReceipt = bytes.Repeat([]byte{0xfe}, managed.MaxEvidence)
+					d.NativeReceiptDigest = managed.Digest(d.NativeReceipt)
+				}
+
 				if _, err = authority.RecordManagedOriginalDrain(t.Context(), d); err != nil {
 					t.Fatal(err)
 				}

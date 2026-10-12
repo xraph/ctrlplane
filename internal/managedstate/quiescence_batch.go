@@ -333,7 +333,7 @@ func (r *Repository) ReadManagedQuiescenceBatch(ctx context.Context, k managed.Q
 			return e
 		}
 
-		v, e := selectedAttempt(ctx, tx, t)
+		v, e := historicalBatchAttemptHeld(ctx, tx, t, k)
 		if e != nil {
 			return e
 		}
@@ -384,7 +384,7 @@ func RunHeldQuiescenceObservationBatch(ctx context.Context, tx ControllerTransac
 			return out, batchMissing(receiptErr)
 		}
 
-		v, e := selectedAttempt(ctx, tx, t)
+		v, e := historicalBatchAttemptHeld(ctx, tx, t, managed.QuiescenceBatchKey{Key: q.Command.Key, BatchID: q.Command.ID})
 		if e != nil {
 			return out, e
 		}
@@ -445,6 +445,16 @@ func RunHeldQuiescenceObservationBatch(ctx context.Context, tx ControllerTransac
 
 		if row == nil {
 			return out, managed.ErrConflict
+		}
+	}
+
+	if err = removalLocalIDAvailable(ctx, tx, q.Command.ID); err != nil {
+		return out, err
+	}
+
+	for _, entry := range q.Entries {
+		if err = removalLocalIDAvailable(ctx, tx, entry.OperationID); err != nil {
+			return out, err
 		}
 	}
 
@@ -512,7 +522,7 @@ func RunHeldQuiescenceObservationBatch(ctx context.Context, tx ControllerTransac
 	}
 
 	for _, entry := range q.Entries {
-		if e := originalDrainFreshEligibility(t, entry.Observation.Reference.ReservationID); e != nil {
+		if e := successorObservationEligibilityHeld(ctx, tx, t, v, entry.Observation.Reference.ReservationID); e != nil {
 			return out, e
 		}
 
@@ -521,7 +531,7 @@ func RunHeldQuiescenceObservationBatch(ctx context.Context, tx ControllerTransac
 			return out, e
 		}
 
-		if binding.Phase != managed.Accepted || binding.Abort != nil || entry.Observation.ObservedAt.After(now) || !now.Before(entry.Observation.ValidUntil) {
+		if binding.Phase != managed.Accepted || v.descriptor.Generation == "1" && binding.Abort != nil || entry.Observation.ObservedAt.After(now) || !now.Before(entry.Observation.ValidUntil) {
 			return out, managed.ErrBlocked
 		}
 	}
@@ -653,3 +663,26 @@ func RunHeldQuiescenceObservationBatch(ctx context.Context, tx ControllerTransac
 }
 
 var _ managed.QuiescenceBatchStore = (*Repository)(nil)
+
+func historicalBatchAttemptHeld(ctx context.Context, tx ControllerTransaction, t *managed.Target, k managed.QuiescenceBatchKey) (attemptView, error) {
+	scope, err := managed.QuiescenceBatchScope(k.Key)
+	if err != nil {
+		return attemptView{}, err
+	}
+
+	record, err := attemptRead[quiescenceBatchRecord](ctx, tx, managed.QuiescenceBatchHistory, scope, k.BatchID.String(), managed.MaxControllerRecord)
+	if err != nil {
+		return attemptView{}, err
+	}
+
+	v, err := readAttempt(ctx, tx, t, managed.AttemptKey{Key: k.Key, AttemptID: record.Attempt.AttemptID, Generation: record.Attempt.Generation})
+	if err != nil {
+		return v, err
+	}
+
+	if v.ref != record.Attempt {
+		return attemptView{}, managed.ErrUnavailable
+	}
+
+	return v, nil
+}
