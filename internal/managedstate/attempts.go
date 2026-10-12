@@ -541,12 +541,12 @@ func (*attemptCheckedReads) ReadImmutableReceipts(context.Context, managed.Key, 
 }
 
 func (v *attemptCheckedReads) prefetchRecords(ctx context.Context, keys []ControllerRecordKey) error {
-	return v.prefetchSelectedRecords(ctx, keys, false)
+	return v.prefetchSelectedRecords(ctx, keys, false, nil)
 }
 func (v *attemptCheckedReads) prefetchHeldRecords(ctx context.Context, keys []ControllerRecordKey) error {
-	return v.prefetchSelectedRecords(ctx, keys, true)
+	return v.prefetchSelectedRecords(ctx, keys, true, nil)
 }
-func (v *attemptCheckedReads) prefetchSelectedRecords(ctx context.Context, keys []ControllerRecordKey, held bool) error {
+func (v *attemptCheckedReads) prefetchSelectedRecords(ctx context.Context, keys []ControllerRecordKey, held bool, presence map[ControllerRecordKey]bool) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -606,6 +606,11 @@ func (v *attemptCheckedReads) prefetchSelectedRecords(ctx context.Context, keys 
 			}
 
 			seen[row.ControllerRecordKey] = true
+			// Preserve provider presence refusal before payload caps or discovery decoding.
+			if wanted, checked := presence[row.ControllerRecordKey]; checked && row.Found != wanted {
+				return managed.ErrUnavailable
+			}
+
 			if row.Size > limit(row.Kind) {
 				if row.Kind == managed.OriginalRegistration || held && (row.Kind == "step" || row.Kind == "step_history") {
 					return managed.ErrUnavailable
@@ -872,25 +877,33 @@ func (reads *attemptCheckedReads) prefetchProviders(ctx context.Context, t *mana
 		return err
 	}
 
-	if len(steps) > 33 {
+	if len(steps) > 33 || len(steps) > len(v.state.ProviderSlots) {
 		return managed.ErrUnavailable
 	}
 
 	keys := make([]ControllerRecordKey, 0, 3*len(steps))
 
+	presence := make(map[ControllerRecordKey]bool, 3*len(steps))
+
 	associations := make([]ControllerRecordKey, 0, len(steps))
-	for _, step := range steps {
+	for index, step := range steps {
 		slot, e := providerStepID(step)
 		if e != nil {
 			return e
 		}
 
+		provider := ControllerRecordKey{"step", t.TenantID, slot}
 		association := ControllerRecordKey{"removal_provider_slot", v.scope, slot}
-		keys = append(keys, ControllerRecordKey{"step", t.TenantID, slot}, association, ControllerRecordKey{"step_failure", t.TenantID, slot})
+		failure := ControllerRecordKey{"step_failure", t.TenantID, slot}
+		keys = append(keys, provider, association, failure)
 		associations = append(associations, association)
+		mask := v.state.ProviderSlots[index]
+		presence[provider] = mask&attemptPermissionBit != 0
+		presence[association] = mask&attemptPermissionBit != 0
+		presence[failure] = mask&attemptFailureBit != 0
 	}
 
-	if err = reads.prefetchHeldRecords(ctx, keys); err != nil {
+	if err = reads.prefetchSelectedRecords(ctx, keys, true, presence); err != nil {
 		return err
 	}
 

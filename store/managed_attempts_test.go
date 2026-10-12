@@ -3511,3 +3511,73 @@ func TestManagedAttemptPostgresInvalidCommand(t *testing.T) {
 		})
 	}
 }
+
+func TestManagedAttemptPostgresUnexpectedProviderErrorIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		name, kind string
+		size       int
+	}{
+		{"malformed-association", "removal_provider_slot", 2},
+		{"oversized-association", "removal_provider_slot", managed.MaxAttemptAssociation + 1},
+		{"oversized-failure", "step_failure", managed.MaxAttemptSettlement + 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _ := managedPG(t)
+			f, _ := removalActionFixture(t, s, controllerAction(t), 1)
+			key := f.key
+
+			record, err := s.ReadManagedRemovalAttempt(t.Context(), key)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			slotRaw, err := json.Marshal(struct {
+				Key       managed.Key              `json:"key"`
+				Operation id.ID                    `json:"operation"`
+				Kind      managed.ProviderStepKind `json:"kind"`
+				Service   string                   `json:"service"`
+			}{key.Key, record.Descriptor.ProviderOperationID, managed.StepRemoveNetwork, ""})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			slot := managed.Digest(slotRaw)
+			pg := pgdriver.Unwrap(s.DB())
+
+			var scope string
+			if err = pg.NewRaw("SELECT scope FROM cp_managed_controller_records WHERE kind = 'removal_attempt_state' AND key = $1", key.AttemptID.String()).Scan(t.Context(), &scope); err != nil {
+				t.Fatal(err)
+			}
+
+			if tc.kind == "step_failure" {
+				scope = key.TenantID
+			}
+
+			raw := []byte(`{}`)
+			if tc.size > len(raw) {
+				raw = bytes.Repeat([]byte("x"), tc.size)
+			}
+			// This disposable database injects corruption past the storage cap to test reader refusal.
+			if tc.size > 2 {
+				if _, err = pg.Exec(t.Context(), "ALTER TABLE cp_managed_controller_records DROP CONSTRAINT cp_managed_removal_attempt_size"); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			if _, err = pg.Exec(t.Context(), "INSERT INTO cp_managed_controller_records (kind, scope, key, data) VALUES ($1, $2, $3, $4)", tc.kind, scope, slot, raw); err != nil {
+				t.Fatal(err)
+			}
+
+			before := attemptPostgresSnapshot(t, s)
+
+			_, err = s.ReadManagedRemovalAttempt(t.Context(), key)
+			if !reflect.DeepEqual(before, attemptPostgresSnapshot(t, s)) {
+				t.Fatal("refused read mutated retained state")
+			}
+
+			if !errors.Is(err, managed.ErrUnavailable) || errors.Is(err, managed.ErrInvalid) || errors.Is(err, managed.ErrCapacity) {
+				t.Fatal("unexpected provider presence must refuse as unavailable", err)
+			}
+		})
+	}
+}

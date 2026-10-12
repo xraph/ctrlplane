@@ -2835,3 +2835,62 @@ func TestManagedAttemptMemoryHeldBatches(t *testing.T) {
 		t.Fatal("parent changed", err)
 	}
 }
+
+func TestManagedAttemptMemoryUnexpectedProviderErrorIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		name, kind string
+		size       int
+	}{
+		{"malformed-association", "removal_provider_slot", 2},
+		{"oversized-association", "removal_provider_slot", managed.MaxAttemptAssociation + 1},
+		{"oversized-failure", "step_failure", managed.MaxAttemptSettlement + 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _, key, _ := memoryAttemptFixture(t)
+
+			record, err := s.ReadManagedRemovalAttempt(t.Context(), key)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			slotRaw, err := json.Marshal(struct {
+				Key       managed.Key              `json:"key"`
+				Operation id.ID                    `json:"operation"`
+				Kind      managed.ProviderStepKind `json:"kind"`
+				Service   string                   `json:"service"`
+			}{key.Key, record.Descriptor.ProviderOperationID, managed.StepRemoveNetwork, ""})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			slot := managed.Digest(slotRaw)
+
+			scope := memoryAttemptScope(t, key.Key)
+			if tc.kind == "step_failure" {
+				scope = key.TenantID
+			}
+
+			raw := []byte(`{}`)
+			if tc.size > len(raw) {
+				raw = bytes.Repeat([]byte("x"), tc.size)
+			}
+
+			bucket := tc.kind + ":" + scope
+			if s.managedControllerRecords[bucket] == nil {
+				s.managedControllerRecords[bucket] = make(map[string][]byte)
+			}
+
+			s.managedControllerRecords[bucket][slot] = raw
+			before := projectionSnapshot(t, s)
+
+			_, err = s.ReadManagedRemovalAttempt(t.Context(), key)
+			if before != projectionSnapshot(t, s) {
+				t.Fatal("refused read mutated retained state")
+			}
+
+			if !errors.Is(err, managed.ErrUnavailable) || errors.Is(err, managed.ErrInvalid) || errors.Is(err, managed.ErrCapacity) {
+				t.Fatal("unexpected provider presence must refuse as unavailable", err)
+			}
+		})
+	}
+}

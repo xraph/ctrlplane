@@ -933,8 +933,8 @@ func TestAttemptUnissuedProviderBatchBoundary(t *testing.T) {
 			_, _, err = attemptProviderRead(t.Context(), fresh, target, v, steps[0], 0)
 		}
 
-		if err == nil {
-			t.Fatal("fresh validation accepted unexpected zero-mask row", selected.Kind)
+		if !errors.Is(err, managed.ErrUnavailable) {
+			t.Fatal("fresh validation changed unexpected zero-mask refusal", selected.Kind, err)
 		}
 	}
 }
@@ -964,5 +964,31 @@ func TestAttemptSharedImmutableTransport(t *testing.T) {
 	raw, err := reads.ReadRecord(t.Context(), selected.Kind, selected.Scope, selected.Key)
 	if err != nil || string(raw) != "row" || f.rowReads != 0 {
 		t.Fatal("prefetched current binding escaped transport", err)
+	}
+}
+
+func TestAttemptHeldPresenceBeforeCapacity(t *testing.T) {
+	for _, kind := range []string{"removal_provider_slot", "step_failure"} {
+		for _, wanted := range []bool{false, true} {
+			t.Run(kind+"/wanted="+strconv.FormatBool(wanted), func(t *testing.T) {
+				selected := ControllerRecordKey{kind, managed.Digest([]byte("scope")), managed.Digest([]byte("slot"))}
+				f := &attemptBatchFixture{attemptReadFixture: &attemptReadFixture{}, recordRows: []ControllerRecordResult{{ControllerRecordKey: selected, Found: true, Size: HeldRecordLimit(kind) + 1}}}
+				reads := newAttemptCheckedReads(f)
+				err := reads.prefetchSelectedRecords(t.Context(), []ControllerRecordKey{selected}, true, map[ControllerRecordKey]bool{selected: wanted})
+
+				expected := managed.ErrUnavailable
+				if wanted {
+					expected = managed.ErrCapacity
+				}
+
+				if !errors.Is(err, expected) {
+					t.Fatal("presence and capacity precedence", err)
+				}
+
+				if len(reads.heldRows) != 0 || len(reads.heldMissing) != 0 {
+					t.Fatal("refused batch installed values")
+				}
+			})
+		}
 	}
 }
