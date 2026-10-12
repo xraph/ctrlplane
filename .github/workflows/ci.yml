@@ -174,7 +174,36 @@ jobs:
           cache: true
           cache-dependency-path: go.sum
       - name: Verify persistent stores and HTTP contracts
-        run: go test -race -count=1 -timeout=30m -v ./extension/contract ./store ./store/sqlite ./store/postgres ./store/mongo
+        run: |
+          set -euo pipefail
+          mkdir -p managed-maximum-evidence
+          go test -race -count=1 -timeout=30m -json ./extension/contract ./store ./store/sqlite ./store/postgres ./store/mongo | tee managed-maximum-evidence/fix1-persistent-race.jsonl
+
+      - name: Qualify successor fix boundaries in Memory and codecs
+        env:
+          GOMAXPROCS: "2"
+          GOFLAGS: -p=1
+        run: |
+          set -euo pipefail
+          go test -race -json ./managed ./store/memory -run '^(TestRemovalContinuationCapPlusOne|TestManagedRemovalContinuationMemory(MissingHistoricalLink|ParentBoundary|CounterBounds|GenerationBoundary|ExpiredFinish|StorageCaps))$' -count=1 -timeout=30m | tee managed-maximum-evidence/fix1-memory-race.jsonl
+          python3 - <<'PYCODE'
+          import json
+          from pathlib import Path
+          base = Path("managed-maximum-evidence")
+          store = "github.com/xraph/ctrlplane/store"
+          cases = ["MissingHistoricalLink", "ParentBoundary", "CounterBounds", "GenerationBoundary", "ExpiredFinish", "StorageCaps"]
+          expected = {(store + "/memory", "TestManagedRemovalContinuationMemory" + case) for case in cases}
+          expected.update((store, "TestManagedRemovalContinuationPostgres" + case) for case in cases)
+          expected.update((store, name) for name in ["TestManagedRemovalContinuationRecoveryIdentity", "TestManagedRemovalContinuationInputCaps", "TestManagedRemovalContinuationPostgresUncertainReopen"])
+          expected.add(("github.com/xraph/ctrlplane/managed", "TestRemovalContinuationCapPlusOne"))
+          expected.update((store, "TestManagedRemovalContinuationPostgresUncertainReopen/" + mode) for mode in ["persisted", "absent"])
+          rows = [json.loads(line) for name in ["fix1-persistent-race", "fix1-memory-race"] for line in (base / (name + ".jsonl")).read_text().splitlines()]
+          passed = {(row.get("Package"), row.get("Test")) for row in rows if row.get("Action") == "pass"}
+          failed = [row for row in rows if row.get("Action") in {"skip", "fail"} and any(row.get("Package") == package and (row.get("Test", "") == test or row.get("Test", "").startswith(test + "/")) for package, test in expected)]
+          if expected - passed or failed:
+              raise SystemExit("Incomplete successor fix qualification")
+          (base / "fix1-coverage-audit.json").write_text(json.dumps({"required_passes": sorted(expected), "skipped_or_failed": failed}, indent=2) + "\n")
+          PYCODE
 
       - name: Qualify maximum individual removal lifecycle
         env:

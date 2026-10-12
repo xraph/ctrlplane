@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -186,5 +187,63 @@ func TestRemovalContinuationDigestGolden(t *testing.T) {
 	digest, err := RemovalContinuationDigest(q)
 	if err != nil || digest != "14de44beba092c97591fc146efc9c7626aa85c9ac20d577b62a328f0aaa7e87e" {
 		t.Fatalf("golden digest %s: %v", digest, err)
+	}
+}
+
+func TestRemovalContinuationCapPlusOne(t *testing.T) {
+	for _, entry := range []struct {
+		name   string
+		limit  int
+		decode func([]byte) error
+	}{
+		{"request", MaxRemovalContinuationRequest, func(raw []byte) error {
+			q := continuationDigestFixture()
+
+			before := q
+			if err := q.UnmarshalJSON(raw); !errors.Is(err, ErrInvalid) {
+				return err
+			}
+
+			if !reflect.DeepEqual(q, before) {
+				t.Fatal("request changed")
+			}
+
+			return ErrInvalid
+		}},
+		{"receipt", MaxRemovalContinuationReceipt, func(raw []byte) error {
+			q := ContinuationReceipt{Successor: AttemptRef{Generation: "7"}}
+
+			before := q
+			if err := q.UnmarshalJSON(raw); !errors.Is(err, ErrInvalid) {
+				return err
+			}
+
+			if !reflect.DeepEqual(q, before) {
+				t.Fatal("receipt changed")
+			}
+
+			return ErrInvalid
+		}},
+	} {
+		t.Run(entry.name, func(t *testing.T) {
+			raw := append([]byte("{}"), bytes.Repeat([]byte(" "), entry.limit-1)...)
+			if len(raw) != entry.limit+1 || !json.Valid(raw) {
+				t.Fatal("raw fixture")
+			}
+
+			if err := entry.decode(raw); !errors.Is(err, ErrInvalid) {
+				t.Fatal("cap+1 accepted", err)
+			}
+
+			t.Logf("raw bytes=%d cap=%d; oversized malformed canonical input, not a valid maximum object", len(raw), entry.limit)
+		})
+	}
+
+	q := continuationDigestFixture()
+	q.Action.OriginalCommand = bytes.Repeat([]byte("x"), 4097)
+
+	q.Action.OriginalDigest = Digest(q.Action.OriginalCommand)
+	if _, err := RemovalContinuationDigest(q); !errors.Is(err, ErrInvalid) {
+		t.Fatal("raw command cap+1", err)
 	}
 }

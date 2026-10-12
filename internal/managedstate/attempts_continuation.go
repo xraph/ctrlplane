@@ -324,6 +324,10 @@ func readAttempt(ctx context.Context, tx ControllerTransaction, t *managed.Targe
 	}
 
 	for _, v := range []attemptView{currentView, selected} {
+		if v.ref != current.AttemptRef && v.state.Successor == nil {
+			return empty, managed.ErrUnavailable
+		}
+
 		if v.descriptor.Generation != "1" {
 			record, e := readLink(v.descriptor.ActionID)
 			if e != nil {

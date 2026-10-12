@@ -1,12 +1,14 @@
 package memory
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"math"
 	"os"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -15,6 +17,7 @@ import (
 	"github.com/xraph/ctrlplane/id"
 	"github.com/xraph/ctrlplane/internal/managedstate"
 	"github.com/xraph/ctrlplane/managed"
+	"github.com/xraph/ctrlplane/store/internal/continuationtest"
 )
 
 func memoryAttemptRequest(t *testing.T, s *Store, action managed.ActionSubmission) managed.AttemptRequest {
@@ -2282,4 +2285,458 @@ func (b continuationAbsentCommitBackend) ControllerAtomic(ctx context.Context, s
 
 		return managed.ErrUnavailable
 	})
+}
+
+func TestManagedRemovalContinuationMemoryMissingHistoricalLink(t *testing.T) {
+	s, q := memoryContinuationInput(t)
+
+	var (
+		selected managed.AttemptKey
+		replay   managed.ContinuationRequest
+	)
+
+	for n := 2; n <= 5; n++ {
+		got, err := s.BeginManagedRemovalContinuation(t.Context(), q)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		key := managed.AttemptKey{Key: q.Action.Key, AttemptID: got.Successor.AttemptID, Generation: got.Successor.Generation}
+		if n == 3 {
+			selected = key
+			replay = q
+		}
+
+		if n == 5 {
+			break
+		}
+
+		if _, err = s.RevokeManagedRemovalAttempt(t.Context(), managed.AttemptRequest{Command: projectionCommand(t, s, key.Key), AttemptID: key.AttemptID, Generation: key.Generation}); err != nil {
+			t.Fatal(err)
+		}
+
+		q.Action.Command = projectionCommand(t, s, key.Key)
+		q.Predecessor = got.Successor
+		q.SuccessorAttemptID = id.New(managed.PrefixOperation)
+		q.ProviderOperationID = id.New(managed.PrefixOperation)
+		q.Action.CanonicalDigest = ""
+
+		q.Action.CanonicalDigest, err = managed.RemovalContinuationDigest(q)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if _, err := s.ReadManagedRemovalAttempt(t.Context(), selected); err != nil {
+		t.Fatal("valid history", err)
+	}
+
+	rows := s.managedControllerRecords["removal_attempt_state:"+memoryAttemptScope(t, selected.Key)]
+
+	var state managed.AttemptState
+	if err := json.Unmarshal(rows[selected.AttemptID.String()], &state); err != nil {
+		t.Fatal(err)
+	}
+
+	state.Successor = nil
+	state.ClosureDigest = ""
+
+	raw, err := json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rows[selected.AttemptID.String()] = raw
+
+	before := projectionSnapshot(t, s)
+	if _, err = s.ReadManagedRemovalAttempt(t.Context(), selected); !errors.Is(err, managed.ErrUnavailable) {
+		t.Error("missing selected closure accepted", err)
+	}
+
+	if got, e := s.BeginManagedRemovalContinuation(t.Context(), replay); !errors.Is(e, managed.ErrUnavailable) || !reflect.DeepEqual(got, managed.ContinuationReceipt{}) {
+		t.Error("damaged historical replay accepted", e)
+	}
+
+	if projectionSnapshot(t, s) != before {
+		t.Fatal("damaged graph repaired")
+	}
+}
+
+func TestManagedRemovalContinuationMemoryParentBoundary(t *testing.T) {
+	s, action, _ := memoryAttemptFullSetup(t)
+	if _, err := s.BeginManagedRemovalAttempt(t.Context(), managed.AttemptStartRequest{Command: projectionCommand(t, s, action.Key), ActionID: action.ID, AttemptID: id.New(managed.PrefixOperation), ProviderOperationID: id.New(managed.PrefixOperation), VerifierID: "provider"}); err != nil {
+		t.Fatal(err)
+	}
+
+	first := memoryAttemptRequest(t, s, action)
+	if _, err := s.RevokeManagedRemovalAttempt(t.Context(), first); err != nil {
+		t.Fatal(err)
+	}
+
+	record, err := s.ReadManagedRemovalAttempt(t.Context(), managed.AttemptKey{Key: action.Key, AttemptID: first.AttemptID, Generation: first.Generation})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, headroom := range []uint64{489, 490} {
+		s.managedTargets[action.InstanceID.String()].Revision = math.MaxInt64 - headroom
+		action.Command = projectionCommand(t, s, action.Key)
+		action.Kind = managed.ActionContinue
+		action.NewTarget = nil
+		action.ReleaseID = id.Nil
+		action.RollbackReleaseID = id.Nil
+		action.CanonicalDigest = ""
+		action.ExpectedDesiredRevision = s.managedTargets[action.InstanceID.String()].DesiredRevision
+		action.OriginalCommand = []byte("continue")
+		action.OriginalDigest = managed.Digest(action.OriginalCommand)
+		q := managed.ContinuationRequest{Action: action, Predecessor: record.State.AttemptRef, SuccessorAttemptID: id.New(managed.PrefixOperation), ProviderOperationID: id.New(managed.PrefixOperation)}
+
+		q.Action.CanonicalDigest, err = managed.RemovalContinuationDigest(q)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		before := projectionSnapshot(t, s)
+
+		got, e := s.BeginManagedRemovalContinuation(t.Context(), q)
+		if headroom == 489 {
+			if !errors.Is(e, managed.ErrCapacity) || !reflect.DeepEqual(got, managed.ContinuationReceipt{}) || projectionSnapshot(t, s) != before {
+				t.Fatal("489 boundary", e)
+			}
+		} else if e != nil || got.Receipt.Revision != math.MaxInt64-489 || got.Successor.Generation != "2" {
+			t.Fatal("490 boundary", e)
+		}
+
+		t.Logf("synthetic parent seed=%d headroom=%d N=64 S=33 accepted=%t", math.MaxInt64-headroom, headroom, e == nil)
+	}
+}
+
+func TestManagedRemovalContinuationMemoryCounterBounds(t *testing.T) {
+	s, q := memoryContinuationInput(t)
+
+	got, err := s.BeginManagedRemovalContinuation(t.Context(), q)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	key := managed.AttemptKey{Key: q.Action.Key, AttemptID: got.Successor.AttemptID, Generation: got.Successor.Generation}
+	opKey := managed.OperationKey{Key: key.Key, ActionID: q.Action.ID}
+
+	op, err := s.ReadManagedOperation(t.Context(), opKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	op.Revision = math.MaxInt64 - 1
+
+	raw, err := json.Marshal(op)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s.managedControllerRecords["operation:"+key.TenantID][q.Action.ID.String()] = raw
+	if _, err = s.ReadManagedOperation(t.Context(), opKey); err != nil {
+		t.Fatal("seeded journal invalid", err)
+	}
+
+	advance := managed.OperationAdvance{Command: projectionCommand(t, s, key.Key), ActionID: q.Action.ID, ExpectedOperationRevision: op.Revision, Observation: managed.OperationObservation{Kind: "pending", ObservedAt: time.Now().UTC()}}
+
+	before := projectionSnapshot(t, s)
+	if _, err = s.AdvanceManagedOperation(t.Context(), advance); !errors.Is(err, managed.ErrCapacity) || projectionSnapshot(t, s) != before {
+		t.Fatal("journal consumed final slot", err)
+	}
+
+	advance.Observation.Kind = "completed"
+
+	terminal, err := s.AdvanceManagedOperation(t.Context(), advance)
+	if err != nil || terminal.Revision != math.MaxInt64 {
+		t.Fatal("final journal slot", err)
+	}
+
+	before = projectionSnapshot(t, s)
+
+	replay, err := s.AdvanceManagedOperation(t.Context(), advance)
+	if err != nil || !reflect.DeepEqual(replay, terminal) || projectionSnapshot(t, s) != before {
+		t.Fatal("terminal replay", err)
+	}
+
+	advance.Command = projectionCommand(t, s, key.Key)
+
+	advance.ExpectedOperationRevision = math.MaxInt64
+	if _, err = s.AdvanceManagedOperation(t.Context(), advance); !errors.Is(err, managed.ErrCapacity) || projectionSnapshot(t, s) != before {
+		t.Fatal("journal overflow", err)
+	}
+
+	if _, err = s.RevokeManagedRemovalAttempt(t.Context(), managed.AttemptRequest{Command: projectionCommand(t, s, key.Key), AttemptID: key.AttemptID, Generation: key.Generation}); err != nil {
+		t.Fatal(err)
+	}
+
+	rows := s.managedControllerRecords["removal_attempt_state:"+memoryAttemptScope(t, key.Key)]
+
+	var state managed.AttemptState
+	if err = json.Unmarshal(rows[key.AttemptID.String()], &state); err != nil {
+		t.Fatal(err)
+	}
+
+	state.Revision = managed.Decimal(strconv.FormatInt(math.MaxInt64, 10))
+
+	raw, err = json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rows[key.AttemptID.String()] = raw
+	if _, err = s.ReadManagedRemovalAttempt(t.Context(), key); err != nil {
+		t.Fatal("seeded attempt invalid", err)
+	}
+
+	q.Action.Command = projectionCommand(t, s, key.Key)
+	q.Predecessor = got.Successor
+	q.SuccessorAttemptID = id.New(managed.PrefixOperation)
+	q.ProviderOperationID = id.New(managed.PrefixOperation)
+	q.Action.CanonicalDigest = ""
+
+	q.Action.CanonicalDigest, err = managed.RemovalContinuationDigest(q)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	before = projectionSnapshot(t, s)
+	if _, err = s.BeginManagedRemovalContinuation(t.Context(), q); !errors.Is(err, managed.ErrCapacity) || projectionSnapshot(t, s) != before {
+		t.Fatal("attempt overflow", err)
+	}
+
+	t.Log("synthetic journal M-1 reserves terminal; completed reaches M; attempt state M refuses Continue")
+}
+
+func continuationMemoryRows(t *testing.T, s *Store, key managed.Key) continuationtest.Storage {
+	t.Helper()
+
+	return continuationtest.Storage{Rows: func() []continuationtest.Row {
+		var out []continuationtest.Row
+
+		for bucket, rows := range s.managedControllerRecords {
+			kind, scope, ok := strings.Cut(bucket, ":")
+			if !ok {
+				t.Fatal("invalid fixture bucket")
+			}
+
+			for k, v := range rows {
+				out = append(out, continuationtest.Row{Kind: kind, Scope: scope, Key: k, Data: append([]byte{}, v...)})
+			}
+		}
+
+		sort.Slice(out, func(i, j int) bool {
+			a, b := out[i], out[j]
+
+			return a.Kind+":"+a.Scope+":"+a.Key < b.Kind+":"+b.Scope+":"+b.Key
+		})
+
+		return out
+	}, Put: func(r continuationtest.Row) {
+		bucket := r.Kind + ":" + r.Scope
+		if s.managedControllerRecords[bucket] == nil {
+			s.managedControllerRecords[bucket] = map[string][]byte{}
+		}
+
+		s.managedControllerRecords[bucket][r.Key] = append([]byte{}, r.Data...)
+	}, Receipt: func(r managed.Receipt) { s.managedReceipts[key.InstanceID.String()+":"+r.ID.String()] = r }}
+}
+func TestManagedRemovalContinuationMemoryGenerationBoundary(t *testing.T) {
+	s, q := memoryContinuationInput(t)
+	root := managed.AttemptKey{Key: q.Action.Key, AttemptID: q.Predecessor.AttemptID, Generation: "1"}
+
+	var current managed.AttemptKey
+
+	for n := 2; n <= 5; n++ {
+		got, err := s.BeginManagedRemovalContinuation(t.Context(), q)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		current = managed.AttemptKey{Key: q.Action.Key, AttemptID: got.Successor.AttemptID, Generation: got.Successor.Generation}
+		if _, err = s.RevokeManagedRemovalAttempt(t.Context(), managed.AttemptRequest{Command: projectionCommand(t, s, current.Key), AttemptID: current.AttemptID, Generation: current.Generation}); err != nil {
+			t.Fatal(err)
+		}
+
+		q.Action.Command = projectionCommand(t, s, current.Key)
+		q.Predecessor = got.Successor
+		q.SuccessorAttemptID = id.New(managed.PrefixOperation)
+		q.ProviderOperationID = id.New(managed.PrefixOperation)
+		q.Action.CanonicalDigest = ""
+
+		q.Action.CanonicalDigest, err = managed.RemovalContinuationDigest(q)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	target, readErr := s.ReadManagedTarget(t.Context(), current.Key)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+
+	current = continuationtest.LateGeneration(t, continuationMemoryRows(t, s, current.Key), current, target)
+
+	seeded, err := s.ReadManagedRemovalAttempt(t.Context(), current)
+	if err != nil {
+		t.Fatal("seeded current validation", err)
+	}
+
+	if _, err = s.ReadManagedRemovalAttempt(t.Context(), root); err != nil {
+		t.Fatal("seeded historical root validation", err)
+	}
+
+	q.Action.Command = projectionCommand(t, s, current.Key)
+	q.Predecessor = seeded.State.AttemptRef
+	q.Action.CanonicalDigest = ""
+
+	q.Action.CanonicalDigest, err = managed.RemovalContinuationDigest(q)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.BeginManagedRemovalContinuation(t.Context(), q)
+	if err != nil || got.Successor.Generation != managed.Decimal(strconv.FormatInt(math.MaxInt64, 10)) {
+		t.Fatal("final generation", err)
+	}
+
+	current.Generation = got.Successor.Generation
+
+	current.AttemptID = got.Successor.AttemptID
+	if _, err = s.ReadManagedRemovalAttempt(t.Context(), current); err != nil {
+		t.Fatal("final current validation", err)
+	}
+
+	q.Action.Command = projectionCommand(t, s, current.Key)
+	q.Predecessor = got.Successor
+	q.SuccessorAttemptID = id.New(managed.PrefixOperation)
+	q.ProviderOperationID = id.New(managed.PrefixOperation)
+	q.Action.CanonicalDigest = ""
+
+	before := projectionSnapshot(t, s)
+	if _, err = s.BeginManagedRemovalContinuation(t.Context(), q); !errors.Is(err, managed.ErrInvalid) || projectionSnapshot(t, s) != before {
+		t.Fatal("generation/pointer M overflow", err)
+	}
+
+	t.Log("generation and pointer M-1 accepted final M; next request rejected by digest generation bound before writes")
+}
+
+func memoryContinuationTerminalInput(t *testing.T) (*Store, managed.ContinuationRequest, managed.QuiescenceObservation) {
+	t.Helper()
+	s, action, observation := memoryQuiescenceProviderSetup(t, false)
+	start := managed.AttemptStartRequest{Command: projectionCommand(t, s, action.Key), ActionID: action.ID, AttemptID: id.New(managed.PrefixOperation), ProviderOperationID: id.New(managed.PrefixOperation), VerifierID: "provider"}
+
+	first, err := s.BeginManagedRemovalAttempt(t.Context(), start)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err = s.RevokeManagedRemovalAttempt(t.Context(), managed.AttemptRequest{Command: projectionCommand(t, s, action.Key), AttemptID: first.AttemptID, Generation: "1"}); err != nil {
+		t.Fatal(err)
+	}
+
+	action.Command = projectionCommand(t, s, action.Key)
+	action.Kind = managed.ActionContinue
+	action.NewTarget = nil
+	action.ReleaseID = id.Nil
+	action.RollbackReleaseID = id.Nil
+	action.CanonicalDigest = ""
+
+	target, err := s.ReadManagedTarget(t.Context(), action.Key)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	action.ExpectedDesiredRevision = target.DesiredRevision
+	action.OriginalCommand = []byte("continue")
+	action.OriginalDigest = managed.Digest(action.OriginalCommand)
+	q := managed.ContinuationRequest{Action: action, Predecessor: managed.AttemptRef{AttemptID: first.AttemptID, Generation: first.Generation, DescriptorDigest: first.DescriptorDigest}, SuccessorAttemptID: id.New(managed.PrefixOperation), ProviderOperationID: id.New(managed.PrefixOperation)}
+
+	q.Action.CanonicalDigest, err = managed.RemovalContinuationDigest(q)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return s, q, observation.Observation
+}
+
+func TestManagedRemovalContinuationMemoryExpiredFinish(t *testing.T) {
+	s, q, observation := memoryContinuationTerminalInput(t)
+
+	got, err := s.BeginManagedRemovalContinuation(t.Context(), q)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	key := managed.AttemptKey{Key: q.Action.Key, AttemptID: got.Successor.AttemptID, Generation: got.Successor.Generation}
+	continuationtest.ExpiredFinish(t, s, continuationMemoryRows(t, s, key.Key), key, []managed.QuiescenceObservation{observation}, time.Now)
+}
+
+func TestManagedRemovalContinuationMemoryStorageCaps(t *testing.T) {
+	s, q := memoryContinuationInput(t)
+
+	got, err := s.BeginManagedRemovalContinuation(t.Context(), q)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	scope := memoryAttemptScope(t, q.Action.Key)
+	for _, entry := range []struct {
+		kind, scope, key string
+		limit            int
+	}{
+		{"removal_continuation", scope, q.Action.ID.String(), managed.MaxRemovalContinuationMaterial},
+		{"removal_attempt_closure", scope, q.Predecessor.AttemptID.String(), managed.MaxRemovalContinuationClosure},
+		{"removal_attempt", scope, got.Successor.AttemptID.String(), managed.MaxAttemptDescriptor},
+		{"removal_attempt_state", scope, got.Successor.AttemptID.String(), managed.MaxAttemptFact},
+		{"removal_attempt_current", scope, "current", managed.MaxAttemptPointer},
+		{"removal_identity", "", q.ProviderOperationID.String(), managed.MaxAttemptPointer},
+		{"removal_attempt_event", scope, q.Action.ID.String(), managed.MaxAttemptFact},
+	} {
+		t.Run(entry.kind, func(t *testing.T) {
+			records := s.managedControllerRecords[entry.kind+":"+entry.scope]
+
+			saved := records[entry.key]
+			defer func() { records[entry.key] = saved }()
+
+			for _, n := range []int{entry.limit, entry.limit + 1} {
+				records[entry.key] = append(append([]byte{}, saved...), bytes.Repeat([]byte(" "), n-len(saved))...)
+				before := projectionSnapshot(t, s)
+
+				_, e := s.ReadManagedRemovalContinuation(t.Context(), managed.ContinuationKey{Key: q.Action.Key, ActionID: q.Action.ID})
+				if e == nil || projectionSnapshot(t, s) != before {
+					t.Fatal("oversized retained input accepted/repaired", e)
+				}
+
+				t.Logf("bytes=%d cap=%d refusal=%v; padded noncanonical raw input", n, entry.limit, e)
+			}
+		})
+	}
+
+	records := s.managedControllerRecords["operation:"+q.Action.TenantID]
+	saved := records[q.Action.ID.String()]
+
+	var op managed.OperationState
+	if err = json.Unmarshal(saved, &op); err != nil {
+		t.Fatal(err)
+	}
+
+	op.ContinuationAssociation.MaterialDigest = string(bytes.Repeat([]byte("x"), managed.MaxRemovalContinuationAssociation+1))
+
+	raw, err := json.Marshal(op)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	records[q.Action.ID.String()] = raw
+
+	before := projectionSnapshot(t, s)
+	if _, err = s.ReadManagedRemovalContinuation(t.Context(), managed.ContinuationKey{Key: q.Action.Key, ActionID: q.Action.ID}); err == nil || projectionSnapshot(t, s) != before {
+		t.Fatal("oversized association accepted/repaired", err)
+	}
+
+	records[q.Action.ID.String()] = saved
+
+	t.Log("association oversized digest rejected by exact retained association comparison; public record derives from bounded validated components")
 }

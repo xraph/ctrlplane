@@ -1722,6 +1722,10 @@ func (r *Repository) AuthorizeManagedAttemptRecovery(ctx context.Context, q mana
 				return managed.Receipt{}, managed.ErrConflict
 			}
 
+			if e := removalLocalIDAvailable(ctx, tx, q.ID); e != nil {
+				return managed.Receipt{}, e
+			}
+
 			selected, e := readAttempt(ctx, tx, current, attemptLocal(q.AttemptRequest))
 			if e != nil {
 				return managed.Receipt{}, e
