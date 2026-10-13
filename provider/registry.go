@@ -47,7 +47,15 @@ func (r *Registry) Get(name string) (Provider, error) {
 
 // Default returns the fallback provider.
 func (r *Registry) Default() (Provider, error) {
-	return r.Get(r.fallback)
+	return r.Get(r.DefaultName())
+}
+
+// DefaultName returns the fallback provider name, or "" when none is set.
+func (r *Registry) DefaultName() string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	return r.fallback
 }
 
 // SetDefault sets the fallback provider name.

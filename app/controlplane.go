@@ -81,6 +81,13 @@ func New(opts ...Option) (*CtrlPlane, error) {
 		}
 	}
 
+	// Config.DefaultProvider names the provider an instance lands on when
+	// the request names neither a provider nor a datacenter. An explicit
+	// WithDefaultProvider wins over it.
+	if cp.providers.DefaultName() == "" && cp.config.DefaultProvider != "" {
+		cp.providers.SetDefault(cp.config.DefaultProvider)
+	}
+
 	// Wire up the plugin extension registry.
 	cp.extensions = plugin.NewRegistry(slog.Default())
 	for _, ext := range cp.pendingExts {
