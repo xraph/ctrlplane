@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/netip"
+	"slices"
 	"strconv"
 	"time"
 
@@ -372,8 +373,9 @@ func (p *Provider) Status(ctx context.Context, instanceID id.ID) (*provider.Inst
 // the right image) Deploy is effectively a no-op — the container
 // stays as-is. The caller (ctrlplane deploy.Service) treats success
 // here as "release applied" and bumps the deployment state.
-// Deploy applies per-service image / env updates by recreating only
-// the targeted containers within the live project network. Services
+// Deploy applies per-service image / env updates, and any command,
+// args, ports or resources the request sets, by recreating only the
+// targeted containers within the live project network. Services
 // not listed in req.Services keep running unchanged.
 //
 // Per-service rollout for a multi-container project is "stop & replace
@@ -386,8 +388,9 @@ func (p *Provider) Deploy(ctx context.Context, req provider.DeployRequest) (*pro
 	}
 
 	// Inspect the existing project to recover full ServiceSpec for each
-	// target — Deploy only carries image+env per service; volumes,
-	// ports, command, etc. come from the persisted container spec.
+	// target. Deploy carries image and env, plus command, args, ports
+	// and resources when the caller sets them; volumes, labels and
+	// anything left unset come from the persisted container spec.
 	existing, err := p.listProjectContainers(ctx, req.InstanceID)
 	if err != nil {
 		return nil, err
@@ -418,7 +421,8 @@ func (p *Provider) Deploy(ctx context.Context, req provider.DeployRequest) (*pro
 // recreateServiceContainer drops the current container for a service
 // and re-creates it with the new image/env, preserving the rest of
 // the spec (ports, volumes, command, etc.) by inspecting the running
-// container before removal.
+// container before removal. Command, args, ports and resources the
+// target sets replace the inspected values; see applyDeployOverrides.
 func (p *Provider) recreateServiceContainer(ctx context.Context, req provider.DeployRequest, target provider.ServiceDeploySpec, current projectContainer) error {
 	result, err := p.cli.ContainerInspect(ctx, current.ID, client.ContainerInspectOptions{})
 	if err != nil {
@@ -426,18 +430,6 @@ func (p *Provider) recreateServiceContainer(ctx context.Context, req provider.De
 	}
 
 	inspect := result.Container
-
-	// Skip recreate when the image already matches — saves a noisy
-	// stop+start on every Deploy that follows immediate Provision.
-	if inspect.Config != nil && inspect.Config.Image == target.Image {
-		return nil
-	}
-
-	_ = p.pullImage(ctx, target.Image)
-
-	if _, err := p.cli.ContainerRemove(ctx, current.ID, client.ContainerRemoveOptions{Force: true}); err != nil && !cerrdefs.IsNotFound(err) {
-		return fmt.Errorf("remove old %s: %w", current.Name, err)
-	}
 
 	envList := make([]string, 0, len(target.Env))
 	for k, v := range target.Env {
@@ -465,6 +457,24 @@ func (p *Provider) recreateServiceContainer(ctx context.Context, req provider.De
 		}
 	}
 
+	changed, err := applyDeployOverrides(target, current.Role, cfg, hostCfg)
+	if err != nil {
+		return err
+	}
+
+	// Skip recreate when the image already matches and the deploy
+	// changes nothing else we apply. Saves a noisy stop+start on every
+	// Deploy that follows immediate Provision.
+	if inspect.Config != nil && inspect.Config.Image == target.Image && !changed {
+		return nil
+	}
+
+	_ = p.pullImage(ctx, target.Image)
+
+	if _, err := p.cli.ContainerRemove(ctx, current.ID, client.ContainerRemoveOptions{Force: true}); err != nil && !cerrdefs.IsNotFound(err) {
+		return fmt.Errorf("remove old %s: %w", current.Name, err)
+	}
+
 	created, err := p.cli.ContainerCreate(ctx, client.ContainerCreateOptions{Config: cfg, HostConfig: hostCfg, NetworkingConfig: &network.NetworkingConfig{
 		EndpointsConfig: map[string]*network.EndpointSettings{
 			projectNetwork(req.InstanceID): {Aliases: []string{current.ServiceName}},
@@ -479,6 +489,86 @@ func (p *Provider) recreateServiceContainer(ctx context.Context, req provider.De
 	}
 
 	return nil
+}
+
+// applyDeployOverrides writes the optional fields of a deploy spec onto
+// the create config recovered from the running container. A nil field
+// keeps the inspected value. It reports whether anything differs from
+// what the container runs with now, so a same-image deploy that
+// repeats the current command, ports and limits stays a no-op.
+//
+//   - Command and Args become the container's Entrypoint and Cmd.
+//   - Ports replace the exposed ports and host bindings, built the same
+//     way Provision builds them. Init containers never publish ports
+//     (Provision strips them too), so Ports is ignored for them.
+//   - Resources set the CPU and memory limits (NanoCPUs and Memory). A
+//     zero value removes that limit. Docker has no separate request, so
+//     only limits are set. Replicas is ignored here because a Docker
+//     project runs one container per service; Scale owns replica count.
+//     DiskMB and GPU are ignored as well, matching Provision, which
+//     never sets them either.
+func applyDeployOverrides(target provider.ServiceDeploySpec, role provider.ServiceRole, cfg *container.Config, hostCfg *container.HostConfig) (bool, error) {
+	changed := false
+
+	if target.Command != nil {
+		changed = changed || !slices.Equal(cfg.Entrypoint, target.Command)
+		cfg.Entrypoint = target.Command
+	}
+
+	if target.Args != nil {
+		changed = changed || !slices.Equal(cfg.Cmd, target.Args)
+		cfg.Cmd = target.Args
+	}
+
+	if target.Ports != nil && role != provider.RoleInit {
+		exposed, bindings, err := buildPortConfig(target.Ports)
+		if err != nil {
+			return false, err
+		}
+
+		changed = changed || !samePortBindings(hostCfg.PortBindings, bindings)
+		cfg.ExposedPorts = exposed
+		hostCfg.PortBindings = bindings
+	}
+
+	if target.Resources != nil {
+		nanoCPUs := int64(target.Resources.CPUMillis) * 1_000_000
+		memory := int64(target.Resources.MemoryMB) * 1024 * 1024
+
+		changed = changed || hostCfg.NanoCPUs != nanoCPUs || hostCfg.Memory != memory
+		hostCfg.NanoCPUs = nanoCPUs
+		hostCfg.Memory = memory
+		// The daemon derives a swap limit from the memory limit and
+		// reports it on inspect. Carrying the old one over would reject
+		// a larger memory limit, or any swap limit without one.
+		hostCfg.MemorySwap = 0
+	}
+
+	return changed, nil
+}
+
+// samePortBindings compares two port maps by port and host port only.
+// Host IPs are left out because the daemon may report the wildcard
+// address in a different form than the one we send.
+func samePortBindings(a, b network.PortMap) bool {
+	if len(a) != len(b) {
+		return false
+	}
+
+	for port, want := range b {
+		got, ok := a[port]
+		if !ok || len(got) != len(want) {
+			return false
+		}
+
+		for i := range want {
+			if got[i].HostPort != want[i].HostPort {
+				return false
+			}
+		}
+	}
+
+	return true
 }
 
 // Rollback is a no-op today — docker has no built-in release history,
