@@ -118,6 +118,12 @@ func validateRecoveryActivationInspectionHeld(ctx context.Context, tx Controller
 		return managed.ErrUnavailable
 	}
 
+	if view.state.RevocationDigest != "" {
+		if _, err = recoveryCutoffHeld(ctx, tx, view); err != nil {
+			return err
+		}
+	}
+
 	for index, selection := range selections {
 		if err = inspectRecoveryFixedSelection(ctx, tx, target, view, profile, selection, index); err != nil {
 			return err
@@ -201,6 +207,10 @@ func inspectRecoveryFixedSelection(ctx context.Context, tx ControllerTransaction
 	}
 
 	if err = invocationRetryEventsHeld(ctx, tx, selected); err != nil {
+		return err
+	}
+
+	if err = invocationStatusMatchesHeld(ctx, tx, view, selected); err != nil {
 		return err
 	}
 

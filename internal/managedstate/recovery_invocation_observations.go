@@ -12,6 +12,21 @@ import (
 // invocationMarkerMember verifies independently retained commit and permission-time proof
 // rows against the freshly selected native guard. A historical commit is not a grant.
 func invocationMarkerMember(ctx context.Context, tx ControllerTransaction, selected retrySelected, member invocationProofMember, commitReference managed.RecoveryAssociation, now time.Time) (managed.RecoveryAssociation, error) {
+	if commitReference.Kind != managed.RecoveryCommitRecord {
+		return managed.RecoveryAssociation{}, managed.ErrAuthority
+	}
+
+	commit, err := recoveryReadFact[managed.ProviderNativeCommitFacts](ctx, tx, selected.permission.Facts.Key.AttemptKey, commitReference)
+	if err != nil {
+		return managed.RecoveryAssociation{}, err
+	}
+
+	return invocationCommitFactsHeld(ctx, tx, selected, member, commit.Facts, commit.Acceptance.Receipt.AcceptedAt, now)
+}
+
+// invocationCommitFactsHeld checks the complete bounded permission/proof/intent graph.
+// Before verification, acceptedAt is the inspection time; no local acceptance is implied.
+func invocationCommitFactsHeld(ctx context.Context, tx ControllerTransaction, selected retrySelected, member invocationProofMember, facts managed.ProviderNativeCommitFacts, acceptedAt, now time.Time) (managed.RecoveryAssociation, error) {
 	var zero managed.RecoveryAssociation
 
 	key := selected.permission.Facts.Key
@@ -49,13 +64,7 @@ func invocationMarkerMember(ctx context.Context, tx ControllerTransaction, selec
 		return zero, managed.ErrAuthority
 	}
 
-	commit, err := recoveryReadFact[managed.ProviderNativeCommitFacts](ctx, tx, key.AttemptKey, commitReference)
-	if err != nil {
-		return zero, err
-	}
-
-	facts := commit.Facts
-	if commitReference.Kind != managed.RecoveryCommitRecord || facts.Invocation != key || facts.Binding != member.binding || facts.PermissionDigest != permissionDigest || facts.PermissionProof != proofReference || facts.CurrentProof != member.current.Proof || facts.PermissionProofDigest != permissionProof.Digest || facts.CurrentProofDigest != member.proof.Digest || facts.GuardID != member.proof.Facts.GuardID || facts.GuardRootDigest != member.proof.Facts.GuardRootDigest || facts.NativeAcceptedAt.Before(member.proof.Facts.NativeAcceptedAt) || facts.NativeAcceptedAt.Before(selected.permission.Facts.Permission.IssuedAt) || facts.NativeAcceptedAt.After(now) || commit.Acceptance.Receipt.AcceptedAt.Before(facts.NativeAcceptedAt) || commit.Acceptance.Receipt.AcceptedAt.After(now) {
+	if facts.Invocation != key || facts.Binding != member.binding || facts.PermissionDigest != permissionDigest || facts.PermissionProof != proofReference || facts.CurrentProof != member.current.Proof || facts.PermissionProofDigest != permissionProof.Digest || facts.CurrentProofDigest != member.proof.Digest || facts.GuardID != member.proof.Facts.GuardID || facts.GuardRootDigest != member.proof.Facts.GuardRootDigest || facts.NativeAcceptedAt.Before(member.proof.Facts.NativeAcceptedAt) || facts.NativeAcceptedAt.Before(selected.permission.Facts.Permission.IssuedAt) || facts.NativeAcceptedAt.After(now) || acceptedAt.Before(facts.NativeAcceptedAt) || acceptedAt.After(now) {
 		return zero, managed.ErrAuthority
 	}
 
@@ -151,6 +160,10 @@ func stageInvocationMarker(ctx context.Context, tx ControllerTransaction, target
 
 	reference, err := recoveryWriteFact(ctx, staged, attemptKey(view), marker)
 	if err != nil {
+		return nil, zero, err
+	}
+
+	if err = stageInvocationMarkerMembers(ctx, staged, marker, reference, commits); err != nil {
 		return nil, zero, err
 	}
 

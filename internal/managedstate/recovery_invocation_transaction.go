@@ -11,8 +11,7 @@ import (
 	"github.com/xraph/ctrlplane/managed"
 )
 
-// invocationTransitionRequest is private. Public entry points still need configured
-// native commit selection and durable observation identity before using this boundary.
+// invocationTransitionRequest retains the complete operation fingerprint across public replay.
 type invocationTransitionRequest struct {
 	Kind                  string                             `json:"kind"`
 	Command               managed.RecoveryCommand            `json:"command"`
@@ -77,6 +76,31 @@ func invocationPrimaryKind(kind string) (managed.RecoveryRecordKind, error) {
 func invocationReplayRecord[T any](ctx context.Context, tx ControllerTransaction, key managed.AttemptKey, kind managed.RecoveryRecordKind, factKey string, command id.ID, fingerprint string) (managed.RecoveryRecord[T], managed.RecoveryAssociation, error) {
 	record, err := recoveryReadNamedFact[T](ctx, tx, key, kind, factKey)
 	if err != nil {
+		if errors.Is(err, managed.ErrNotFound) {
+			// Only a missing primary with no accepted operation is a fresh request.
+			// A present primary with lost associations must not reach a verifier.
+			scope, scopeErr := attemptScope(key.Key)
+			if scopeErr != nil {
+				return record, managed.RecoveryAssociation{}, scopeErr
+			}
+
+			if _, rowErr := tx.ReadRecord(ctx, string(kind), scope, factKey); !errors.Is(rowErr, managed.ErrNotFound) {
+				if rowErr != nil {
+					return record, managed.RecoveryAssociation{}, rowErr
+				}
+
+				return record, managed.RecoveryAssociation{}, managed.ErrUnavailable
+			}
+
+			if _, receiptErr := tx.ReadReceipt(ctx, key.Key, command, ""); !errors.Is(receiptErr, managed.ErrNotFound) {
+				if receiptErr != nil {
+					return record, managed.RecoveryAssociation{}, receiptErr
+				}
+
+				return record, managed.RecoveryAssociation{}, managed.ErrUnavailable
+			}
+		}
+
 		return record, managed.RecoveryAssociation{}, err
 	}
 
@@ -137,6 +161,9 @@ func invocationReplay(ctx context.Context, tx ControllerTransaction, request inv
 
 	if err == nil {
 		_, err = invocationHistoricalSelectionHeld(ctx, tx, invocation, request.Command.AttemptRef, kind, out.Primary)
+		if errors.Is(err, managed.ErrNotFound) {
+			err = managed.ErrUnavailable
+		}
 	}
 
 	return out, err
@@ -254,7 +281,6 @@ func stageInvocationTransition(ctx context.Context, tx ControllerTransaction, ta
 
 // transitionInvocation executes no provider callbacks. All writes and the parent receipt
 // share the backend transaction. The returned one-shot grant is set only after commit.
-// No exported capability forwards to this private boundary in this slice.
 func (r *Repository) transitionInvocation(ctx context.Context, request invocationTransitionRequest) (invocationTransitionOutcome, error) {
 	var out invocationTransitionOutcome
 
@@ -325,7 +351,7 @@ func (r *Repository) transitionInvocation(ctx context.Context, request invocatio
 				return managed.Receipt{}, heldErr
 			}
 
-			if checked.ref != active || active != request.Command.AttemptRef || checked.state.RevocationDigest != "" || checked.state.SettlementDigest != "" || checked.state.TerminalDigest != "" || checked.state.Successor != nil || current.Phase == managed.Deleted {
+			if checked.ref != active || active != request.Command.AttemptRef || !recoveryInvocationAfterCutoff(checked.state, request.Kind) || checked.state.SettlementDigest != "" || checked.state.TerminalDigest != "" || checked.state.Successor != nil || current.Phase == managed.Deleted {
 				return managed.Receipt{}, managed.ErrBlocked
 			}
 
@@ -361,6 +387,15 @@ func (r *Repository) transitionInvocation(ctx context.Context, request invocatio
 
 			staged, heldErr := stageInvocationTransition(ctx, tx, current, checked, selected, request, acceptance, now)
 			if heldErr != nil {
+				return managed.Receipt{}, heldErr
+			}
+
+			updated, heldErr := invocationSelectedHeld(ctx, staged, checked, request.Step)
+			if heldErr != nil {
+				return managed.Receipt{}, heldErr
+			}
+
+			if heldErr = stageInvocationStatus(ctx, staged, updated, request.Kind == "retry"); heldErr != nil {
 				return managed.Receipt{}, heldErr
 			}
 

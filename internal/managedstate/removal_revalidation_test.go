@@ -315,12 +315,16 @@ func TestRecoveryNativeExactReadersPreserveSavedReceipt(t *testing.T) {
 	commit := recoveryTestRecord(t, managed.RecoveryCommitRecord, commitFacts, now)
 	commitRef := recoveryTestStore(t, fixture, key, commit)
 
-	readCommit, err := repository.ReadManagedProviderNativeCommit(t.Context(), managed.RecoveryExactRequest{Key: key, Association: commitRef})
+	readCommit, err := recoveryReadFact[managed.ProviderNativeCommitFacts](t.Context(), fixture, key, commitRef)
 	if err != nil || readCommit.Acceptance != commit.Acceptance || readCommit.Digest != commit.Digest {
 		t.Fatal("exact native commit or original receipt changed", err)
 	}
 
 	writes := fixture.writes
+	if _, err = repository.ReadManagedProviderNativeCommit(t.Context(), managed.RecoveryExactRequest{Key: key, Association: commitRef}); err == nil || fixture.writes != writes {
+		t.Fatal("native leaf without complete invocation history accepted or mutated storage", err)
+	}
+
 	if _, err = repository.ReadManagedProviderNativeCommit(t.Context(), managed.RecoveryExactRequest{Key: key, Association: intentRef}); err == nil || fixture.writes != writes {
 		t.Fatal("wrong typed exact association accepted or mutated storage", err)
 	}

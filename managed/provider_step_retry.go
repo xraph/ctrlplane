@@ -138,6 +138,14 @@ type ProviderInvocationResult struct {
 	Result           WireProviderStepResult `json:"result"`
 }
 
+// ProviderInvocationObservationRequest gives each observation a stable caller operation ID.
+// Reuse the complete request after a lost response; receipt replay never issues transport.
+type ProviderInvocationObservationRequest struct {
+	Command               RecoveryCommand          `json:"command"`
+	ExpectedCurrentDigest string                   `json:"expected_current_digest"`
+	Result                ProviderInvocationResult `json:"result"`
+}
+
 // ProviderNativeCommitFacts binds exact original permission and independently fresh current proof.
 type ProviderNativeCommitFacts struct {
 	Binding               RemovalRecoveryBinding `json:"binding"`
@@ -227,7 +235,7 @@ type ProviderInvocationStore interface {
 	ReadManagedProviderNativeCommit(ctx context.Context, request RecoveryExactRequest) (RecoveryRecord[ProviderNativeCommitFacts], error)
 	CommitManagedProviderInvocation(ctx context.Context, request ProviderInvocationCommitRequest) (ProviderInvocationGrant, error)
 	CloseManagedProviderInvocation(ctx context.Context, request ProviderInvocationCloseRequest) (RecoveryRecord[ProviderInvocationClosure], error)
-	RecordManagedProviderInvocationResult(ctx context.Context, result ProviderInvocationResult) error
+	RecordManagedProviderInvocationResult(ctx context.Context, result ProviderInvocationObservationRequest) error
 	ReadManagedProviderInvocation(ctx context.Context, key ProviderInvocationKey) (ProviderInvocationRecord, error)
 }
 
@@ -253,11 +261,17 @@ type ProviderInvocationClosureProducer interface {
 // RequireRemovalRecovery refuses partial capability before any recovery profile issuance.
 // This checks interface support only. Hosts must also configure and authenticate each producer.
 func RequireRemovalRecovery(authority any) (RemovalRevalidationStore, ProviderInvocationStore, ProviderStepRetryStore, error) {
+	if recoveryCapabilityAbsent(authority) {
+		return nil, nil, nil, ErrUnsupported
+	}
+
 	revalidation, revalidationOK := authority.(RemovalRevalidationStore)
 	invocation, invocationOK := authority.(ProviderInvocationStore)
 
 	retry, retryOK := authority.(ProviderStepRetryStore)
-	if !revalidationOK || !invocationOK || !retryOK {
+
+	_, lifecycleOK := authority.(RemovalRecoveryLifecycleStore)
+	if !revalidationOK || !invocationOK || !retryOK || !lifecycleOK {
 		return nil, nil, nil, ErrUnsupported
 	}
 

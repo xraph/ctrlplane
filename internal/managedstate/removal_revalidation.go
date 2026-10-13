@@ -431,36 +431,12 @@ func (r *Repository) ReadManagedRecoveryNativeIntent(ctx context.Context, q mana
 	return out, err
 }
 
-// ReadManagedProviderNativeCommit returns the exact per-binding acceptance and original receipt.
-// Proof expiry and newer current observations do not rewrite this historical association.
+// ReadManagedProviderNativeCommit returns the exact per-binding acceptance and original
+// receipt only after its complete retained invocation associations validate.
 func (r *Repository) ReadManagedProviderNativeCommit(ctx context.Context, q managed.RecoveryExactRequest) (managed.RecoveryRecord[managed.ProviderNativeCommitFacts], error) {
-	var out managed.RecoveryRecord[managed.ProviderNativeCommitFacts]
-	if q.Association.Kind != managed.RecoveryCommitRecord {
-		return out, managed.ErrInvalid
-	}
-
 	if err := attemptVersion(q.Key); err != nil {
-		return out, err
+		return managed.RecoveryRecord[managed.ProviderNativeCommitFacts]{}, err
 	}
 
-	err := r.controller(ctx, "attempt:"+q.Key.InstanceID.String(), []managed.Key{q.Key.Key}, func(tx ControllerTransaction) error {
-		if _, readErr := tx.Read(ctx, q.Key.Key); readErr != nil {
-			return readErr
-		}
-
-		record, readErr := recoveryReadFact[managed.ProviderNativeCommitFacts](ctx, tx, q.Key, q.Association)
-		if readErr != nil {
-			return readErr
-		}
-
-		if record.Facts.Binding.Key.AttemptKey != q.Key || record.Facts.Invocation.AttemptKey != q.Key {
-			return managed.ErrUnavailable
-		}
-
-		out = record
-
-		return nil
-	})
-
-	return out, err
+	return r.readManagedProviderNativeCommitInspection(ctx, q)
 }

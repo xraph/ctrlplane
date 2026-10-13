@@ -58,6 +58,10 @@ func ImmutableRecordLimit(kind string) int {
 	switch kind {
 	case managed.ProviderEffectBindingKind:
 		return managed.MaxProviderEffectBinding
+	case invocationMarkerMembersKind:
+		return maxInvocationStatus
+	case invocationStatusKind, invocationCommitCurrentKind:
+		return maxInvocationStatus
 	case invocationLocatorKind:
 		return maxInvocationLocator
 	case recoveryFixedSelectionKind:

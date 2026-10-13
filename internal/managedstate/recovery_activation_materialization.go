@@ -184,6 +184,8 @@ func stageRecoveryActivationMaterialization(ctx context.Context, tx ControllerTr
 			}
 
 			current := managed.ProviderStepRetryCurrent{SchemaVersion: "1", RootDigest: root.Digest, CommandID: invocation.CommandID, Ordinal: "0", Permission: permissionRef, Authority: rootRef}
+			adopted := retrySelected{root: root, permission: permission}
+
 			if record.Result != nil {
 				permissionDigest, digestErr := recoveryPermissionDigest(original.Permission)
 				if digestErr != nil {
@@ -204,6 +206,7 @@ func stageRecoveryActivationMaterialization(ctx context.Context, tx ControllerTr
 				}
 
 				current.ResultKey = resultRef.Key
+				adopted.result = &result
 			}
 
 			current.Digest, readErr = managed.RetryCurrentDigest(current)
@@ -212,6 +215,11 @@ func stageRecoveryActivationMaterialization(ctx context.Context, tx ControllerTr
 			}
 
 			if readErr = attemptWrite(ctx, staged, retryCurrentKind, view.scope, stepKey, current, true, managed.MaxStepRetryPointer); readErr != nil {
+				return nil, readErr
+			}
+
+			adopted.current = current
+			if readErr = stageInvocationStatus(ctx, staged, adopted, true); readErr != nil {
 				return nil, readErr
 			}
 		} else if selection.Disposition != "unissued" || selection.Association != nil {

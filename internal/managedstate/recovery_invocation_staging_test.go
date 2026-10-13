@@ -535,6 +535,15 @@ func TestInvocationInspectionRetainsOriginalUncertaintyAfterPositive(t *testing.
 		t.Fatal(err)
 	}
 
+	updated, err := invocationSelectedHeld(t.Context(), staged, view, step)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err = stageInvocationStatus(t.Context(), staged, updated, false); err != nil {
+		t.Fatal(err)
+	}
+
 	if err = inspectRecoveryFixedSelection(t.Context(), staged, target, view, plan.Profile, plan.Selections[0], 0); err != nil {
 		t.Fatal("later observation broke original inspection", err)
 	}

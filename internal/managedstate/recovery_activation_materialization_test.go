@@ -200,7 +200,7 @@ func TestActivationStagesSmallAndMaximumFixedSets(t *testing.T) {
 
 			want := 3 + len(plan.Selections)
 			if issued {
-				want += 5 * len(plan.Selections)
+				want += 6 * len(plan.Selections)
 			}
 
 			if len(staged.rows) != want {
