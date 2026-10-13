@@ -183,7 +183,7 @@ func originalRegistrationsForDrain(ctx context.Context, tx ControllerTransaction
 func originalAssociation(ctx context.Context, tx ControllerTransaction, t *managed.Target, record managed.OriginalLifecycleRecord) error {
 	m := record.Material
 
-	identityDigest, err := managed.OriginalIdentityDigest(t.Identity)
+	identityDigest, err := originalIdentityDigest(ctx, tx, t.Identity)
 	if err != nil {
 		return err
 	}
@@ -246,7 +246,18 @@ func readOriginal(ctx context.Context, tx ControllerTransaction, k managed.Origi
 		return empty, managed.Receipt{}, err
 	}
 
-	record, err := managed.ParseOriginalLifecycleRecord(raw)
+	var record managed.OriginalLifecycleRecord
+
+	if reads, ok := tx.(*attemptCheckedReads); ok {
+		record, err = reads.parsedOriginal(ctx, k.Kind, scope, k.OperationID.String(), raw)
+	} else {
+		record, err = managed.ParseOriginalLifecycleRecord(raw)
+	}
+
+	if canceled := ctx.Err(); canceled != nil {
+		return empty, managed.Receipt{}, canceled
+	}
+
 	if err != nil {
 		return empty, managed.Receipt{}, managed.ErrUnavailable
 	}
@@ -462,4 +473,62 @@ func originalDrainFreshEligibility(t *managed.Target, rid id.ID) error {
 	}
 
 	return nil
+}
+
+// parsedOriginal retains at most 64 successful parses and 2 MiB of encoded input
+// per checked read. A full cache falls back to the strict parser. Associations and
+// receipts remain the caller's responsibility on every use.
+func (v *attemptCheckedReads) parsedOriginal(ctx context.Context, kind, scope, key string, raw []byte) (managed.OriginalLifecycleRecord, error) {
+	if err := ctx.Err(); err != nil {
+		return managed.OriginalLifecycleRecord{}, err
+	}
+
+	if len(raw) > managed.MaxOriginalLifecycleRecord {
+		return managed.OriginalLifecycleRecord{}, managed.ErrCapacity
+	}
+
+	selected := attemptImmutableValueKey{kind, scope, key, managed.Digest(raw)}
+
+	if err := ctx.Err(); err != nil {
+		return managed.OriginalLifecycleRecord{}, err
+	}
+
+	if saved, ok := v.originals[selected]; ok {
+		return cloneOriginal(saved), nil
+	}
+
+	value, err := managed.ParseOriginalLifecycleRecord(raw)
+	if err != nil {
+		return managed.OriginalLifecycleRecord{}, err
+	}
+
+	if err = ctx.Err(); err != nil {
+		return managed.OriginalLifecycleRecord{}, err
+	}
+
+	if len(v.originals) < 64 && v.originalBytes+len(raw) <= 64*managed.MaxOriginalLifecycleRecord {
+		if v.originals == nil {
+			v.originals = make(map[attemptImmutableValueKey]managed.OriginalLifecycleRecord)
+		}
+
+		v.originals[selected] = cloneOriginal(value)
+		v.originalBytes += len(raw)
+	}
+
+	return value, nil
+}
+
+func cloneOriginal(value managed.OriginalLifecycleRecord) managed.OriginalLifecycleRecord {
+	value.Material.NativeReceipt = bytes.Clone(value.Material.NativeReceipt)
+	if value.Material.Registration != nil {
+		registration := *value.Material.Registration
+		value.Material.Registration = &registration
+	}
+
+	if value.Material.Drain != nil {
+		drain := *value.Material.Drain
+		value.Material.Drain = &drain
+	}
+
+	return value
 }

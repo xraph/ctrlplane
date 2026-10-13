@@ -225,7 +225,14 @@ jobs:
           set -euo pipefail
           test -n "$CTRLPLANE_TEST_POSTGRES_DSN"
           mkdir -p managed-maximum-evidence
-          go test -json ./store ./store/memory -run '^TestManagedQuiescenceBatch(FullFiniteSet|PostgresFullFiniteSetNearLimit|MemoryFullFiniteSetNearLimit)$' -count=1 -timeout=30m | tee managed-maximum-evidence/batch-normal.jsonl
+          : > managed-maximum-evidence/batch-normal.jsonl
+          for backend in memory postgres; do
+            go test -json ./store -run "^TestManagedQuiescenceBatchFullFiniteSet$/$backend$" -count=1 -timeout=30m | tee -a managed-maximum-evidence/batch-normal.jsonl
+          done
+          go test -json ./store -run '^TestManagedQuiescenceBatchPostgresFullFiniteSetNearLimit$' -count=1 -timeout=30m | tee -a managed-maximum-evidence/batch-normal.jsonl
+          for boundary in true false; do
+            go test -json ./store/memory -run "^TestManagedQuiescenceBatchMemoryFullFiniteSetNearLimit$/$boundary$" -count=1 -timeout=30m | tee -a managed-maximum-evidence/batch-normal.jsonl
+          done
 
       - name: Qualify maximum batch removal lifecycle under race
         env:
@@ -236,7 +243,14 @@ jobs:
           set -euo pipefail
           test -n "$CTRLPLANE_TEST_POSTGRES_DSN"
           mkdir -p managed-maximum-evidence
-          go test -race -json ./store ./store/memory -run '^TestManagedQuiescenceBatch(FullFiniteSet|PostgresFullFiniteSetNearLimit|MemoryFullFiniteSetNearLimit)$' -count=1 -timeout=30m | tee managed-maximum-evidence/batch-race.jsonl
+          : > managed-maximum-evidence/batch-race.jsonl
+          for backend in memory postgres; do
+            go test -race -json ./store -run "^TestManagedQuiescenceBatchFullFiniteSet$/$backend$" -count=1 -timeout=30m | tee -a managed-maximum-evidence/batch-race.jsonl
+          done
+          go test -race -json ./store -run '^TestManagedQuiescenceBatchPostgresFullFiniteSetNearLimit$' -count=1 -timeout=30m | tee -a managed-maximum-evidence/batch-race.jsonl
+          for boundary in true false; do
+            go test -race -json ./store/memory -run "^TestManagedQuiescenceBatchMemoryFullFiniteSetNearLimit$/$boundary$" -count=1 -timeout=30m | tee -a managed-maximum-evidence/batch-race.jsonl
+          done
 
       - name: Qualify maximum successor lifecycle under race
         env:
@@ -247,7 +261,10 @@ jobs:
           set -euo pipefail
           test -n "$CTRLPLANE_TEST_POSTGRES_DSN"
           mkdir -p managed-maximum-evidence
-          go test -race -json ./store -run '^TestManagedRemovalContinuationFullFiniteSet$' -count=1 -timeout=30m | tee managed-maximum-evidence/successor-race.jsonl
+          : > managed-maximum-evidence/successor-race.jsonl
+          for backend in memory postgres; do
+            go test -race -json ./store -run "^TestManagedRemovalContinuationFullFiniteSet$/$backend$" -count=1 -timeout=30m | tee -a managed-maximum-evidence/successor-race.jsonl
+          done
 
       - name: Qualify pinned old executable behavior
         env:

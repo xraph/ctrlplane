@@ -1,6 +1,7 @@
 package managedstate
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"math"
@@ -171,27 +172,35 @@ func readContinuationBaseHeld(ctx context.Context, tx ControllerTransaction, t *
 
 // readAttempt validates a bounded root/first/current/immediate slice and exact history.
 func readAttempt(ctx context.Context, tx ControllerTransaction, t *managed.Target, k managed.AttemptKey) (attemptView, error) {
+	view, _, err := readAttemptWithCurrent(ctx, tx, t, k)
+
+	return view, err
+}
+
+// readAttemptWithCurrent returns the validated pointer for this read only.
+// The session ends here, before a mutation or an independent replay can start.
+func readAttemptWithCurrent(ctx context.Context, tx ControllerTransaction, t *managed.Target, k managed.AttemptKey) (attemptView, managed.AttemptRef, error) {
 	tx = newAttemptCheckedReads(tx)
 
 	var empty attemptView
 
 	scope, err := attemptScope(t.Key)
 	if err != nil {
-		return empty, err
+		return empty, managed.AttemptRef{}, err
 	}
 
 	current, err := attemptRead[attemptCurrent](ctx, tx, "removal_attempt_current", scope, "current", managed.MaxAttemptPointer)
 	if err != nil {
-		return empty, err
+		return empty, managed.AttemptRef{}, err
 	}
 
 	root, err := attemptRead[attemptRoot](ctx, tx, "removal_attempt_root", scope, "root", managed.MaxAttemptPointer)
 	if err != nil {
-		return empty, err
+		return empty, managed.AttemptRef{}, err
 	}
 
 	if current.SchemaVersion != "1" || current.Key != t.Key || current.PointerRevision != current.AttemptRef.Generation {
-		return empty, managed.ErrUnavailable
+		return empty, managed.AttemptRef{}, managed.ErrUnavailable
 	}
 
 	cache := make(map[managed.AttemptRef]attemptView)
@@ -216,23 +225,23 @@ func readAttempt(ctx context.Context, tx ControllerTransaction, t *managed.Targe
 
 	selected, err := readAttemptBaseHeld(ctx, tx, t, k)
 	if err != nil {
-		return empty, err
+		return empty, managed.AttemptRef{}, err
 	}
 
 	cache[selected.ref] = selected
 
 	currentView, err := load(current.AttemptRef)
 	if err != nil {
-		return empty, err
+		return empty, managed.AttemptRef{}, err
 	}
 
 	rootView, err := load(root.AttemptRef)
 	if err != nil {
-		return empty, err
+		return empty, managed.AttemptRef{}, err
 	}
 
 	if currentView.state.Successor != nil || rootView.descriptor.Generation != "1" {
-		return empty, managed.ErrUnavailable
+		return empty, managed.AttemptRef{}, managed.ErrUnavailable
 	}
 
 	links := make(map[id.ID]managed.ContinuationRecord)
@@ -304,71 +313,71 @@ func readAttempt(ctx context.Context, tx ControllerTransaction, t *managed.Targe
 	if rootView.state.Successor != nil {
 		successor, e := load(*rootView.state.Successor)
 		if e != nil {
-			return empty, e
+			return empty, managed.AttemptRef{}, e
 		}
 
 		record, e := readLink(successor.descriptor.ActionID)
 		if e != nil {
-			return empty, e
+			return empty, managed.AttemptRef{}, e
 		}
 
 		if e = checkLink(record); e != nil {
-			return empty, e
+			return empty, managed.AttemptRef{}, e
 		}
 
 		if record.Closure.Predecessor != root.AttemptRef || record.Closure.Lineage.FirstMaterialID != record.Material.Request.Action.ID || record.Closure.Lineage.FirstMaterialDigest != record.Material.Digest || record.Closure.Lineage.FirstSuccessor != record.Closure.Successor {
-			return empty, managed.ErrUnavailable
+			return empty, managed.AttemptRef{}, managed.ErrUnavailable
 		}
 
 		first = &record
 	} else if current.AttemptRef != root.AttemptRef {
-		return empty, managed.ErrUnavailable
+		return empty, managed.AttemptRef{}, managed.ErrUnavailable
 	}
 
 	for _, v := range []attemptView{currentView, selected} {
 		if v.ref != current.AttemptRef && v.state.Successor == nil {
-			return empty, managed.ErrUnavailable
+			return empty, managed.AttemptRef{}, managed.ErrUnavailable
 		}
 
 		if v.descriptor.Generation != "1" {
 			record, e := readLink(v.descriptor.ActionID)
 			if e != nil {
-				return empty, e
+				return empty, managed.AttemptRef{}, e
 			}
 
 			if first == nil || record.Closure.Lineage != first.Closure.Lineage || record.Closure.Successor != v.ref {
-				return empty, managed.ErrUnavailable
+				return empty, managed.AttemptRef{}, managed.ErrUnavailable
 			}
 
 			if e = checkLink(record); e != nil {
-				return empty, e
+				return empty, managed.AttemptRef{}, e
 			}
 		}
 
 		if v.state.Successor != nil {
 			successor, e := load(*v.state.Successor)
 			if e != nil {
-				return empty, e
+				return empty, managed.AttemptRef{}, e
 			}
 
 			record, e := readLink(successor.descriptor.ActionID)
 			if e != nil {
-				return empty, e
+				return empty, managed.AttemptRef{}, e
 			}
 
 			if first == nil || record.Closure.Lineage != first.Closure.Lineage {
-				return empty, managed.ErrUnavailable
+				return empty, managed.AttemptRef{}, managed.ErrUnavailable
 			}
 
 			if e = checkLink(record); e != nil {
-				return empty, e
+				return empty, managed.AttemptRef{}, e
 			}
 		}
 	}
 
 	selected.lineageRoot = &rootView
 
-	return selected, nil
+	return selected, current.AttemptRef, nil
 }
 
 func continuationIDs(ctx context.Context, tx ControllerTransaction, t *managed.Target, q managed.ContinuationRequest) error {
@@ -843,12 +852,16 @@ func attemptCurrentBindingRead(ctx context.Context, tx ControllerTransaction, t 
 		return out, err
 	}
 
-	out, err = attemptRead[managed.AttemptCurrentBindingObservation](ctx, tx, "removal_current_binding", v.scope, slot, managed.MaxAttemptCurrentBinding)
-	if err != nil {
-		return out, err
+	var digest string
+	if reads, ok := tx.(*attemptCheckedReads); ok {
+		out, digest, err = reads.parsedCurrentBinding(ctx, v.scope, slot)
+	} else {
+		out, err = attemptRead[managed.AttemptCurrentBindingObservation](ctx, tx, "removal_current_binding", v.scope, slot, managed.MaxAttemptCurrentBinding)
+		if err == nil {
+			digest, err = attemptHash("ctrlplane.managed.current-binding.v1", out)
+		}
 	}
 
-	digest, err := attemptHash("ctrlplane.managed.current-binding.v1", out)
 	if err != nil {
 		return out, err
 	}
@@ -862,6 +875,66 @@ func attemptCurrentBindingRead(ctx context.Context, tx ControllerTransaction, t 
 	}
 
 	return out, nil
+}
+
+type attemptParsedCurrentBinding struct {
+	observation managed.AttemptCurrentBindingObservation
+	digest      string
+}
+
+// parsedCurrentBinding retains strict decoding and content digests for at most
+// 64 rows and 512 KiB of encoded input in this read. Every caller still checks
+// the command digest, original association, receipt and applicable clock.
+func (reads *attemptCheckedReads) parsedCurrentBinding(ctx context.Context, scope, slot string) (managed.AttemptCurrentBindingObservation, string, error) {
+	var empty managed.AttemptCurrentBindingObservation
+
+	raw, err := reads.ReadRecord(ctx, "removal_current_binding", scope, slot)
+	if err != nil {
+		return empty, "", err
+	}
+
+	if len(raw) > managed.MaxAttemptCurrentBinding {
+		return empty, "", managed.ErrCapacity
+	}
+
+	selected := attemptImmutableValueKey{"removal_current_binding", scope, slot, managed.Digest(raw)}
+
+	if err = ctx.Err(); err != nil {
+		return empty, "", err
+	}
+
+	if saved, ok := reads.currentBindings[selected]; ok {
+		saved.observation.Evidence = bytes.Clone(saved.observation.Evidence)
+
+		return saved.observation, saved.digest, nil
+	}
+
+	value, err := attemptDecode[managed.AttemptCurrentBindingObservation](raw, managed.MaxAttemptCurrentBinding)
+	if err != nil {
+		return empty, "", err
+	}
+
+	digest, err := attemptHash("ctrlplane.managed.current-binding.v1", value)
+	if err != nil {
+		return empty, "", err
+	}
+
+	if err = ctx.Err(); err != nil {
+		return empty, "", err
+	}
+
+	if len(reads.currentBindings) < 64 && reads.currentBindingBytes+len(raw) <= 64*managed.MaxAttemptCurrentBinding {
+		if reads.currentBindings == nil {
+			reads.currentBindings = make(map[attemptImmutableValueKey]attemptParsedCurrentBinding)
+		}
+
+		saved := value
+		saved.Evidence = bytes.Clone(value.Evidence)
+		reads.currentBindings[selected] = attemptParsedCurrentBinding{saved, digest}
+		reads.currentBindingBytes += len(raw)
+	}
+
+	return value, digest, nil
 }
 
 func successorObservationEligibilityHeld(ctx context.Context, tx ControllerTransaction, t *managed.Target, v attemptView, rid id.ID) error {

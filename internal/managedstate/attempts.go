@@ -300,16 +300,22 @@ func attemptSets(ctx context.Context, tx ControllerTransaction, t *managed.Targe
 type attemptCheckedReads struct {
 	ControllerTransaction
 
-	heldRows         map[[3]string][]byte
-	heldMissing      map[[3]string]bool
-	rows             map[[3]string][]byte
-	missing          map[[3]string]bool
-	receipts         map[attemptReceiptKey]managed.Receipt
-	events           map[attemptImmutableValueKey]attemptEvent
-	factDigests      map[attemptImmutableValueKey]string
-	manifestIdentity *managed.Identity
-	manifestSpec     managed.ProvisionSpec
-	manifestRoles    managed.ManagedSpec
+	heldRows            map[[3]string][]byte
+	heldMissing         map[[3]string]bool
+	rows                map[[3]string][]byte
+	missing             map[[3]string]bool
+	receipts            map[attemptReceiptKey]managed.Receipt
+	events              map[attemptImmutableValueKey]attemptEvent
+	originals           map[attemptImmutableValueKey]managed.OriginalLifecycleRecord
+	originalBytes       int
+	currentBindings     map[attemptImmutableValueKey]attemptParsedCurrentBinding
+	currentBindingBytes int
+	factDigests         map[attemptImmutableValueKey]string
+	manifestIdentity    *managed.Identity
+	manifestSpec        managed.ProvisionSpec
+	manifestRoles       managed.ManagedSpec
+	digestIdentity      *managed.Identity
+	identityDigest      string
 }
 
 func newAttemptCheckedReads(tx ControllerTransaction) *attemptCheckedReads {
@@ -406,6 +412,38 @@ type attemptReceiptKey struct {
 	Key    managed.Key
 	ID     id.ID
 	Digest string
+}
+
+// originalIdentityDigest reuses only the content hash of an exact owned identity.
+// Association, receipt, authority and freshness checks remain with each caller.
+func originalIdentityDigest(ctx context.Context, tx ControllerTransaction, identity managed.Identity) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+
+	reads, checked := tx.(*attemptCheckedReads)
+	if checked && reads.digestIdentity != nil && reflect.DeepEqual(*reads.digestIdentity, identity) {
+		return reads.identityDigest, nil
+	}
+
+	digest, err := managed.OriginalIdentityDigest(identity)
+	if err != nil {
+		return "", err
+	}
+
+	if err = ctx.Err(); err != nil {
+		return "", err
+	}
+
+	if checked && len(identity.Manifest.Spec) <= managed.MaxManifestSpec && len(identity.Manifest.Members) <= managed.MaxMembers {
+		saved := identity
+		saved.Manifest.Spec = bytes.Clone(identity.Manifest.Spec)
+		saved.Manifest.Members = slices.Clone(identity.Manifest.Members)
+		reads.digestIdentity = &saved
+		reads.identityDigest = digest
+	}
+
+	return digest, nil
 }
 
 // parsedManifest retains only successful parsing for this exact immutable identity.
@@ -772,6 +810,10 @@ func (reads *attemptCheckedReads) prefetchAttempt(ctx context.Context, t *manage
 		return err
 	}
 
+	if err = reads.prefetchCurrentBindings(ctx, v); err != nil {
+		return err
+	}
+
 	operations := []id.ID{}
 	operationSet := map[id.ID]bool{}
 	addOperation := func(op id.ID) error {
@@ -867,6 +909,32 @@ func (reads *attemptCheckedReads) prefetchAttempt(ctx context.Context, t *manage
 	}
 
 	return reads.prefetchProviders(ctx, t, v)
+}
+
+// prefetchCurrentBindings transports at most 64 exact own slots separately from
+// the existing native batch. Presence is checked before payload caps; callers
+// still decode each observation and validate every command and original receipt.
+func (reads *attemptCheckedReads) prefetchCurrentBindings(ctx context.Context, v attemptView) error {
+	if len(v.descriptor.ReservationIDs) > 64 {
+		return managed.ErrUnavailable
+	}
+
+	keys := make([]ControllerRecordKey, 0, len(v.descriptor.ReservationIDs))
+	presence := make(map[ControllerRecordKey]bool, len(v.descriptor.ReservationIDs))
+
+	for _, rid := range v.descriptor.ReservationIDs {
+		slot, err := attemptSlot(attemptBinding(v, rid), managed.AttemptBegin)
+		if err != nil {
+			return err
+		}
+
+		selected := ControllerRecordKey{"removal_current_binding", v.scope, slot}
+		_, begin := reads.rows[[3]string{"removal_command", v.scope, slot}]
+		presence[selected] = v.descriptor.Generation != "1" && begin
+		keys = append(keys, selected)
+	}
+
+	return reads.prefetchSelectedRecords(ctx, keys, false, presence)
 }
 
 // prefetchProviders retains every own-slot selection, including zero masks.
@@ -1056,7 +1124,7 @@ func readAttemptBaseHeld(ctx context.Context, tx ControllerTransaction, t *manag
 		return v, err
 	}
 
-	identityDigest, err := managed.OriginalIdentityDigest(t.Identity)
+	identityDigest, err := originalIdentityDigest(ctx, tx, t.Identity)
 	if err != nil {
 		return v, err
 	}
@@ -1265,17 +1333,12 @@ func attemptMutate(ctx context.Context, r *Repository, q managed.AttemptRequest,
 				return managed.Receipt{}, e
 			}
 
-			held, e := readAttempt(ctx, tx, current, attemptLocal(q))
+			held, selected, e := readAttemptWithCurrent(ctx, tx, current, attemptLocal(q))
 			if e != nil {
 				return managed.Receipt{}, e
 			}
 
-			selected, e := selectedAttempt(ctx, tx, current)
-			if e != nil {
-				return managed.Receipt{}, e
-			}
-
-			if selected.ref != held.ref || held.state.Successor != nil {
+			if selected != held.ref || held.state.Successor != nil {
 				return managed.Receipt{}, managed.ErrBlocked
 			}
 
