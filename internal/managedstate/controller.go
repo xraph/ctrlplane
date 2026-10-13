@@ -51,7 +51,19 @@ type ControllerReceiptResult struct {
 
 // ImmutableRecordLimit returns the existing cap for the finite batch allowlist.
 func ImmutableRecordLimit(kind string) int {
+	if limit := managed.RecoveryRecordLimit(managed.RecoveryRecordKind(kind)); limit != 0 {
+		return limit
+	}
+
 	switch kind {
+	case managed.ProviderEffectBindingKind:
+		return managed.MaxProviderEffectBinding
+	case invocationLocatorKind:
+		return maxInvocationLocator
+	case recoveryFixedSelectionKind:
+		return managed.MaxStepRetryPointer
+	case recoveryAcceptanceKind:
+		return managed.MaxRecoveryReceipt
 	case managed.OriginalRegistration:
 		return managed.MaxOriginalLifecycleRecord
 	case "removal_command", "removal_abort", "removal_finish":
@@ -98,6 +110,10 @@ func ValidateImmutableRecordKeys(keys []ControllerRecordKey) error {
 // Step and history readers use the physical controller row bound.
 func HeldRecordLimit(kind string) int {
 	switch kind {
+	case recoveryCurrentKind:
+		return managed.MaxRecoveryCurrent
+	case retryCurrentKind, retryPreviousKind:
+		return managed.MaxStepRetryPointer
 	case "step", "step_history":
 		return 262144
 	case "removal_provider_slot":
@@ -121,7 +137,7 @@ func ValidateHeldRecordKeys(keys []ControllerRecordKey) error {
 			return managed.ErrInvalid
 		}
 
-		if selected.Kind == "removal_provider_slot" {
+		if selected.Kind == "removal_provider_slot" || selected.Kind == recoveryCurrentKind || selected.Kind == retryCurrentKind || selected.Kind == retryPreviousKind {
 			if !digest(selected.Scope) {
 				return managed.ErrInvalid
 			}
@@ -445,6 +461,10 @@ func (r *Repository) SubmitManagedAction(ctx context.Context, q managed.ActionSu
 				return managed.ErrConflict
 			}
 
+			if err := discoveryActionReplay(ctx, tx, saved); err != nil {
+				return err
+			}
+
 			out = saved
 
 			return nil
@@ -615,7 +635,11 @@ func (r *Repository) SubmitManagedAction(ctx context.Context, q managed.ActionSu
 			return err
 		}
 
-		return controllerWrite(ctx, tx, "audit", scope, q.ID.String(), intentFromAccess(access, fingerprint, tx.Now()), true, managed.MaxAuditIntent)
+		if err = controllerWrite(ctx, tx, "audit", scope, q.ID.String(), intentFromAccess(access, fingerprint, tx.Now()), true, managed.MaxAuditIntent); err != nil {
+			return err
+		}
+
+		return discoveryAcceptAction(ctx, tx, operation)
 	})
 	if err != nil {
 		return managed.ActionReceipt{}, err

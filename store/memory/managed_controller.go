@@ -26,6 +26,8 @@ func (b managedBackend) ControllerAtomic(ctx context.Context, _ string, _ []mana
 	// Only the staged maps are used by this transaction-scoped backend. Its held
 	// flag prevents nested Repository calls from acquiring or releasing this lock.
 	staged := &Store{
+		writerFloorAuthority:     s.writerFloorAuthority,
+		writerFloors:             s.writerFloors, // Immutable under the held parent mutex.
 		managedTargets:           maps.Clone(s.managedTargets),
 		managedPhysical:          maps.Clone(s.managedPhysical),
 		managedReceipts:          maps.Clone(s.managedReceipts),
@@ -72,6 +74,10 @@ func (t managedControllerTransaction) ReadRecord(ctx context.Context, kind, scop
 }
 
 func (t managedControllerTransaction) WriteRecord(ctx context.Context, kind, scope, key string, raw []byte, insert bool) error {
+	if err := t.checkManagedMutationFloor(ctx); err != nil {
+		return err
+	}
+
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -275,6 +281,10 @@ func (h *quiescenceBatchStager) StageQuiescenceBatch(ctx context.Context, c *man
 
 	if !h.tx.held || h.used {
 		return managed.ErrBlocked
+	}
+
+	if err := h.tx.checkManagedMutationFloor(ctx); err != nil {
+		return err
 	}
 
 	old := h.tx.store.managedTargets[h.key.InstanceID.String()]

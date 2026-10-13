@@ -51,6 +51,10 @@ func (b managedBackend) Create(ctx context.Context, t *managed.Target) (*managed
 		return nil, err
 	}
 
+	if err := b.checkManagedMutationFloorLocked(ctx); err != nil {
+		return nil, err
+	}
+
 	k := t.InstanceID.String()
 	if old := s.managedTargets[k]; old != nil {
 		if old.TenantID != t.TenantID {
@@ -166,6 +170,10 @@ func (b managedBackend) Atomic(ctx context.Context, k managed.Key, operation id.
 		}
 
 		return saved, nil
+	}
+
+	if err := b.checkManagedMutationFloorLocked(ctx); err != nil {
+		return managed.Receipt{}, err
 	}
 
 	t, err := managedstate.Clone(old)

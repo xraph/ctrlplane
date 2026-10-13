@@ -8,6 +8,10 @@ import (
 )
 
 func (t managedControllerTransaction) ReserveRows(ctx context.Context, target managed.Identity, previous *managed.Identity) error {
+	if err := t.checkManagedMutationFloor(ctx); err != nil {
+		return err
+	}
+
 	var occupied bool
 	if err := t.tx.NewRaw("SELECT EXISTS(SELECT 1 FROM cp_instances WHERE id=$1)", target.InstanceID.String()).Scan(ctx, &occupied); err != nil {
 		return err
@@ -33,6 +37,10 @@ func (t managedControllerTransaction) ReserveRows(ctx context.Context, target ma
 }
 
 func (t managedControllerTransaction) ProjectRows(ctx context.Context, target managed.Identity, receipt managed.ActionReceipt, replay bool) error {
+	if err := t.checkManagedMutationFloor(ctx); err != nil {
+		return err
+	}
+
 	origin, err := managedstate.ProjectionOwnerOrigin(ctx, t, target)
 	if err != nil {
 		return err

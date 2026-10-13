@@ -25,6 +25,8 @@ import (
 type Store struct {
 	*managedstate.Repository
 
+	writerFloorAuthority     string // Immutable host constructor selection; empty is legacy.
+	writerFloors             map[string]*writerFloorState
 	managedTargets           map[string]*managed.Target
 	managedPhysical          map[string]string
 	managedReceipts          map[string]managed.Receipt

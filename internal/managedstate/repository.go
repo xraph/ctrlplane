@@ -26,7 +26,10 @@ type Backend interface {
 }
 
 // Repository exposes only typed consumer transitions through its store methods.
-type Repository struct{ backend Backend }
+type Repository struct {
+	backend      Backend
+	recoveryHost *managed.RemovalRecoveryHost
+}
 
 // New binds the typed repository to one persistence authority.
 func New(b Backend) *Repository { return &Repository{backend: b} }

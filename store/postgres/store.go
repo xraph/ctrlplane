@@ -23,8 +23,9 @@ var _ store.Store = (*Store)(nil)
 type Store struct {
 	*managedstate.Repository
 
-	db *grove.DB
-	pg *pgdriver.PgDB
+	writerFloorAuthority string // Immutable host constructor selection; empty is legacy.
+	db                   *grove.DB
+	pg                   *pgdriver.PgDB
 }
 
 // New creates a new PostgreSQL-backed store.

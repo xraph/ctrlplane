@@ -378,39 +378,71 @@ func (c *cancellationProbe) Err() error {
 }
 
 func TestManagedControllerMemoryAtomicCancellation(t *testing.T) {
-	failures := 0
-	success := false
+	// Measure the successful path before injecting faults. The ceiling bounds the
+	// probe and sweep while allowing acceptance to add legitimate checkpoints.
+	const maxCheckpoints = 1024
 
-	for checkpoint := 1; checkpoint <= 24; checkpoint++ {
-		s := memory.New()
-		q := controllerAction(t)
-		probe := &cancellationProbe{fail: checkpoint}
+	q := controllerAction(t)
+	control := memory.New()
+	controlProbe := &cancellationProbe{fail: maxCheckpoints + 1}
 
-		_, err := s.SubmitManagedAction(probe, q)
-		if err == nil {
-			success = true
-
-			break
-		}
-
-		failures++
-
-		if _, err = s.ReadManagedTarget(t.Context(), q.Key); !errors.Is(err, managed.ErrNotFound) {
-			t.Fatalf("checkpoint %d leaked target: %v", checkpoint, err)
-		}
-
-		page, err := s.ListManagedAuditIntents(t.Context(), auditQuery(q))
-		if err != nil || len(page.Items) != 0 {
-			t.Fatalf("checkpoint %d leaked audit: %v", checkpoint, err)
-		}
-
-		if _, err = s.SubmitManagedAction(t.Context(), q); err != nil {
-			t.Fatalf("checkpoint %d retry: %v", checkpoint, err)
-		}
+	if _, err := control.SubmitManagedAction(controlProbe, q); err != nil {
+		t.Fatalf("successful control failed after %d checkpoints: %v", controlProbe.calls, err)
 	}
 
-	if failures < 7 || !success {
-		t.Fatalf("did not cover acceptance checkpoints: failures=%d success=%v", failures, success)
+	checkpoints := controlProbe.calls
+	if checkpoints < 7 || checkpoints > maxCheckpoints {
+		t.Fatalf("unexpected acceptance checkpoint count: %d", checkpoints)
+	}
+
+	t.Logf("exercising all %d acceptance cancellation checkpoints", checkpoints)
+
+	for checkpoint := 1; checkpoint <= checkpoints; checkpoint++ {
+		t.Run(fmt.Sprintf("checkpoint-%d", checkpoint), func(t *testing.T) {
+			s := memory.New()
+			probe := &cancellationProbe{fail: checkpoint}
+
+			if _, err := s.SubmitManagedAction(probe, q); !errors.Is(err, context.Canceled) {
+				t.Fatalf("checkpoint %d: want context.Canceled, got %v (calls=%d)", checkpoint, err, probe.calls)
+			}
+
+			if _, err := s.ReadManagedTarget(t.Context(), q.Key); !errors.Is(err, managed.ErrNotFound) {
+				t.Fatalf("checkpoint %d leaked target: %v", checkpoint, err)
+			}
+
+			page, err := s.ListManagedAuditIntents(t.Context(), auditQuery(q))
+			if err != nil || len(page.Items) != 0 {
+				t.Fatalf("checkpoint %d leaked audit: %+v %v", checkpoint, page, err)
+			}
+
+			if _, err = s.ReadManagedWorkHead(t.Context(), q.Key); !errors.Is(err, managed.ErrNotFound) {
+				t.Fatalf("checkpoint %d leaked discovery head: %v", checkpoint, err)
+			}
+
+			work, err := s.ListManagedUnresolvedWork(t.Context(), managed.WorkPageRequest{Key: q.Key, Limit: 1})
+			if !errors.Is(err, managed.ErrNotFound) || len(work.Items) != 0 {
+				t.Fatalf("checkpoint %d leaked unresolved work: %+v %v", checkpoint, work, err)
+			}
+
+			if _, err = s.SubmitManagedAction(t.Context(), q); err != nil {
+				t.Fatalf("checkpoint %d retry: %v", checkpoint, err)
+			}
+
+			head, err := s.ReadManagedWorkHead(t.Context(), q.Key)
+			if err != nil || head.LastOrdinal != "1" || head.Provisioning != head.Desired || head.Desired.ID != q.ID {
+				t.Fatalf("checkpoint %d retry discovery: %+v %v", checkpoint, head, err)
+			}
+
+			work, err = s.ListManagedUnresolvedWork(t.Context(), managed.WorkPageRequest{Key: q.Key, Limit: 1})
+			if err != nil || len(work.Items) != 1 || work.Items[0] != head.Desired || work.NextCursor != "" {
+				t.Fatalf("checkpoint %d retry unresolved work: %+v %v", checkpoint, work, err)
+			}
+
+			page, err = s.ListManagedAuditIntents(t.Context(), auditQuery(q))
+			if err != nil || len(page.Items) != 1 || page.NextCursor != "" {
+				t.Fatalf("checkpoint %d retry audit: %+v %v", checkpoint, page, err)
+			}
+		})
 	}
 }
 

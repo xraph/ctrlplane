@@ -27,6 +27,11 @@ func (b managedBackend) ControllerAtomic(ctx context.Context, serial string, key
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+
+	admission, err := b.writerFloorAdmissionFor(ctx, tx)
+	if err != nil {
+		return err
+	}
 	// The global controller lock serializes absent receipt, owner and cursor keys.
 	// A lifecycle mutations still serialize on the physical parent row below.
 	if _, err = tx.NewRaw("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", "ctrlplane-managed-controller").Exec(ctx); err != nil {
@@ -65,7 +70,7 @@ func (b managedBackend) ControllerAtomic(ctx context.Context, serial string, key
 
 	_ = serial
 
-	scoped := managedControllerTransaction{managedBackend: managedBackend{store: b.store, tx: tx}, clock: time.UnixMicro(micros).UTC()}
+	scoped := managedControllerTransaction{managedBackend: managedBackend{store: b.store, tx: tx, floorAdmission: admission}, clock: time.UnixMicro(micros).UTC()}
 	if err = change(scoped); err != nil {
 		return err
 	}
@@ -85,6 +90,10 @@ func (t managedControllerTransaction) ReadRecord(ctx context.Context, kind, scop
 	return raw, err
 }
 func (t managedControllerTransaction) WriteRecord(ctx context.Context, kind, scope, key string, raw []byte, insert bool) error {
+	if err := t.checkManagedMutationFloor(ctx); err != nil {
+		return err
+	}
+
 	if insert {
 		_, err := t.tx.NewRaw("INSERT INTO cp_managed_controller_records(kind,scope,key,data) VALUES($1,$2,$3,$4)", kind, scope, key, raw).Exec(ctx)
 
@@ -356,6 +365,10 @@ func (h *quiescenceBatchStager) StageQuiescenceBatch(ctx context.Context, c *man
 
 	if h.tx.tx == nil || h.used {
 		return managed.ErrBlocked
+	}
+
+	if err := h.tx.checkManagedMutationFloor(ctx); err != nil {
+		return err
 	}
 
 	old, err := h.tx.Read(ctx, h.key)

@@ -538,3 +538,49 @@ Continue. Optional work is counted separately: at most 34 full batches and 162
 lease renewals. The 2,864-transition fixture allowance retains the conservative
 490 reserve and two explicit spare transitions. CI requires this campaign under
 race on the exact commit and audits every required case without skips.
+
+## Recovery foundation
+
+The optional removal recovery contracts preserve the original attempt identity,
+provider command and possible effects while retaining revalidation, invocation and
+retry records separately. Complete recovery is still unavailable. Do not advertise
+`ctrlplane.managed.removal-recovery.v1` support from the presence of these types or
+from a successful read of one retained record. Terminal coverage, native closure,
+provider custody and host integration still need implementation and qualification.
+
+Memory and PostgreSQL retain an unresolved-work index with bounded pages when an
+action or continuation is accepted. `WorkDiscoveryStore` pages it by ordinal; a newer
+user request does not hide older obligations. `PhaseCommandStore` retains the exact
+registration, drain, activation or route command with its independent parent
+receipt and required audit. `PhaseOriginalResultStore` attaches an independently
+retained original registration or drain result to that command. Both receipts must
+agree with the full stored associations. A missing row refuses without backfill.
+These records remain unresolved until a later qualified lifecycle closes them.
+
+Use the producer's native request and command digests when you construct a
+`PhaseNativeIdentity`. A hash of a local transport envelope cannot replace the
+native protocol's digest. The configured host must authenticate that translation
+before accepting the result.
+
+## Protected writer admission
+
+You can opt a Memory or PostgreSQL store into managed write admission with
+`NewWithWriterFloorAdmission`. Its authority is fixed when you construct the store.
+The PostgreSQL protected schema must be installed separately through the floor
+administrator before you use this mode. Missing tables or denied reads refuse;
+they do not select legacy behavior.
+
+A pristine protected namespace admits existing managed writes. Every positive
+floor currently refuses them because no capable writer protocol is enabled.
+The check covers managed commands, retained records and audits, projections and
+direct quiescence batch staging. The floor decision stays inside the same locked
+transaction as the mutation. Exact read-only receipt recovery does not authorize
+a write.
+
+This opt-in store check does not fence an old executable, an ordinary store write
+such as `InsertAuditEntry`, or a raw database handle. Existing `New` constructors
+remain legacy. You need a separate deployed credential and grant barrier covering
+all writers before activating a protected deployment. The dedicated administrator
+and read handles separate library capabilities; they do not prove database role
+isolation. Restoring an older database also requires independent admission state
+and effect reconciliation before any writer can restart.

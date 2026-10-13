@@ -180,7 +180,19 @@ func readAttempt(ctx context.Context, tx ControllerTransaction, t *managed.Targe
 // readAttemptWithCurrent returns the validated pointer for this read only.
 // The session ends here, before a mutation or an independent replay can start.
 func readAttemptWithCurrent(ctx context.Context, tx ControllerTransaction, t *managed.Target, k managed.AttemptKey) (attemptView, managed.AttemptRef, error) {
-	tx = newAttemptCheckedReads(tx)
+	return readAttemptInspectionSession(ctx, tx, t, k, false)
+}
+
+// readRecoveryAttemptInspection is the only schema-2 entry into exact attempt inspection.
+// Every original association remains validated; recovery adds profile and fixed-slot checks.
+func readRecoveryAttemptInspection(ctx context.Context, tx ControllerTransaction, t *managed.Target, k managed.AttemptKey) (attemptView, managed.AttemptRef, error) {
+	return readAttemptInspectionSession(ctx, tx, t, k, true)
+}
+
+func readAttemptInspectionSession(ctx context.Context, tx ControllerTransaction, t *managed.Target, k managed.AttemptKey, recoveryInspection bool) (attemptView, managed.AttemptRef, error) {
+	reads := newAttemptCheckedReads(tx)
+	reads.recoveryInspection = recoveryInspection
+	tx = reads
 
 	var empty attemptView
 
@@ -571,6 +583,10 @@ func (r *Repository) BeginManagedRemovalContinuation(ctx context.Context, q mana
 				return e
 			}
 
+			if e = discoveryActionReplay(ctx, tx, saved.Receipt.ActionReceipt); e != nil {
+				return e
+			}
+
 			out = saved.Receipt
 
 			return nil
@@ -732,6 +748,10 @@ func (r *Repository) BeginManagedRemovalContinuation(ctx context.Context, q mana
 			}
 
 			if e = controllerWrite(ctx, tx, "audit", auditScope, a.ID.String(), intentFromAccess(access, digest, now.UTC()), true, managed.MaxAuditIntent); e != nil {
+				return managed.Receipt{}, e
+			}
+
+			if e = discoveryAcceptAction(ctx, tx, op); e != nil {
 				return managed.Receipt{}, e
 			}
 

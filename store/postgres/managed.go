@@ -16,8 +16,9 @@ import (
 )
 
 type managedBackend struct {
-	store *Store
-	tx    *pgdriver.PgTx
+	store          *Store
+	tx             *pgdriver.PgTx
+	floorAdmission *writerFloorMutationAdmission
 }
 
 func (b managedBackend) begin(ctx context.Context) (*pgdriver.PgTx, error) {
@@ -83,8 +84,17 @@ func (b managedBackend) Create(ctx context.Context, t *managed.Target) (*managed
 	}
 	defer b.rollback(tx)
 
+	admission, err := b.writerFloorAdmissionFor(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+
 	var micros int64
 	if err = tx.NewRaw("SELECT (extract(epoch FROM clock_timestamp()) * 1000000)::bigint").Scan(ctx, &micros); err != nil {
+		return nil, err
+	}
+
+	if err = admission.check(ctx); err != nil {
 		return nil, err
 	}
 
@@ -174,6 +184,11 @@ func (b managedBackend) Atomic(ctx context.Context, k managed.Key, operation id.
 	}
 	defer b.rollback(tx)
 
+	admission, err := b.writerFloorAdmissionFor(ctx, tx)
+	if err != nil {
+		return managed.Receipt{}, err
+	}
+
 	var body []byte
 	if err = tx.NewRaw(b.parentReadQuery(), k.InstanceID.String()).Scan(ctx, &body); err != nil {
 		if isNoRows(err) {
@@ -205,6 +220,10 @@ func (b managedBackend) Atomic(ctx context.Context, k managed.Key, operation id.
 	}
 
 	if !isNoRows(err) {
+		return managed.Receipt{}, err
+	}
+
+	if err = admission.check(ctx); err != nil {
 		return managed.Receipt{}, err
 	}
 

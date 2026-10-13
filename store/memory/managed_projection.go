@@ -8,6 +8,10 @@ import (
 )
 
 func (t managedControllerTransaction) ReserveRows(ctx context.Context, target managed.Identity, previous *managed.Identity) error {
+	if err := t.checkManagedMutationFloor(ctx); err != nil {
+		return err
+	}
+
 	if t.store.instances[target.InstanceID.String()] != nil {
 		return managed.ErrConflict
 	}
@@ -21,6 +25,10 @@ func (t managedControllerTransaction) ReserveRows(ctx context.Context, target ma
 }
 
 func (t managedControllerTransaction) ProjectRows(ctx context.Context, target managed.Identity, receipt managed.ActionReceipt, replay bool) error {
+	if err := t.checkManagedMutationFloor(ctx); err != nil {
+		return err
+	}
+
 	if err := ctx.Err(); err != nil {
 		return err
 	}

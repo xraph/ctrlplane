@@ -54,15 +54,16 @@ type attemptEvent struct {
 	Receipt       managed.Receipt    `json:"receipt"`
 }
 type attemptView struct {
-	lineageRoot *attemptView
-	validated   bool
-	originals   map[id.ID]managed.AttemptBindingReference
-	commands    map[managed.AttemptCommandKey]managed.AttemptCommandRecord
-	fences      map[managed.AttemptBindingKey]managed.AttemptFenceRecord
-	scope       string
-	descriptor  managed.AttemptDescriptor
-	state       managed.AttemptState
-	ref         managed.AttemptRef
+	recoveryActivation *managed.RecoveryAssociation
+	lineageRoot        *attemptView
+	validated          bool
+	originals          map[id.ID]managed.AttemptBindingReference
+	commands           map[managed.AttemptCommandKey]managed.AttemptCommandRecord
+	fences             map[managed.AttemptBindingKey]managed.AttemptFenceRecord
+	scope              string
+	descriptor         managed.AttemptDescriptor
+	state              managed.AttemptState
+	ref                managed.AttemptRef
 }
 
 func attemptHash(domain string, value any) (string, error) {
@@ -299,6 +300,8 @@ func attemptSets(ctx context.Context, tx ControllerTransaction, t *managed.Targe
 // The view is discarded before the caller performs any write or fresh callback.
 type attemptCheckedReads struct {
 	ControllerTransaction
+
+	recoveryInspection bool
 
 	heldRows            map[[3]string][]byte
 	heldMissing         map[[3]string]bool
@@ -1082,7 +1085,7 @@ func readAttemptBaseHeld(ctx context.Context, tx ControllerTransaction, t *manag
 		}
 	}
 
-	state, err := attemptRead[managed.AttemptState](ctx, tx, "removal_attempt_state", scope, d.AttemptID.String(), managed.MaxAttemptFact)
+	state, activation, err := readRecoveryCompatibleAttemptState(ctx, checked, scope, d.AttemptID.String())
 	if err != nil {
 		return v, err
 	}
@@ -1092,11 +1095,12 @@ func readAttemptBaseHeld(ctx context.Context, tx ControllerTransaction, t *manag
 	}
 
 	revision, e := state.Revision.Uint64()
-	if e != nil || revision == 0 || revision > math.MaxInt64 || state.SchemaVersion != "1" || state.AttemptRef != v.ref {
+	if e != nil || revision == 0 || revision > math.MaxInt64 || (state.SchemaVersion != "1" && state.SchemaVersion != "2") || state.AttemptRef != v.ref {
 		return v, managed.ErrUnavailable
 	}
 
 	v.state = state
+	v.recoveryActivation = activation
 
 	original, err := acceptedOperationBase(ctx, tx, root.OriginalOperationKey)
 	if err != nil {
@@ -1169,6 +1173,11 @@ func readAttemptBaseHeld(ctx context.Context, tx ControllerTransaction, t *manag
 	}
 
 	v.validated = true
+	if v.recoveryActivation != nil {
+		if err = validateRecoveryActivationInspectionHeld(ctx, tx, t, v); err != nil {
+			return attemptView{}, err
+		}
+	}
 
 	return v, nil
 }
@@ -1257,6 +1266,10 @@ func attemptGrantReceipt(v attemptView, r managed.Receipt) managed.AttemptReceip
 	return managed.AttemptReceipt{Receipt: r, AttemptID: v.ref.AttemptID, Generation: v.ref.Generation, ProviderOperationID: v.descriptor.ProviderOperationID, DescriptorDigest: v.ref.DescriptorDigest}
 }
 func attemptUpdate(ctx context.Context, tx ControllerTransaction, v *attemptView) error {
+	if v.state.SchemaVersion != "1" || v.recoveryActivation != nil {
+		return managed.ErrUnsupported
+	}
+
 	v.validated = false
 
 	n, err := v.state.Revision.Uint64()
