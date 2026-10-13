@@ -469,14 +469,14 @@ func (s *service) TestProviderHealth(ctx context.Context, providerName string) (
 		return nil, fmt.Errorf("test provider health: %w", ctrlplane.ErrForbidden)
 	}
 
-	p, err := s.providers.Get(providerName)
+	pctx, p, err := s.providers.Acquire(ctx, providerName)
 	if err != nil {
 		return nil, fmt.Errorf("test provider health: %w", err)
 	}
 
 	// If the provider implements HealthChecker, use it.
 	if hc, ok := p.(provider.HealthChecker); ok {
-		status, healthErr := hc.HealthCheck(ctx)
+		status, healthErr := hc.HealthCheck(pctx)
 
 		result := &ProviderHealthResult{
 			Name:      providerName,

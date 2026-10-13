@@ -166,7 +166,7 @@ func (s *service) Deploy(ctx context.Context, req DeployRequest) (*Deployment, e
 	}
 
 	// Resolve the infrastructure provider for this instance.
-	prov, err := s.providers.Get(inst.ProviderName)
+	pctx, prov, err := s.providers.Acquire(ctx, inst.ProviderName)
 	if err != nil {
 		return nil, fmt.Errorf("deploy: get provider %s: %w", inst.ProviderName, err)
 	}
@@ -185,7 +185,7 @@ func (s *service) Deploy(ctx context.Context, req DeployRequest) (*Deployment, e
 	// service through its lifecycle so dashboards / observers can see
 	// per-service granularity (especially useful for canary rollouts
 	// that promote one service at a time).
-	execErr := st.Execute(ctx, StrategyParams{
+	execErr := st.Execute(pctx, StrategyParams{
 		Deployment: dep,
 		Provider:   prov,
 		OnProgress: func(string, int, string) {},
@@ -451,7 +451,7 @@ func (s *service) Rollback(ctx context.Context, instanceID id.ID, releaseID id.I
 	}
 
 	// Resolve the infrastructure provider.
-	prov, err := s.providers.Get(inst.ProviderName)
+	pctx, prov, err := s.providers.Acquire(ctx, inst.ProviderName)
 	if err != nil {
 		return nil, fmt.Errorf("rollback: get provider %s: %w", inst.ProviderName, err)
 	}
@@ -466,7 +466,7 @@ func (s *service) Rollback(ctx context.Context, instanceID id.ID, releaseID id.I
 	}
 
 	// Execute the rollback deployment.
-	execErr := st.Execute(ctx, StrategyParams{
+	execErr := st.Execute(pctx, StrategyParams{
 		Deployment: dep,
 		Provider:   prov,
 		OnProgress: func(string, int, string) {},

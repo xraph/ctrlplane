@@ -90,6 +90,11 @@ func (s *service) Create(ctx context.Context, req CreateRequest) (*Instance, err
 		return nil, fmt.Errorf("create instance: resolve provider: %w", err)
 	}
 
+	pctx, err := s.providers.WithCredentials(ctx, providerKey)
+	if err != nil {
+		return nil, fmt.Errorf("create instance: %w", err)
+	}
+
 	// Resolve the effective deployment source: an explicit Source, or
 	// legacy Services projected onto a services Source.
 	source := req.Source
@@ -129,7 +134,7 @@ func (s *service) Create(ctx context.Context, req CreateRequest) (*Instance, err
 		return nil, fmt.Errorf("create instance: insert: %w", err)
 	}
 
-	result, err := s.provisionSource(ctx, p, inst, source, req)
+	result, err := s.provisionSource(pctx, p, inst, source, req)
 	if err != nil {
 		// Mark the instance as failed if provisioning fails.
 		inst.State = provider.StateFailed
@@ -345,7 +350,7 @@ func (s *service) Delete(ctx context.Context, instanceID id.ID) error {
 	}
 
 	if !wasDestroyed {
-		p, providerErr := s.providers.Get(inst.ProviderName)
+		pctx, p, providerErr := s.providers.Acquire(ctx, inst.ProviderName)
 		if providerErr != nil {
 			// Provider deconfigured — drop the row anyway. There's
 			// no point keeping it pointing at a vanished provider;
@@ -364,7 +369,7 @@ func (s *service) Delete(ctx context.Context, instanceID id.ID) error {
 			return nil
 		}
 
-		if err := dispatch.Deprovision(ctx, p, inst.Source.Type, inst.ID); err != nil {
+		if err := dispatch.Deprovision(pctx, p, inst.Source.Type, inst.ID); err != nil {
 			inst.State = provider.StateFailed
 			inst.UpdatedAt = time.Now().UTC()
 			_ = s.store.Update(ctx, inst)
@@ -415,12 +420,12 @@ func (s *service) Start(ctx context.Context, instanceID id.ID) error {
 		return fmt.Errorf("start instance: update state: %w", err)
 	}
 
-	p, err := s.providers.Get(inst.ProviderName)
+	pctx, p, err := s.providers.Acquire(ctx, inst.ProviderName)
 	if err != nil {
 		return fmt.Errorf("start instance: resolve provider: %w", err)
 	}
 
-	if err := p.Start(ctx, inst.ID); err != nil {
+	if err := p.Start(pctx, inst.ID); err != nil {
 		inst.State = provider.StateFailed
 		inst.UpdatedAt = time.Now().UTC()
 		_ = s.store.Update(ctx, inst)
@@ -474,12 +479,12 @@ func (s *service) Stop(ctx context.Context, instanceID id.ID) error {
 		return fmt.Errorf("stop instance: update state: %w", err)
 	}
 
-	p, err := s.providers.Get(inst.ProviderName)
+	pctx, p, err := s.providers.Acquire(ctx, inst.ProviderName)
 	if err != nil {
 		return fmt.Errorf("stop instance: resolve provider: %w", err)
 	}
 
-	if err := p.Stop(ctx, inst.ID); err != nil {
+	if err := p.Stop(pctx, inst.ID); err != nil {
 		inst.State = provider.StateFailed
 		inst.UpdatedAt = time.Now().UTC()
 		_ = s.store.Update(ctx, inst)
@@ -522,12 +527,12 @@ func (s *service) Restart(ctx context.Context, instanceID id.ID) error {
 		return ctrlplane.ErrForbidden
 	}
 
-	p, err := s.providers.Get(inst.ProviderName)
+	pctx, p, err := s.providers.Acquire(ctx, inst.ProviderName)
 	if err != nil {
 		return fmt.Errorf("restart instance: resolve provider: %w", err)
 	}
 
-	if err := p.Restart(ctx, inst.ID); err != nil {
+	if err := p.Restart(pctx, inst.ID); err != nil {
 		inst.State = provider.StateFailed
 		inst.UpdatedAt = time.Now().UTC()
 		_ = s.store.Update(ctx, inst)
@@ -592,12 +597,12 @@ func (s *service) Scale(ctx context.Context, instanceID id.ID, req ScaleRequest)
 		spec.Replicas = *req.Replicas
 	}
 
-	p, err := s.providers.Get(inst.ProviderName)
+	pctx, p, err := s.providers.Acquire(ctx, inst.ProviderName)
 	if err != nil {
 		return fmt.Errorf("scale instance: resolve provider: %w", err)
 	}
 
-	if err := p.Scale(ctx, inst.ID, spec); err != nil {
+	if err := p.Scale(pctx, inst.ID, spec); err != nil {
 		return fmt.Errorf("scale instance: provider scale: %w", err)
 	}
 
@@ -645,12 +650,12 @@ func (s *service) Suspend(ctx context.Context, instanceID id.ID, reason string) 
 	inst.SuspendedAt = &now
 	inst.UpdatedAt = now
 
-	p, err := s.providers.Get(inst.ProviderName)
+	pctx, p, err := s.providers.Acquire(ctx, inst.ProviderName)
 	if err != nil {
 		return fmt.Errorf("suspend instance: resolve provider: %w", err)
 	}
 
-	if err := p.Stop(ctx, inst.ID); err != nil {
+	if err := p.Stop(pctx, inst.ID); err != nil {
 		return fmt.Errorf("suspend instance: provider stop: %w", err)
 	}
 
@@ -694,12 +699,12 @@ func (s *service) Unsuspend(ctx context.Context, instanceID id.ID) error {
 	inst.SuspendedAt = nil
 	inst.UpdatedAt = time.Now().UTC()
 
-	p, err := s.providers.Get(inst.ProviderName)
+	pctx, p, err := s.providers.Acquire(ctx, inst.ProviderName)
 	if err != nil {
 		return fmt.Errorf("unsuspend instance: resolve provider: %w", err)
 	}
 
-	if err := p.Start(ctx, inst.ID); err != nil {
+	if err := p.Start(pctx, inst.ID); err != nil {
 		return fmt.Errorf("unsuspend instance: provider start: %w", err)
 	}
 
@@ -736,12 +741,12 @@ func (s *service) Logs(ctx context.Context, instanceID id.ID, opts LogsOptions) 
 		return nil, fmt.Errorf("logs: get instance: %w", err)
 	}
 
-	p, err := s.providers.Get(inst.ProviderName)
+	pctx, p, err := s.providers.Acquire(ctx, inst.ProviderName)
 	if err != nil {
 		return nil, fmt.Errorf("logs: resolve provider: %w", err)
 	}
 
-	rc, err := p.Logs(ctx, inst.ID, provider.LogOptions{
+	rc, err := p.Logs(pctx, inst.ID, provider.LogOptions{
 		Follow: opts.Follow,
 		Since:  opts.Since,
 		Tail:   opts.Tail,
@@ -772,12 +777,12 @@ func (s *service) Resources(ctx context.Context, instanceID id.ID) (*provider.Re
 		return nil, fmt.Errorf("resources: get instance: %w", err)
 	}
 
-	p, err := s.providers.Get(inst.ProviderName)
+	pctx, p, err := s.providers.Acquire(ctx, inst.ProviderName)
 	if err != nil {
 		return nil, fmt.Errorf("resources: resolve provider: %w", err)
 	}
 
-	usage, err := p.Resources(ctx, inst.ID)
+	usage, err := p.Resources(pctx, inst.ID)
 	if err != nil {
 		return nil, fmt.Errorf("resources: provider: %w", err)
 	}

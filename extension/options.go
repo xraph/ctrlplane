@@ -27,6 +27,14 @@ func WithProvider(name string, p provider.Provider) ExtOption {
 	}
 }
 
+// WithCredentialsResolver makes Ctrl Plane fetch a provider's credentials
+// before each call to it. See app.WithCredentialsResolver.
+func WithCredentialsResolver(r provider.CredentialsResolver) ExtOption {
+	return func(e *Extension) {
+		e.opts = append(e.opts, app.WithCredentialsResolver(r))
+	}
+}
+
 // WithBootstrapHook registers a bootstrap.Hook that contributes
 // shared platform services (NATS, Redis, MongoDB clusters, etc.)
 // the reconciler installs on every datacenter where the hook self-

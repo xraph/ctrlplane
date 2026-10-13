@@ -86,7 +86,7 @@ func (s *service) Reconcile(ctx context.Context, dc DatacenterInfo, declared []B
 		desiredByName[spec.Name] = spec
 	}
 
-	prov, err := s.providers.Get(dc.ProviderName)
+	pctx, prov, err := s.providers.Acquire(ctx, dc.ProviderName)
 	if err != nil {
 		return fmt.Errorf("bootstrap reconcile: provider %s: %w", dc.ProviderName, err)
 	}
@@ -100,7 +100,7 @@ func (s *service) Reconcile(ctx context.Context, dc DatacenterInfo, declared []B
 			continue
 		}
 
-		s.retire(ctx, prov, bw)
+		s.retire(pctx, prov, bw)
 	}
 
 	// Pass 2 — install desired entries that don't have a matching
@@ -112,7 +112,7 @@ func (s *service) Reconcile(ctx context.Context, dc DatacenterInfo, declared []B
 			// Already installed at the right body — only retry if
 			// pending / failed.
 			if bw.State == StatePending || bw.State == StateFailed {
-				s.provision(ctx, prov, dc, bw)
+				s.provision(pctx, prov, dc, bw)
 			}
 
 			continue
@@ -125,7 +125,7 @@ func (s *service) Reconcile(ctx context.Context, dc DatacenterInfo, declared []B
 			continue
 		}
 
-		s.provision(ctx, prov, dc, fresh)
+		s.provision(pctx, prov, dc, fresh)
 	}
 
 	return nil

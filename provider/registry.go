@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"maps"
@@ -15,6 +16,7 @@ type Registry struct {
 	mu        sync.RWMutex
 	providers map[string]Provider
 	fallback  string
+	creds     CredentialsResolver
 }
 
 // NewRegistry creates an empty provider registry.
@@ -94,6 +96,52 @@ func (r *Registry) Default() (Provider, error) {
 // held under.
 func (r *Registry) ResolveDefault() (string, Provider, error) {
 	return r.Resolve(r.DefaultName())
+}
+
+// SetCredentialsResolver makes the registry fetch credentials for a
+// provider before each call made through Acquire or WithCredentials. Pass
+// nil to turn it off. Providers that never read CredentialsFromContext are
+// unaffected either way.
+func (r *Registry) SetCredentialsResolver(res CredentialsResolver) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.creds = res
+}
+
+// WithCredentials attaches the credentials for the provider registered
+// under key to ctx. Without a resolver it returns ctx unchanged.
+func (r *Registry) WithCredentials(ctx context.Context, key string) (context.Context, error) {
+	r.mu.RLock()
+	res := r.creds
+	r.mu.RUnlock()
+
+	if res == nil {
+		return ctx, nil
+	}
+
+	creds, err := res.ResolveCredentials(ctx, key)
+	if err != nil {
+		return ctx, fmt.Errorf("ctrlplane: resolve credentials for provider %s: %w", key, err)
+	}
+
+	return ContextWithCredentials(ctx, creds), nil
+}
+
+// Acquire resolves a provider like Resolve and returns a context that
+// carries its credentials. Pass the returned context to the provider call.
+func (r *Registry) Acquire(ctx context.Context, name string) (context.Context, Provider, error) {
+	key, p, err := r.Resolve(name)
+	if err != nil {
+		return ctx, nil, err
+	}
+
+	pctx, err := r.WithCredentials(ctx, key)
+	if err != nil {
+		return ctx, nil, err
+	}
+
+	return pctx, p, nil
 }
 
 // DefaultName returns the fallback provider name, or "" when none is set.

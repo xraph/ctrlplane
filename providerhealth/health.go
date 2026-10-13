@@ -231,6 +231,19 @@ func (c *Cache) checkOne(parent context.Context, name string, p provider.Provide
 	ctx, cancel := context.WithTimeout(parent, c.checkTimeout)
 	defer cancel()
 
+	// name is the registry key, so the probe runs with the same
+	// credentials a real call to this provider would get.
+	ctx, err := c.registry.WithCredentials(ctx, name)
+	if err != nil {
+		return Status{
+			Name:      name,
+			Healthy:   false,
+			Message:   err.Error(),
+			Latency:   time.Since(now),
+			CheckedAt: time.Now().UTC(),
+		}
+	}
+
 	hs, err := hc.HealthCheck(ctx)
 
 	checked := time.Now().UTC()

@@ -50,6 +50,19 @@ func WithProvider(name string, p provider.Provider) Option {
 	}
 }
 
+// WithCredentialsResolver makes Ctrl Plane fetch a provider's credentials
+// before each call to it, keyed by the provider's registry key. Providers
+// read them with provider.CredentialsFromContext. Use it when credentials
+// rotate or expire and handing them over once at construction is not
+// enough.
+func WithCredentialsResolver(r provider.CredentialsResolver) Option {
+	return func(cp *CtrlPlane) error {
+		cp.providers.SetCredentialsResolver(r)
+
+		return nil
+	}
+}
+
 // WithEventBus replaces the default in-memory event bus.
 func WithEventBus(b event.Bus) Option {
 	return func(cp *CtrlPlane) error {
