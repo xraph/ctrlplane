@@ -32,6 +32,12 @@ const ExtensionDescription = "CtrlPlane control plane for managing cloud infrast
 // ExtensionVersion is the semantic version of the extension.
 const ExtensionVersion = "0.1.0"
 
+// GroveExtensionName is the Forge name of the grove extension, which
+// publishes the *grove.DB the store is built from. Forge starts a declared
+// dependency first and skips one that is not registered, so declaring it
+// costs nothing when you run on the in-memory store or pass WithStore.
+const GroveExtensionName = "grove"
+
 // Ensure Extension implements forge.Extension at compile time.
 var _ forge.Extension = (*Extension)(nil)
 
@@ -55,6 +61,10 @@ func New(opts ...ExtOption) *Extension {
 	ext := &Extension{
 		BaseExtension: forge.NewBaseExtension(ExtensionName, ExtensionVersion, ExtensionDescription),
 	}
+
+	// Register and Init resolve *grove.DB from the container, so grove
+	// has to be registered and started before this extension.
+	ext.SetDependencies([]string{GroveExtensionName})
 
 	for _, opt := range opts {
 		opt(ext)
