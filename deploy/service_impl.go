@@ -7,6 +7,7 @@ import (
 
 	ctrlplane "github.com/xraph/ctrlplane"
 	"github.com/xraph/ctrlplane/auth"
+	"github.com/xraph/ctrlplane/dispatch"
 	"github.com/xraph/ctrlplane/event"
 	"github.com/xraph/ctrlplane/id"
 	"github.com/xraph/ctrlplane/instance"
@@ -202,6 +203,9 @@ func (s *service) Deploy(ctx context.Context, req DeployRequest) (*Deployment, e
 			_ = s.store.UpdateDeployment(ctx, dep)
 		},
 	})
+	if execErr == nil {
+		execErr = s.awaitReady(ctx, pctx, prov, inst, dep)
+	}
 
 	finished := time.Now().UTC()
 	dep.FinishedAt = &finished
@@ -466,6 +470,9 @@ func (s *service) Rollback(ctx context.Context, instanceID id.ID, releaseID id.I
 			_ = s.store.UpdateDeployment(ctx, dep)
 		},
 	})
+	if execErr == nil {
+		execErr = s.awaitReady(ctx, pctx, prov, inst, dep)
+	}
 
 	finished := time.Now().UTC()
 	dep.FinishedAt = &finished
@@ -648,6 +655,36 @@ func (s *service) buildReleaseSnapshot(ctx context.Context, tenantID string, ins
 	}
 
 	return out, nil
+}
+
+// awaitReady holds a deployment open until an asynchronous provider
+// reports the instance ready again. Providers that do not implement
+// provider.ReadinessWaiter return straight away. When the wait fails,
+// every service the strategy marked succeeded is marked failed, so the
+// progress map agrees with the deployment's state. ctx is used for the
+// store, pctx (which may carry credentials) for the provider.
+func (s *service) awaitReady(ctx, pctx context.Context, prov provider.Provider, inst *instance.Instance, dep *Deployment) error {
+	waiter, ok := prov.(provider.ReadinessWaiter)
+	if !ok {
+		return nil
+	}
+
+	_, err := provider.WaitReady(pctx, waiter.ReadinessPolicy(), func(ctx context.Context) (*provider.InstanceStatus, error) {
+		return dispatch.Status(ctx, prov, inst.Source.Type, inst.ID)
+	})
+	if err == nil {
+		return nil
+	}
+
+	for name, state := range dep.ServiceProgress {
+		if state == ServiceStateSucceeded {
+			dep.ServiceProgress[name] = ServiceStateFailed
+		}
+	}
+
+	_ = s.store.UpdateDeployment(ctx, dep)
+
+	return fmt.Errorf("wait for readiness: %w", err)
 }
 
 // UsesManagedAuthority confirms the persistence object used by the protection guard.

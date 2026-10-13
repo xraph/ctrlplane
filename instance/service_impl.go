@@ -147,6 +147,10 @@ func (s *service) Create(ctx context.Context, req CreateRequest) (*Instance, err
 	inst.ProviderRef = result.ProviderRef
 	inst.ServiceRefs = result.ServiceRefs
 	inst.Endpoints = result.Endpoints
+
+	if err := s.awaitReady(ctx, pctx, p, inst); err != nil {
+		return nil, fmt.Errorf("create instance: %w", err)
+	}
 	// Advance state to Running after a successful Provision. Providers
 	// like docker create + start the container synchronously inside
 	// Provision, so by the time we get here the workload is live —
@@ -173,6 +177,46 @@ func (s *service) Create(ctx context.Context, req CreateRequest) (*Instance, err
 		WithActor(claims.SubjectID))
 
 	return inst, nil
+}
+
+// awaitReady waits for an asynchronous provider to report the freshly
+// provisioned instance ready. Providers that do not implement
+// provider.ReadinessWaiter return straight away. While waiting the row sits
+// in StateStarting; a failure or timeout leaves it in StateFailed. ctx is
+// used for the store, pctx (which may carry credentials) for the provider.
+func (s *service) awaitReady(ctx, pctx context.Context, p provider.Provider, inst *Instance) error {
+	waiter, ok := p.(provider.ReadinessWaiter)
+	if !ok {
+		return nil
+	}
+
+	inst.State = provider.StateStarting
+	inst.UpdatedAt = time.Now().UTC()
+
+	if err := s.store.Update(ctx, inst); err != nil {
+		return fmt.Errorf("update before readiness wait: %w", err)
+	}
+
+	st, err := provider.WaitReady(pctx, waiter.ReadinessPolicy(), func(ctx context.Context) (*provider.InstanceStatus, error) {
+		return dispatch.Status(ctx, p, inst.Source.Type, inst.ID)
+	})
+
+	// Platforms like Cloud Run only know the URL once the service is up,
+	// so take the endpoints the status reports over the ones Provision
+	// returned.
+	if st != nil && len(st.Endpoints) > 0 {
+		inst.Endpoints = st.Endpoints
+	}
+
+	if err != nil {
+		inst.State = provider.StateFailed
+		inst.UpdatedAt = time.Now().UTC()
+		_ = s.store.Update(ctx, inst)
+
+		return fmt.Errorf("wait for readiness: %w", err)
+	}
+
+	return nil
 }
 
 // provisionSource resolves the instance's variables against its derived
