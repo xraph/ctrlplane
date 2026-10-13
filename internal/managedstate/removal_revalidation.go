@@ -402,35 +402,7 @@ func recoveryExportShape(facts any) error {
 // ReadManagedRecoveryNativeIntent returns one immutable native request for inspection.
 // It supplies no delegation grant and never selects a newer request or repairs an absent leaf.
 func (r *Repository) ReadManagedRecoveryNativeIntent(ctx context.Context, q managed.RecoveryExactRequest) (managed.RecoveryRecord[managed.RecoveryNativeIntent], error) {
-	var out managed.RecoveryRecord[managed.RecoveryNativeIntent]
-	if q.Association.Kind != managed.RecoveryIntentRecord {
-		return out, managed.ErrInvalid
-	}
-
-	if err := attemptVersion(q.Key); err != nil {
-		return out, err
-	}
-
-	err := r.controller(ctx, "attempt:"+q.Key.InstanceID.String(), []managed.Key{q.Key.Key}, func(tx ControllerTransaction) error {
-		if _, readErr := tx.Read(ctx, q.Key.Key); readErr != nil {
-			return readErr
-		}
-
-		record, readErr := recoveryReadFact[managed.RecoveryNativeIntent](ctx, tx, q.Key, q.Association)
-		if readErr != nil {
-			return readErr
-		}
-
-		if record.Facts.Binding.Key.AttemptKey != q.Key || record.Facts.Profile != managed.RemovalRecoveryProfile || len(record.Facts.Command) == 0 || managed.Digest(record.Facts.Command) != record.Facts.CommandDigest {
-			return managed.ErrUnavailable
-		}
-
-		out = record
-
-		return nil
-	})
-
-	return out, err
+	return r.readRecoveryNativeIntent(ctx, q)
 }
 
 // ReadManagedProviderNativeCommit returns the exact per-binding acceptance and original

@@ -116,7 +116,16 @@ func invocationNativeCommitReplayHeld(ctx context.Context, tx ControllerTransact
 		return zero, managed.ErrUnavailable
 	}
 
-	proof, err := recoveryReadFact[managed.RemovalRevalidationFacts](ctx, tx, attemptKey(view), record.Facts.CurrentProof)
+	target, err := tx.Read(ctx, view.descriptor.Key)
+	if err != nil {
+		return zero, err
+	}
+
+	if _, err = recoveryNativeIntentExactHeld(ctx, tx, target, view, record.Facts.Intent); err != nil {
+		return zero, err
+	}
+
+	proof, err := recoveryProofExactHeld(ctx, tx, target, view, record.Facts.CurrentProof)
 	if err != nil {
 		return zero, managed.ErrUnavailable
 	}
@@ -226,7 +235,7 @@ func (r *Repository) RecordManagedProviderNativeCommit(ctx context.Context, requ
 			return readErr
 		}
 
-		intent, readErr = recoveryReadFact[managed.RecoveryNativeIntent](ctx, tx, key, cloned.Facts.Intent)
+		intent, readErr = recoveryNativeIntentExactHeld(ctx, tx, target, view, cloned.Facts.Intent)
 
 		return readErr
 	})
@@ -289,7 +298,7 @@ func (r *Repository) RecordManagedProviderNativeCommit(ctx context.Context, requ
 				return managed.Receipt{}, heldErr
 			}
 
-			savedIntent, heldErr := recoveryReadFact[managed.RecoveryNativeIntent](ctx, tx, key, verified.Intent)
+			savedIntent, heldErr := recoveryNativeIntentExactHeld(ctx, tx, current, checked, verified.Intent)
 			if heldErr != nil {
 				return managed.Receipt{}, heldErr
 			}

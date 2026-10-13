@@ -209,6 +209,15 @@ func recoveryRevalidationInputsHeld(ctx context.Context, tx ControllerTransactio
 		return err
 	}
 
+	intent, err := recoveryNativeIntentExactHeld(ctx, tx, target, view, facts.Intent)
+	if err != nil {
+		return err
+	}
+
+	if intent.Facts.Operation != "revalidate" {
+		return managed.ErrAuthority
+	}
+
 	if facts.ProcessDisposition == "effect_complete" {
 		return recoveryEffectCompleteHeld(ctx, tx, target, view, facts, now)
 	}

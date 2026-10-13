@@ -545,8 +545,8 @@ The optional removal recovery contracts preserve the original attempt identity,
 provider command and possible effects while retaining revalidation, invocation and
 retry records separately. Complete recovery is still unavailable. Do not advertise
 `ctrlplane.managed.removal-recovery.v1` support from the presence of these types or
-from a successful read of one retained record. Native closure, terminal settlement,
-provider custody and host integration still need implementation and qualification.
+from a successful read of one retained record. Terminal settlement, provider
+custody and host integration still need implementation and qualification.
 
 Memory and PostgreSQL retain an unresolved-work index with bounded pages when an
 action or continuation is accepted. `WorkDiscoveryStore` pages it by ordinal; a newer
@@ -571,6 +571,12 @@ or authorize settlement. Late results still need their original associations.
 Effective coverage keeps each fixed step explicit: unissued, removed or closed
 before dispatch. Uncertainty cannot satisfy coverage. Its ordered binding records
 and close-intent sponsor are bound to an independent acceptance receipt.
+
+Native intent and guard-close readers authenticate the original request, event and
+receipt. Close acceptance checks the configured producer outside authority locks,
+then checks the same binding, cutoff and coverage again inside the transaction.
+Each retained close intent and result consumes only its matching reserved slot.
+Replaying a request returns its retained record and never grants another send.
 
 Revalidation readers check the retained request, event and receipt before returning
 a proof. An `effect_complete` proof also needs the exact positive provider result,

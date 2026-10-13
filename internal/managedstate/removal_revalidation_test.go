@@ -306,7 +306,7 @@ func TestRecoveryNativeExactReadersPreserveSavedReceipt(t *testing.T) {
 	intent := recoveryTestRecord(t, managed.RecoveryIntentRecord, intentFacts, now)
 	intentRef := recoveryTestStore(t, fixture, key, intent)
 
-	readIntent, err := repository.ReadManagedRecoveryNativeIntent(t.Context(), managed.RecoveryExactRequest{Key: key, Association: intentRef})
+	readIntent, err := recoveryReadFact[managed.RecoveryNativeIntent](t.Context(), fixture, key, intentRef)
 	if err != nil || readIntent.Acceptance != intent.Acceptance || !bytes.Equal(readIntent.Facts.Command, intent.Facts.Command) {
 		t.Fatal("exact native request or original receipt changed", err)
 	}
@@ -321,6 +321,10 @@ func TestRecoveryNativeExactReadersPreserveSavedReceipt(t *testing.T) {
 	}
 
 	writes := fixture.writes
+	if _, err = repository.ReadManagedRecoveryNativeIntent(t.Context(), managed.RecoveryExactRequest{Key: key, Association: intentRef}); err == nil || fixture.writes != writes {
+		t.Fatal("native request leaf without complete attempt history accepted or mutated storage", err)
+	}
+
 	if _, err = repository.ReadManagedProviderNativeCommit(t.Context(), managed.RecoveryExactRequest{Key: key, Association: commitRef}); err == nil || fixture.writes != writes {
 		t.Fatal("native leaf without complete invocation history accepted or mutated storage", err)
 	}

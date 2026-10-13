@@ -18,6 +18,7 @@ type recoveryRequestHeader struct {
 	Kind                  managed.RecoveryRecordKind `json:"kind"`
 	Command               managed.RecoveryCommand    `json:"command"`
 	ExpectedCurrentDigest string                     `json:"expected_current_digest,omitempty"`
+	DerivedCoverage       bool                       `json:"derived_coverage,omitempty"`
 }
 
 func recoveryProofFingerprint(request managed.RemovalRevalidationRequest) (string, error) {
@@ -32,7 +33,7 @@ func recoveryProofRequestHeld(ctx context.Context, tx ControllerTransaction, vie
 		return zero, err
 	}
 
-	if header.SchemaVersion != "1" || header.Kind != managed.RecoveryProofRecord || header.Command.AttemptRef != view.ref || header.Command.Key != view.descriptor.Key || header.Command.ID != record.Acceptance.OperationID {
+	if header.SchemaVersion != "1" || header.Kind != managed.RecoveryProofRecord || header.DerivedCoverage || header.Command.AttemptRef != view.ref || header.Command.Key != view.descriptor.Key || header.Command.ID != record.Acceptance.OperationID {
 		return zero, managed.ErrUnavailable
 	}
 

@@ -56,7 +56,7 @@ func ImmutableRecordLimit(kind string) int {
 	}
 
 	switch kind {
-	case recoveryCoverageSelectionKind, recoveryRequestKind:
+	case recoveryCoverageSelectionKind, recoveryRequestKind, recoveryNativeCloseSelectionKind:
 		return managed.MaxRecoveryReceipt
 	case managed.ProviderEffectBindingKind:
 		return managed.MaxProviderEffectBinding

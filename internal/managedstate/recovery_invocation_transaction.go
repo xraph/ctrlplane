@@ -237,7 +237,7 @@ func invocationRemainingReserve(ctx context.Context, tx ControllerTransaction, t
 		after.closureObligations++
 	}
 
-	return after, nil
+	return recoveryNativeCloseReserveHeld(ctx, tx, target, view, after)
 }
 
 func stageInvocationTransition(ctx context.Context, tx ControllerTransaction, target *managed.Target, view attemptView, selected retrySelected, request invocationTransitionRequest, acceptance managed.RecoveryAcceptance, now time.Time) (*recoveryActivationRows, error) {
