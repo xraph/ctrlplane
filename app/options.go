@@ -1,6 +1,8 @@
 package app
 
 import (
+	"errors"
+
 	ctrlplane "github.com/xraph/ctrlplane"
 	"github.com/xraph/ctrlplane/auth"
 	"github.com/xraph/ctrlplane/bootstrap"
@@ -9,6 +11,7 @@ import (
 	"github.com/xraph/ctrlplane/provider"
 	"github.com/xraph/ctrlplane/secrets"
 	"github.com/xraph/ctrlplane/store"
+	"github.com/xraph/ctrlplane/worker"
 )
 
 // Option configures a CtrlPlane instance.
@@ -58,6 +61,22 @@ func WithProvider(name string, p provider.Provider) Option {
 func WithCredentialsResolver(r provider.CredentialsResolver) Option {
 	return func(cp *CtrlPlane) error {
 		cp.providers.SetCredentialsResolver(r)
+
+		return nil
+	}
+}
+
+// WithLeaderElector runs background workers only on the replica e elects
+// as leader. Use it when you run several replicas against one store, or
+// each replica runs every worker. With the postgres store, pass
+// store.LeaderElector(name).
+func WithLeaderElector(e worker.LeaderElector) Option {
+	return func(cp *CtrlPlane) error {
+		if e == nil {
+			return errors.New("ctrlplane: WithLeaderElector: elector is nil")
+		}
+
+		cp.leaderElector = e
 
 		return nil
 	}

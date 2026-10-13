@@ -28,6 +28,11 @@ type Scheduler struct {
 	mu       sync.RWMutex
 	statuses map[string]*workerStatus
 	active   atomic.Bool
+
+	// elector, when set, gates every worker run on leadership. leader
+	// mirrors the most recent answer for IsLeader.
+	elector LeaderElector
+	leader  atomic.Bool
 }
 
 // workerStatus tracks runtime state for a single worker.
@@ -43,6 +48,43 @@ func NewScheduler() *Scheduler {
 	return &Scheduler{
 		statuses: make(map[string]*workerStatus),
 	}
+}
+
+// SetLeaderElector makes the scheduler run workers only while e reports
+// this replica as leader. Call it before Start. Without an elector every
+// replica runs every worker, which is right for a single replica.
+func (s *Scheduler) SetLeaderElector(e LeaderElector) {
+	s.elector = e
+}
+
+// IsLeader reports whether the scheduler last found itself leader. It is
+// always true when no elector is set.
+func (s *Scheduler) IsLeader() bool {
+	if s.elector == nil {
+		return true
+	}
+
+	return s.leader.Load()
+}
+
+// lead asks the elector, if any, whether this replica may run workers now.
+// An elector error counts as not leading: running twice is the failure
+// leader election exists to prevent.
+func (s *Scheduler) lead(ctx context.Context) bool {
+	if s.elector == nil {
+		return true
+	}
+
+	ok, err := s.elector.IsLeader(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "worker scheduler: leader election: %v\n", err)
+
+		ok = false
+	}
+
+	s.leader.Store(ok)
+
+	return ok
 }
 
 // Register adds a worker to the scheduler.
@@ -138,6 +180,10 @@ func (s *Scheduler) Start(ctx context.Context) error {
 			for {
 				select {
 				case <-ticker.C:
+					if !s.lead(ctx) {
+						continue
+					}
+
 					err := w.Run(ctx)
 
 					now := time.Now().UTC()
@@ -181,13 +227,25 @@ func (s *Scheduler) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop cancels all running workers and waits for them to finish.
-func (s *Scheduler) Stop(_ context.Context) error {
+// Stop cancels all running workers, waits for them to finish and, when an
+// elector is set, resigns leadership so another replica can take over
+// without waiting for this one's lock to expire.
+func (s *Scheduler) Stop(ctx context.Context) error {
 	s.cancel()
 
 	select {
 	case <-s.done:
 	case <-time.After(10 * time.Second):
+	}
+
+	if s.elector == nil {
+		return nil
+	}
+
+	s.leader.Store(false)
+
+	if err := s.elector.Resign(ctx); err != nil {
+		return fmt.Errorf("worker scheduler: resign leadership: %w", err)
 	}
 
 	return nil

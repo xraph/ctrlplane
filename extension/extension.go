@@ -54,6 +54,7 @@ type Extension struct {
 	storeProvided bool // True when WithStore was called explicitly.
 	useVault      bool // True when explicitly configured for vault via WithVaultName.
 	vaultProvided bool // True when WithVault was called explicitly.
+	leaderLock    string // Advisory lock name; set by WithLeaderElection.
 }
 
 // New creates a CtrlPlane Forge extension with the given options.
@@ -147,6 +148,10 @@ func (e *Extension) Init(fapp forge.App) error {
 		return err
 	}
 
+	if err := e.applyLeaderElection(); err != nil {
+		return err
+	}
+
 	// Run migrations if not disabled.
 	if !e.config.DisableMigrate {
 		if err := e.cp.Store().Migrate(context.Background()); err != nil {
@@ -164,6 +169,24 @@ func (e *Extension) Init(fapp forge.App) error {
 
 		e.api.RegisterRoutes(fapp.Router().Group(basePath))
 	}
+
+	return nil
+}
+
+// applyLeaderElection wires the Postgres advisory-lock elector into the
+// scheduler when WithLeaderElection was used. It runs after the store is
+// resolved and before Start, which is when the scheduler first asks.
+func (e *Extension) applyLeaderElection() error {
+	if e.leaderLock == "" {
+		return nil
+	}
+
+	pg, ok := e.cp.Store().(*pgstore.Store)
+	if !ok {
+		return fmt.Errorf("ctrlplane: leader election needs the postgres store, got %T", e.cp.Store())
+	}
+
+	e.cp.Scheduler().SetLeaderElector(pg.LeaderElector(e.leaderLock))
 
 	return nil
 }

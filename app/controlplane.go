@@ -45,6 +45,10 @@ type CtrlPlane struct {
 	pendingExts []plugin.Extension
 	auditHook   *audithook.Extension
 
+	// leaderElector, when set, limits background workers to the replica
+	// that holds leadership.
+	leaderElector worker.LeaderElector
+
 	// bootstrapHooks is the registry of programmatic bootstrap-service
 	// contributors. Wired before wireServices() so options like
 	// WithBootstrapHook can populate it during construction.
@@ -328,6 +332,10 @@ func (cp *CtrlPlane) wireServices() {
 	cp.scheduler.Register(worker.NewTelemetryCollector(cp.Telemetry, cp.providers, telemetryInterval))
 	cp.scheduler.Register(worker.NewGarbageCollector(cp.store, cp.Instances, cp.store, cp.events, 5*time.Minute, worker.GCConfig{}))
 	cp.scheduler.Register(worker.NewCertRenewer(cp.Network, cp.events, 12*time.Hour))
+
+	if cp.leaderElector != nil {
+		cp.scheduler.SetLeaderElector(cp.leaderElector)
+	}
 
 	// Default audit-trail plugin: bridges every lifecycle event to
 	// admin.AuditEntry rows in the store. Without this nothing

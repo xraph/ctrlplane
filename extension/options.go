@@ -8,6 +8,7 @@ import (
 	"github.com/xraph/ctrlplane/provider"
 	"github.com/xraph/ctrlplane/secrets"
 	"github.com/xraph/ctrlplane/store"
+	pgstore "github.com/xraph/ctrlplane/store/postgres"
 )
 
 // ExtOption configures the CtrlPlane Forge extension.
@@ -32,6 +33,22 @@ func WithProvider(name string, p provider.Provider) ExtOption {
 func WithCredentialsResolver(r provider.CredentialsResolver) ExtOption {
 	return func(e *Extension) {
 		e.opts = append(e.opts, app.WithCredentialsResolver(r))
+	}
+}
+
+// WithLeaderElection runs background workers on one replica only, elected
+// through a Postgres advisory lock named lock (pgstore.DefaultLeaderLock
+// when empty). Replicas that share a database and a lock name elect one
+// leader between them. It needs the postgres store: Register fails when
+// the resolved store is anything else, rather than quietly running every
+// worker on every replica.
+func WithLeaderElection(lock string) ExtOption {
+	return func(e *Extension) {
+		if lock == "" {
+			lock = pgstore.DefaultLeaderLock
+		}
+
+		e.leaderLock = lock
 	}
 }
 
