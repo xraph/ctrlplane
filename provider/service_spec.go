@@ -106,18 +106,114 @@ type ServiceStatus struct {
 // ServiceDeploySpec is a per-service slice of a Deploy operation. A
 // Deploy carries Services []ServiceDeploySpec — partial deploys leave
 // services not listed here untouched.
+//
+// Command, Args, Ports and Resources are optional. Leave one nil and the
+// provider keeps what the service already runs with; set it and the
+// provider should apply it with the new image. Providers that cannot
+// change a field on deploy may ignore it.
 type ServiceDeploySpec struct {
 	Name        string            `json:"name"                   validate:"required"`
 	Image       string            `json:"image"                  validate:"required"`
 	Env         map[string]string `json:"env,omitempty"`
 	HealthCheck *HealthCheckSpec  `json:"health_check,omitempty"`
+
+	// Command and Args override the image's ENTRYPOINT and CMD.
+	Command []string `json:"command,omitempty"`
+	Args    []string `json:"args,omitempty"`
+
+	// Ports replaces the ports the service listens on.
+	Ports []PortSpec `json:"ports,omitempty"`
+
+	// Resources replaces the service's CPU, memory and replica size.
+	Resources *ResourceSpec `json:"resources,omitempty"`
 }
 
 // ServiceSnapshot is the per-service slice of a Release. Releases are
 // always self-contained — partial deploys produce a new Release whose
 // non-targeted services are inherited from the prior Release.
+//
+// Command, Args, Ports and Resources are recorded when a deploy set them,
+// or carried over from the previous Release when it did not, so a rollback
+// restores them too.
 type ServiceSnapshot struct {
-	Name  string            `json:"name"`
-	Image string            `json:"image"`
-	Env   map[string]string `json:"env,omitempty"`
+	Name      string            `json:"name"`
+	Image     string            `json:"image"`
+	Env       map[string]string `json:"env,omitempty"`
+	Command   []string          `json:"command,omitempty"`
+	Args      []string          `json:"args,omitempty"`
+	Ports     []PortSpec        `json:"ports,omitempty"`
+	Resources *ResourceSpec     `json:"resources,omitempty"`
+}
+
+// Snapshot returns the Release snapshot this deploy spec produces when
+// applied on top of prior, the service's snapshot from the previous
+// Release. Pass nil when there is none. Optional fields left unset on the
+// spec keep their value from prior.
+func (d ServiceDeploySpec) Snapshot(prior *ServiceSnapshot) ServiceSnapshot {
+	snap := ServiceSnapshot{
+		Name:      d.Name,
+		Image:     d.Image,
+		Env:       d.Env,
+		Command:   d.Command,
+		Args:      d.Args,
+		Ports:     d.Ports,
+		Resources: d.Resources,
+	}
+
+	if prior == nil {
+		return snap
+	}
+
+	if snap.Command == nil {
+		snap.Command = prior.Command
+	}
+
+	if snap.Args == nil {
+		snap.Args = prior.Args
+	}
+
+	if snap.Ports == nil {
+		snap.Ports = prior.Ports
+	}
+
+	if snap.Resources == nil {
+		snap.Resources = prior.Resources
+	}
+
+	return snap
+}
+
+// DeploySpec returns the deploy spec that restores this snapshot, as a
+// rollback does.
+func (s ServiceSnapshot) DeploySpec() ServiceDeploySpec {
+	return ServiceDeploySpec{
+		Name:      s.Name,
+		Image:     s.Image,
+		Env:       s.Env,
+		Command:   s.Command,
+		Args:      s.Args,
+		Ports:     s.Ports,
+		Resources: s.Resources,
+	}
+}
+
+// SnapshotOf records a provisioned service as a Release snapshot. A zero
+// ResourceSpec is left out, so restoring the snapshot never asks a
+// provider to size a service down to nothing.
+func SnapshotOf(svc ServiceSpec) ServiceSnapshot {
+	snap := ServiceSnapshot{
+		Name:    svc.Name,
+		Image:   svc.Image,
+		Env:     svc.Env,
+		Command: svc.Command,
+		Args:    svc.Args,
+		Ports:   svc.Ports,
+	}
+
+	if svc.Resources != (ResourceSpec{}) {
+		resources := svc.Resources
+		snap.Resources = &resources
+	}
+
+	return snap
 }

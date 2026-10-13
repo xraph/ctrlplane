@@ -291,16 +291,10 @@ func (s *service) RecordInitial(ctx context.Context, instanceID id.ID) (*Release
 	snapshots := make([]provider.ServiceSnapshot, 0, len(inst.Services))
 
 	for _, svc := range inst.Services {
-		// Per-service ports/health-check/etc. live on the workload
-		// spec, not on the Release. Releases only carry the bits
-		// that change across deploys: image + env. Match Deploy()'s
-		// snapshot shape exactly so a rollback target is byte-equal
-		// to what a normal Deploy would have produced.
-		snapshots = append(snapshots, provider.ServiceSnapshot{
-			Name:  svc.Name,
-			Image: svc.Image,
-			Env:   svc.Env,
-		})
+		// Health checks, volumes and the like live on the workload
+		// spec, not on the Release. Releases carry the bits a deploy
+		// can change: image, env, command, args, ports and resources.
+		snapshots = append(snapshots, provider.SnapshotOf(svc))
 	}
 
 	// Version bumps off NextReleaseVersion so a future legacy row
@@ -333,11 +327,7 @@ func (s *service) RecordInitial(ctx context.Context, instanceID id.ID) (*Release
 	progress := make(map[string]string, len(inst.Services))
 
 	for _, svc := range inst.Services {
-		deploySpecs = append(deploySpecs, provider.ServiceDeploySpec{
-			Name:  svc.Name,
-			Image: svc.Image,
-			Env:   svc.Env,
-		})
+		deploySpecs = append(deploySpecs, provider.SnapshotOf(svc).DeploySpec())
 		progress[svc.Name] = "succeeded"
 	}
 
@@ -405,11 +395,7 @@ func (s *service) Rollback(ctx context.Context, instanceID id.ID, releaseID id.I
 	services := make([]provider.ServiceDeploySpec, len(rel.Services))
 
 	for i, snap := range rel.Services {
-		services[i] = provider.ServiceDeploySpec{
-			Name:  snap.Name,
-			Image: snap.Image,
-			Env:   snap.Env,
-		}
+		services[i] = snap.DeploySpec()
 	}
 
 	progress := make(map[string]string, len(services))
@@ -631,20 +617,28 @@ func (s *service) buildReleaseSnapshot(ctx context.Context, tenantID string, ins
 		return nil, fmt.Errorf("look up prior release: %w", err)
 	}
 
+	var previous []provider.ServiceSnapshot
+	if prior != nil && len(prior.Items) > 0 {
+		previous = prior.Items[0].Services
+	}
+
+	previousByName := make(map[string]*provider.ServiceSnapshot, len(previous))
+	for i := range previous {
+		previousByName[previous[i].Name] = &previous[i]
+	}
+
 	out := make([]provider.ServiceSnapshot, 0, len(updates))
 	covered := make(map[string]struct{}, len(updates))
 
 	for _, u := range updates {
-		out = append(out, provider.ServiceSnapshot{
-			Name:  u.Name,
-			Image: u.Image,
-			Env:   u.Env,
-		})
+		// Command, args, ports and resources the update leaves unset
+		// carry over from the prior snapshot of the same service.
+		out = append(out, u.Snapshot(previousByName[u.Name]))
 		covered[u.Name] = struct{}{}
 	}
 
-	if prior != nil && len(prior.Items) > 0 {
-		for _, prev := range prior.Items[0].Services {
+	if len(previous) > 0 {
+		for _, prev := range previous {
 			if _, replaced := covered[prev.Name]; replaced {
 				continue
 			}
