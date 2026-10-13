@@ -562,6 +562,12 @@ Use the producer's native request and command digests when you construct a
 native protocol's digest. The configured host must authenticate that translation
 before accepting the result.
 
+Recovery invocation readers verify the retained permission, marker, result and
+native commit associations before returning them. Fresh public commands require
+the complete recovery capability, which remains disabled. A retained cutoff
+revokes further issuance but does not prove that an earlier command had no effect
+or authorize settlement. Late results still need their original associations.
+
 ## Protected writer admission
 
 You can opt a Memory or PostgreSQL store into managed write admission with
@@ -584,3 +590,15 @@ all writers before activating a protected deployment. The dedicated administrato
 and read handles separate library capabilities; they do not prove database role
 isolation. Restoring an older database also requires independent admission state
 and effect reconciliation before any writer can restart.
+
+For a dedicated PostgreSQL authority database, `NewWriterFloorExclusionAdmin`
+adds grant revocation to the floor administrator's transaction. Configure its
+separate administrator, offline owner and exact retired writer roles. Your launcher
+must first close admission, disable those logins and drain their sessions. Activation
+checks the roles, sessions and catalog, then revokes table, column, sequence, routine,
+schema, database and default privileges before updating the floor and history.
+Any refusal rolls back both the privilege changes and the floor update.
+
+The exclusion administrator grants no replacement writer access. Positive writer
+protocols remain disabled. This database check does not implement the launcher's
+admission barrier or the independent state needed to quarantine a restored database.

@@ -28,6 +28,7 @@ type WriterFloorAdmin struct{ backend *writerFloorBackend }
 type writerFloorBackend struct {
 	pg        *pgdriver.PgDB
 	authority string
+	exclusion *writerFloorExclusion
 }
 
 type writerFloorSnapshot struct {
@@ -117,6 +118,13 @@ func (b *writerFloorBackend) WriterFloorSnapshot(ctx context.Context, fn func(ma
 }
 
 func (b *writerFloorBackend) WriterFloorAdminAtomic(ctx context.Context, fn func(managedstate.WriterFloorAdminTransaction) error) error {
+	if b.exclusion != nil {
+		bounded, cancel := context.WithTimeout(ctx, 15*time.Second)
+		defer cancel()
+
+		ctx = bounded
+	}
+
 	tx, err := b.pg.BeginTxQuery(ctx, &driver.TxOptions{IsolationLevel: driver.LevelReadCommitted})
 	if err != nil {
 		return err
@@ -129,6 +137,12 @@ func (b *writerFloorBackend) WriterFloorAdminAtomic(ctx context.Context, fn func
 
 	if err = writerFloorLock(ctx, tx, b.authority, true); err != nil {
 		return err
+	}
+
+	if b.exclusion != nil {
+		if _, err = tx.NewRaw(b.exclusion.sql).Exec(ctx); err != nil {
+			return err
+		}
 	}
 
 	if err = fn(&writerFloorTransaction{writerFloorSnapshot{tx: tx, authority: b.authority}}); err != nil {
