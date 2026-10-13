@@ -47,7 +47,7 @@ jobs:
           test "$(go env GOVERSION)" = go1.26.9
           test "$(go env GOWORK)" = off
           git ls-files '*go.mod' '*go.work*' > dependency-evidence/tracked-modules.txt
-          python3 -c 'from pathlib import Path; assert Path("dependency-evidence/tracked-modules.txt").read_text().splitlines() == ["go.mod", "qualification/oldb23a/go.mod"]'
+          python3 -c 'from pathlib import Path; assert Path("dependency-evidence/tracked-modules.txt").read_text().splitlines() == ["go.mod", "qualification/oldb23a/go.mod", "qualification/olde627/go.mod"]'
           go list -m -json all > dependency-evidence/modules.json
           python3 - <<'PYCODE'
           import json
@@ -94,6 +94,39 @@ jobs:
         with:
           version: v2.12.2
           working-directory: qualification/oldb23a
+      - name: Verify fixed published e627 executable
+        working-directory: qualification/olde627
+        run: |
+          go mod tidy -diff
+          go mod verify
+          go vet ./...
+          go test -race -count=1 ./...
+          go list -m -json all > ../../dependency-evidence/olde627-modules.json
+          go build -mod=readonly -trimpath -o ../../dependency-evidence/olde627 .
+          ../../dependency-evidence/olde627 identity > ../../dependency-evidence/olde627-identity.json
+          go version -m ../../dependency-evidence/olde627 > ../../dependency-evidence/olde627-build.txt
+          python3 - <<'PYCODE'
+          import json
+          from pathlib import Path
+          decoder = json.JSONDecoder()
+          data = Path("../../dependency-evidence/olde627-modules.json").read_text()
+          while data.strip():
+              module, offset = decoder.raw_decode(data.lstrip())
+              assert not module.get("Replace"), module["Path"]
+              data = data.lstrip()[offset:]
+          identity = json.loads(Path("../../dependency-evidence/olde627-identity.json").read_text())
+          assert identity["schema_version"] == "1"
+          assert identity["module"] == "github.com/xraph/ctrlplane"
+          assert identity["go_version"] == "go1.26.9"
+          assert identity["version"] == "v1.7.1-0.20261011163110-e627f3173e76"
+          assert identity["sum"] == "h1:CUOpUx7/ESFCdNZTGETIikEEAJPyq+iU0PDkr0/HfXU="
+          assert not identity["replaced"]
+          PYCODE
+      - name: Lint e627 executable module
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.12.2
+          working-directory: qualification/olde627
       - name: Install pinned scanner
         run: go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
       - name: Scan imports, tests, program and actual binary
@@ -103,6 +136,8 @@ jobs:
           govulncheck -mode=binary -json dependency-evidence/controlplane > dependency-evidence/binary-vuln.json
           (cd qualification/oldb23a && govulncheck -test -json ./...) > dependency-evidence/oldb23a-imports-tests-vuln.json
           govulncheck -mode=binary -json dependency-evidence/oldb23a > dependency-evidence/oldb23a-binary-vuln.json
+          (cd qualification/olde627 && govulncheck -test -json ./...) > dependency-evidence/olde627-imports-tests-vuln.json
+          govulncheck -mode=binary -json dependency-evidence/olde627 > dependency-evidence/olde627-binary-vuln.json
           python3 - <<'PYCODE'
           import json
           from pathlib import Path
@@ -173,6 +208,62 @@ jobs:
           go-version: "1.26.9"
           cache: true
           cache-dependency-path: go.sum
+      - name: Build pinned writers for exclusion qualification
+        env:
+          GOMAXPROCS: "2"
+          GOFLAGS: -p=1
+        run: |
+          set -euo pipefail
+          mkdir -p managed-maximum-evidence
+          for fixture in oldb23a olde627; do
+            (cd "qualification/$fixture" && go mod tidy -diff && go mod verify && go build -mod=readonly -trimpath -o "../../managed-maximum-evidence/$fixture" .)
+            "managed-maximum-evidence/$fixture" identity > "managed-maximum-evidence/$fixture-exclusion-identity.json"
+            go version -m "managed-maximum-evidence/$fixture" > "managed-maximum-evidence/$fixture-exclusion-build.txt"
+            sha256sum "managed-maximum-evidence/$fixture" > "managed-maximum-evidence/$fixture-exclusion-sha256.txt"
+          done
+
+      - name: Qualify all protected writer exclusion cases before maximum campaign
+        env:
+          CTRLPLANE_WRITER_EXCLUSION_REQUIRED: "1"
+          CTRLPLANE_OLD_B23A_REQUIRED: "1"
+          CTRLPLANE_OLD_E627_REQUIRED: "1"
+          GOMAXPROCS: "2"
+          GOFLAGS: -p=1
+        run: |
+          set -euo pipefail
+          test -n "$CTRLPLANE_TEST_POSTGRES_DSN"
+          export CTRLPLANE_OLD_B23A_BINARY="$PWD/managed-maximum-evidence/oldb23a"
+          export CTRLPLANE_OLD_E627_BINARY="$PWD/managed-maximum-evidence/olde627"
+          go test -race -json ./store -run '^TestWriterExclusion' -count=1 -timeout=10m | tee managed-maximum-evidence/writer-exclusion-race.jsonl
+          python3 - <<'PYCODE'
+          import json
+          from pathlib import Path
+          base = Path("managed-maximum-evidence")
+          package = "github.com/xraph/ctrlplane/store"
+          expected = {
+              "TestWriterExclusionActualOldB23aJournal",
+              "TestWriterExclusionActualOldE627Desired",
+              "TestWriterExclusionAuditAndEveryTableDML",
+              "TestWriterExclusionTypedCallbackRollback",
+              "TestWriterExclusionReplayRepairsGrantsWithoutMovingFloor",
+              "TestWriterExclusionPublicAndColumnGrants",
+              "TestWriterExclusionRejectsUnsafeRoles",
+              "TestWriterExclusionCatalogDrift",
+              "TestWriterExclusionOpenPoolAndPreparedStatementRefuse",
+              "TestWriterExclusionAdministrativeDeadline",
+              "TestWriterExclusionHistoryAndPositiveProtocolRemainClosed",
+              "TestWriterExclusionLegacyInstallationRemainsOptional",
+          }
+          rows = [json.loads(line) for line in (base / "writer-exclusion-race.jsonl").read_text().splitlines()]
+          refused = [row for row in rows if row.get("Action") in {"skip", "fail"} or "no tests to run" in row.get("Output", "")]
+          parents = [row["Test"] for row in rows if row.get("Action") == "pass" and row.get("Package") == package and row.get("Test") and "/" not in row["Test"]]
+          packages = {row.get("Package") for row in rows if row.get("Action") == "pass" and not row.get("Test")}
+          audit = {"required_parent_tests": sorted(expected), "passed_parent_tests": sorted(parents), "packages": sorted(packages), "skipped_or_failed": refused}
+          (base / "writer-exclusion-coverage-audit.json").write_text(json.dumps(audit, indent=2) + "\n")
+          if len(expected) != 12 or len(parents) != 12 or set(parents) != expected or packages != {package} or refused:
+              raise SystemExit("Incomplete writer exclusion qualification")
+          PYCODE
+
       - name: Verify persistent stores and HTTP contracts
         run: |
           set -euo pipefail

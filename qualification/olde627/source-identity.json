@@ -1,0 +1,27 @@
+{
+  "commit": "e627f3173e76a7c23df8b99359ccb75eaa45fdc7",
+  "module": "github.com/xraph/ctrlplane",
+  "version": "v1.7.1-0.20261011163110-e627f3173e76",
+  "sum": "h1:CUOpUx7/ESFCdNZTGETIikEEAJPyq+iU0PDkr0/HfXU=",
+  "go_mod_sum": "h1:C28UBTD++IQccnOF8xSHWipngtJUGZIUYfq/0vsd7Jw=",
+  "source_anchors": [
+    {
+      "path": "managed/store.go",
+      "git_blob": "9ed22a70b6fa1a885f4a726e543c3b2803f850d2",
+      "sha256": "c85e7ef9180e9bcd774edb238251f4f00e21bb45ff17d4153c21fbcdc733b4cd",
+      "published_module_bytes_match": true
+    },
+    {
+      "path": "internal/managedstate/repository.go",
+      "git_blob": "c78de193919a35ed5e4a27049d6c1df4671f5c8a",
+      "sha256": "1a92b19a49ac07e6ea40ae0c82624f4d2614c084ee36dcd11bf287827b46e3e9",
+      "published_module_bytes_match": true
+    },
+    {
+      "path": "store/postgres/managed.go",
+      "git_blob": "7bae6b90652628d0376c526b485d2528311e4fa6",
+      "sha256": "1d9009015a4288f47052f873ec7c88020514ee507dabf1677c891525b7d4f841",
+      "published_module_bytes_match": true
+    }
+  ]
+}
