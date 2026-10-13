@@ -74,10 +74,16 @@ func (s *service) Create(ctx context.Context, req CreateRequest) (*Instance, err
 		providerName = dcProvider
 	}
 
+	// providerKey is the registry key the provider is held under. The
+	// instance records it, not Info().Name, so a provider registered under
+	// a unique key (say, one per cloud connection) is found again by that
+	// key on every later call.
+	var providerKey string
+
 	if providerName != "" {
-		p, err = s.providers.Get(providerName)
+		providerKey, p, err = s.providers.Resolve(providerName)
 	} else {
-		p, err = s.providers.Default()
+		providerKey, p, err = s.providers.ResolveDefault()
 	}
 
 	if err != nil {
@@ -104,14 +110,13 @@ func (s *service) Create(ctx context.Context, req CreateRequest) (*Instance, err
 		kind = provider.KindDeployment
 	}
 
-	info := p.Info()
 	inst := &Instance{
 		Entity:       entity,
 		TenantID:     claims.TenantID,
 		Name:         req.Name,
 		Slug:         slugify(req.Name),
 		DatacenterID: req.DatacenterID,
-		ProviderName: info.Name,
+		ProviderName: providerKey,
 		Region:       req.Region,
 		State:        provider.StateProvisioning,
 		Kind:         kind,

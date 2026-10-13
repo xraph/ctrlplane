@@ -32,22 +32,68 @@ func (r *Registry) Register(name string, p Provider) {
 	r.providers[name] = p
 }
 
-// Get retrieves a provider by name.
+// Get retrieves a provider by registry key. See Resolve for how a name
+// that is not a key is matched.
 func (r *Registry) Get(name string) (Provider, error) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
+	_, p, err := r.Resolve(name)
 
+	return p, err
+}
+
+// Resolve looks a provider up and returns the registry key it is held
+// under along with the provider itself.
+//
+// The key you passed to Register is matched first. When nothing is
+// registered under name, Resolve falls back to the provider whose
+// Info().Name equals name, as long as exactly one does. That keeps rows
+// written before instances recorded registry keys resolvable: those rows
+// hold Info().Name, and for most providers the key and the name are the
+// same string anyway.
+func (r *Registry) Resolve(name string) (string, Provider, error) {
+	r.mu.RLock()
 	p, ok := r.providers[name]
-	if !ok {
-		return nil, fmt.Errorf("%w: %s", ErrProviderNotFound, name)
+	snapshot := maps.Clone(r.providers)
+	r.mu.RUnlock()
+
+	if ok {
+		return name, p, nil
 	}
 
-	return p, nil
+	// Info is called outside the lock: it belongs to the provider and the
+	// registry should not hold its mutex across foreign code.
+	var (
+		matchKey string
+		match    Provider
+		matches  int
+	)
+
+	for key, candidate := range snapshot {
+		if candidate.Info().Name == name {
+			matchKey, match = key, candidate
+			matches++
+		}
+	}
+
+	switch matches {
+	case 0:
+		return "", nil, fmt.Errorf("%w: %s", ErrProviderNotFound, name)
+	case 1:
+		return matchKey, match, nil
+	default:
+		return "", nil, fmt.Errorf("%w: %s is the name of %d registered providers; look it up by registry key",
+			ErrProviderNotFound, name, matches)
+	}
 }
 
 // Default returns the fallback provider.
 func (r *Registry) Default() (Provider, error) {
 	return r.Get(r.DefaultName())
+}
+
+// ResolveDefault returns the fallback provider and the registry key it is
+// held under.
+func (r *Registry) ResolveDefault() (string, Provider, error) {
+	return r.Resolve(r.DefaultName())
 }
 
 // DefaultName returns the fallback provider name, or "" when none is set.

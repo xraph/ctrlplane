@@ -107,6 +107,9 @@ type SystemStats struct {
 // reports it; nil when the provider doesn't have a meaningful
 // geographic identity.
 type ProviderStatus struct {
+	// Key is the registry key the provider was registered under. Pass it
+	// to TestProviderHealth and use it as an instance's provider_name.
+	Key          string            `json:"key,omitempty"`
 	Name         string            `json:"name"`
 	Region       string            `json:"region"`
 	Location     *ProviderLocation `json:"location,omitempty"`

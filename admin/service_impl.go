@@ -406,7 +406,7 @@ func (s *service) ListProviders(ctx context.Context) ([]ProviderStatus, error) {
 	all := s.providers.All()
 	statuses := make([]ProviderStatus, 0, len(all))
 
-	for _, p := range all {
+	for key, p := range all {
 		info := p.Info()
 		caps := p.Capabilities()
 
@@ -433,7 +433,10 @@ func (s *service) ListProviders(ctx context.Context) ([]ProviderStatus, error) {
 		healthy := true
 
 		if s.providerHealth != nil {
-			if snap, ok := s.providerHealth.Get(info.Name); ok {
+			// The cache is keyed by registry key, which can differ
+			// from Info().Name when one provider type is registered
+			// several times (one per cloud connection, say).
+			if snap, ok := s.providerHealth.Get(key); ok {
 				healthy = snap.Healthy
 			} else {
 				// Cache hasn't seen this provider yet (cold start
@@ -443,6 +446,7 @@ func (s *service) ListProviders(ctx context.Context) ([]ProviderStatus, error) {
 		}
 
 		statuses = append(statuses, ProviderStatus{
+			Key:          key,
 			Name:         info.Name,
 			Region:       info.Region,
 			Location:     loc,

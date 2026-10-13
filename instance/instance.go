@@ -18,6 +18,10 @@ type Instance struct {
 	Name         string `db:"name"          json:"name"`
 	Slug         string `db:"slug"          json:"slug"`
 	DatacenterID id.ID  `db:"datacenter_id" json:"datacenter_id,omitzero"`
+	// ProviderName is the registry key the instance's provider was
+	// registered under. Rows written by older versions hold the
+	// provider's Info().Name instead; provider.Registry.Get still finds
+	// those when the name is unambiguous.
 	ProviderName string `db:"provider_name" json:"provider_name"`
 
 	// ProviderRef is the workload-level handle (Pod name on k8s,
