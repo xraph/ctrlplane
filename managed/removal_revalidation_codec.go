@@ -29,6 +29,7 @@ const (
 	RecoveryFailureRecord         RecoveryRecordKind = "step_retry_failure"
 	RecoveryResultRecord          RecoveryRecordKind = "step_retry_result"
 	RecoveryCoverageRecord        RecoveryRecordKind = "removal_effective_coverage"
+	RecoveryCoverageBindingRecord RecoveryRecordKind = "removal_effective_binding"
 )
 
 // RecoveryRecordLimit returns zero for an unsupported record kind.
@@ -46,7 +47,7 @@ func RecoveryRecordLimit(kind RecoveryRecordKind) int {
 		return MaxStepRetryRoot
 	case RecoveryAuthorizationRecord, RecoveryPermissionRecord, RecoveryFailureRecord, RecoveryResultRecord:
 		return MaxStepRetryFact
-	case RecoveryPermissionProofRecord:
+	case RecoveryPermissionProofRecord, RecoveryCoverageBindingRecord:
 		return MaxRecoveryFact
 	default:
 		return 0
@@ -85,6 +86,8 @@ func recoveryDomain(kind RecoveryRecordKind) string {
 		return "ctrlplane.managed.step-retry-result.v1"
 	case RecoveryCoverageRecord:
 		return "ctrlplane.managed.effective-coverage.v1"
+	case RecoveryCoverageBindingRecord:
+		return "ctrlplane.managed.effective-coverage-binding.v1"
 	default:
 		return ""
 	}
@@ -122,6 +125,8 @@ func recoveryFactKind(value any) RecoveryRecordKind {
 		return RecoveryResultRecord
 	case EffectiveRemovalCoverage:
 		return RecoveryCoverageRecord
+	case EffectiveRemovalBinding:
+		return RecoveryCoverageBindingRecord
 	default:
 		return ""
 	}

@@ -377,6 +377,8 @@ func recoveryFactSubject(facts any) (any, error) {
 		return value.Key, nil
 	case managed.EffectiveRemovalCoverage:
 		return value.Key, nil
+	case managed.EffectiveRemovalBinding:
+		return value.Binding.Key, nil
 	default:
 		return nil, managed.ErrUnsupported
 	}

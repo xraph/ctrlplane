@@ -198,13 +198,15 @@ type ProviderInvocationGrant struct {
 	MayDelegate bool                                     `json:"may_delegate"`
 }
 
-// EffectiveProviderStep names one selected terminal invocation for one original logical step.
+// EffectiveProviderStep names one fixed logical step and its explicit disposition.
+// A genuinely unissued step has no invocation or fabricated terminal digest.
 type EffectiveProviderStep struct {
-	StepDigest       string `json:"step_digest"`
-	SelectionDigest  string `json:"selection_digest"`
-	PermissionDigest string `json:"permission_digest"`
-	TerminalDigest   string `json:"terminal_digest"`
-	ClosureDigest    string `json:"closure_digest,omitempty"`
+	Disposition      EffectiveStepDisposition `json:"disposition"`
+	StepDigest       string                   `json:"step_digest"`
+	SelectionDigest  string                   `json:"selection_digest"`
+	PermissionDigest string                   `json:"permission_digest"`
+	TerminalDigest   string                   `json:"terminal_digest"`
+	ClosureDigest    string                   `json:"closure_digest,omitempty"`
 }
 
 // EffectiveRemovalCoverage contains the fixed finite step set, without retry history.
@@ -217,6 +219,8 @@ type EffectiveRemovalCoverage struct {
 	Cutoff              RecoveryAssociation     `json:"cutoff"`
 	Disposition         Disposition             `json:"disposition"`
 	Steps               []EffectiveProviderStep `json:"steps"`
+	BindingCount        Decimal                 `json:"binding_count"`
+	BindingSetDigest    string                  `json:"binding_set_digest"`
 }
 
 // ProviderInvocationRecord is inspection only and cannot recreate a lost delegation grant.
