@@ -288,7 +288,8 @@ func (p *Provider) Status(ctx context.Context, instanceID id.ID) (*provider.Inst
 //
 // Phase 3 implementation: fetch the current Job, walk req.Services
 // patching matching tasks (image via task.Config.image; env via
-// task.Env merge), then re-submit. Services not in req.Services
+// task.Env merge; command, args, ports and resources when set, see
+// applyTaskOverrides), then re-submit. Services not in req.Services
 // keep their current image.
 func (p *Provider) Deploy(ctx context.Context, req provider.DeployRequest) (*provider.DeployResult, error) {
 	if len(req.Services) == 0 {
@@ -325,6 +326,8 @@ func (p *Provider) Deploy(ctx context.Context, req provider.DeployRequest) (*pro
 
 				maps.Copy(task.Env, update.Env)
 			}
+
+			applyTaskOverrides(group, task, update)
 		}
 	}
 
@@ -342,6 +345,143 @@ func (p *Provider) Deploy(ctx context.Context, req provider.DeployRequest) (*pro
 		ProviderRef: "nomad:" + jobName(req.InstanceID),
 		Status:      "deployed",
 	}, nil
+}
+
+// applyTaskOverrides writes the optional fields of a deploy spec onto
+// a fetched task, in the same shape buildJob gives a new job. A nil
+// field keeps what the task already has.
+//
+//   - Command and Args become the docker driver's entrypoint and args.
+//     Set to an empty list, the key is dropped and the image default
+//     applies, as buildTask does.
+//   - Ports replace this service's labels in the group's bridge
+//     network and in the task's port list, and keep its Consul service
+//     entry pointing at the first port. Other services' ports stay.
+//   - Resources set the task's CPU, MemoryMB and DiskMB, mapped the
+//     same way buildTask maps them. Nomad reserves a single amount per
+//     resource, so there is no separate request and limit. Replicas is
+//     not applied: the group Count is the job's replica axis and Scale
+//     owns it, so a rollback to an older Release can't undo a Scale.
+func applyTaskOverrides(group *nomadTaskGroup, task *nomadTask, update provider.ServiceDeploySpec) {
+	if update.Command != nil {
+		setDriverList(task.Config, "entrypoint", update.Command)
+	}
+
+	if update.Args != nil {
+		setDriverList(task.Config, "args", update.Args)
+	}
+
+	if update.Resources != nil {
+		if task.Resources == nil {
+			task.Resources = &nomadResources{}
+		}
+
+		task.Resources.CPU = update.Resources.CPUMillis
+		task.Resources.MemoryMB = update.Resources.MemoryMB
+		task.Resources.DiskMB = update.Resources.DiskMB
+	}
+
+	if update.Ports != nil {
+		setServicePorts(group, task, update.Ports)
+	}
+}
+
+// setDriverList sets a list-valued docker driver option, or removes it
+// when the list is empty.
+func setDriverList(cfg map[string]any, key string, values []string) {
+	if len(values) == 0 {
+		delete(cfg, key)
+
+		return
+	}
+
+	cfg[key] = values
+}
+
+// setServicePorts swaps one task's ports in its group for ports.
+func setServicePorts(group *nomadTaskGroup, task *nomadTask, ports []provider.PortSpec) {
+	labels := servicePortLabels(task.Name, ports)
+
+	// buildJob puts every port on one bridge network. Prefer that
+	// network, fall back to whatever network the group has, and add a
+	// bridge network only when the group has none.
+	var groupNet *nomadNetwork
+
+	for _, n := range group.Networks {
+		if n.Mode == "bridge" {
+			groupNet = n
+
+			break
+		}
+	}
+
+	if groupNet == nil && len(group.Networks) > 0 {
+		groupNet = group.Networks[0]
+	}
+
+	if groupNet == nil && len(labels) > 0 {
+		groupNet = &nomadNetwork{Mode: "bridge"}
+		group.Networks = append(group.Networks, groupNet)
+	}
+
+	if groupNet != nil {
+		groupNet.DynamicPorts = append(withoutPortsOf(groupNet.DynamicPorts, task.Name), labels...)
+		groupNet.ReservedPorts = withoutPortsOf(groupNet.ReservedPorts, task.Name)
+	}
+
+	names := make([]string, len(labels))
+	for i, l := range labels {
+		names[i] = l.Label
+	}
+
+	setDriverList(task.Config, "ports", names)
+
+	// Consul registration mirrors buildJob: one entry per non-init
+	// service with ports, on its first port.
+	role := provider.ServiceRole(task.Meta["ctrlplane.role"])
+	isInit := role == provider.RoleInit ||
+		(task.Lifecycle != nil && task.Lifecycle.Hook == "prestart" && !task.Lifecycle.Sidecar)
+	register := len(labels) > 0 && !isInit
+
+	services := group.Services[:0]
+	found := false
+
+	for _, s := range group.Services {
+		if s.Name != task.Name {
+			services = append(services, s)
+
+			continue
+		}
+
+		if register {
+			s.PortLabel = portLabel(task.Name, 0)
+			services = append(services, s)
+			found = true
+		}
+	}
+
+	if register && !found {
+		services = append(services, &nomadService{
+			Name:      task.Name,
+			PortLabel: portLabel(task.Name, 0),
+			Tags:      []string{"ctrlplane", string(role)},
+		})
+	}
+
+	group.Services = services
+}
+
+// withoutPortsOf returns ports minus the labels owned by serviceName.
+func withoutPortsOf(ports []*nomadPortLabel, serviceName string) []*nomadPortLabel {
+	out := make([]*nomadPortLabel, 0, len(ports))
+
+	for _, p := range ports {
+		if !isPortLabelOf(p.Label, serviceName) {
+			out = append(out, p)
+		}
+	}
+
+	return out
 }
 
 // Rollback is intentionally a no-op — the deploy.Service builds a

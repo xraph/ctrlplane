@@ -22,6 +22,7 @@ package nomad
 
 import (
 	"strconv"
+	"strings"
 
 	"github.com/xraph/ctrlplane/id"
 	"github.com/xraph/ctrlplane/provider"
@@ -148,19 +149,7 @@ func buildJob(cfg Config, req provider.ProvisionRequest) *nomadJobRequest {
 
 		// Collect ports at the group level — Nomad's bridge-mode
 		// network requires ports declared at the group, not the task.
-		for j, port := range svc.Ports {
-			label := svc.Name + "-" + strconv.Itoa(j)
-			pl := &nomadPortLabel{
-				Label: label,
-				To:    port.Container,
-			}
-
-			if port.Host > 0 {
-				pl.Value = port.Host
-			}
-
-			allPorts = append(allPorts, pl)
-		}
+		allPorts = append(allPorts, servicePortLabels(svc.Name, svc.Ports)...)
 
 		// Register a service entry for each non-Init container so
 		// Nomad's Consul integration (when present) advertises the
@@ -242,7 +231,7 @@ func buildTask(svc provider.ServiceSpec) *nomadTask {
 	if len(svc.Ports) > 0 {
 		labels := make([]string, len(svc.Ports))
 		for i := range svc.Ports {
-			labels[i] = svc.Name + "-" + strconv.Itoa(i)
+			labels[i] = portLabel(svc.Name, i)
 		}
 
 		cfg["ports"] = labels
@@ -293,4 +282,50 @@ func replicaCount(req provider.ProvisionRequest) int {
 	}
 
 	return 1
+}
+
+// portLabel names a service's i-th port in the group network. Tasks
+// list these labels in their docker config, and Consul registrations
+// point at the first one.
+func portLabel(serviceName string, i int) string {
+	return serviceName + "-" + strconv.Itoa(i)
+}
+
+// servicePortLabels builds the group-network port entries for one
+// service's ports. A Host port pins the value; otherwise Nomad picks.
+func servicePortLabels(serviceName string, ports []provider.PortSpec) []*nomadPortLabel {
+	out := make([]*nomadPortLabel, 0, len(ports))
+
+	for j, port := range ports {
+		pl := &nomadPortLabel{
+			Label: portLabel(serviceName, j),
+			To:    port.Container,
+		}
+
+		if port.Host > 0 {
+			pl.Value = port.Host
+		}
+
+		out = append(out, pl)
+	}
+
+	return out
+}
+
+// isPortLabelOf reports whether label is one portLabel produced for
+// serviceName. The suffix must be all digits, so service "api" does
+// not claim "api-gateway-0" or "api-1-0".
+func isPortLabelOf(label, serviceName string) bool {
+	rest, ok := strings.CutPrefix(label, serviceName+"-")
+	if !ok || rest == "" {
+		return false
+	}
+
+	for _, r := range rest {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+
+	return true
 }
