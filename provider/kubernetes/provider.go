@@ -10,6 +10,7 @@ import (
 	"helm.sh/helm/v3/pkg/chart"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/discovery/cached/memory"
@@ -332,12 +333,19 @@ func (p *Provider) Status(ctx context.Context, instanceID id.ID) (*provider.Inst
 }
 
 // Deploy pushes a new release by updating each targeted service's
-// container image and ConfigMap. Services not listed in req.Services
+// container image and ConfigMap, plus any command, args, ports or
+// resources the request sets. Services not listed in req.Services
 // are left at their current image — Kubernetes performs a rolling
 // update only on the changed containers.
 func (p *Provider) Deploy(ctx context.Context, req provider.DeployRequest) (*provider.DeployResult, error) {
 	ns := p.cfg.Namespace
 	name := deploymentName(req.InstanceID)
+
+	var (
+		podSpec  *corev1.PodSpec
+		labels   map[string]string
+		headless bool
+	)
 
 	// Try Deployment first; fall through to StatefulSet if not present.
 	dep, depErr := p.client.AppsV1().Deployments(ns).Get(ctx, name, metav1.GetOptions{})
@@ -353,6 +361,8 @@ func (p *Provider) Deploy(ctx context.Context, req provider.DeployRequest) (*pro
 		if _, err := p.client.AppsV1().Deployments(ns).Update(ctx, dep, metav1.UpdateOptions{}); err != nil {
 			return nil, fmt.Errorf("kubernetes: update deployment: %w", err)
 		}
+
+		podSpec, labels = &dep.Spec.Template.Spec, dep.Labels
 	} else {
 		ss, ssErr := p.client.AppsV1().StatefulSets(ns).Get(ctx, name, metav1.GetOptions{})
 		if ssErr != nil {
@@ -369,6 +379,16 @@ func (p *Provider) Deploy(ctx context.Context, req provider.DeployRequest) (*pro
 
 		if _, err := p.client.AppsV1().StatefulSets(ns).Update(ctx, ss, metav1.UpdateOptions{}); err != nil {
 			return nil, fmt.Errorf("kubernetes: update statefulset: %w", err)
+		}
+
+		podSpec, labels, headless = &ss.Spec.Template.Spec, ss.Labels, true
+	}
+
+	// Container ports alone don't route traffic; the instance's Service
+	// does. When a deploy changes ports, bring the Service in line.
+	if deploySetsPorts(req.Services) {
+		if err := p.syncServicePorts(ctx, req.InstanceID, podSpec, labels, headless); err != nil {
+			return nil, err
 		}
 	}
 
@@ -407,14 +427,111 @@ func applyServiceUpdates(containers, initContainers []corev1.Container, updates 
 
 	for i := range containers {
 		if u, ok := byName[containers[i].Name]; ok {
-			containers[i].Image = u.Image
+			applyServiceUpdate(&containers[i], u)
 		}
 	}
 
 	for i := range initContainers {
 		if u, ok := byName[initContainers[i].Name]; ok {
-			initContainers[i].Image = u.Image
+			applyServiceUpdate(&initContainers[i], u)
 		}
+	}
+}
+
+// applyServiceUpdate writes one deploy spec onto its container. The
+// image always changes; command, args, ports and resources change only
+// when the spec sets them, so a nil field keeps the running value.
+// Ports and resources are built the same way Provision builds them:
+// resources become both requests and limits, as Scale also sets them.
+//
+// ResourceSpec.Replicas is not applied here. Replica count belongs to
+// the Deployment or StatefulSet rather than to one container, and
+// Scale owns it; applying it on deploy would also undo a Scale every
+// time a rollback restored an older Release.
+func applyServiceUpdate(c *corev1.Container, u provider.ServiceDeploySpec) {
+	c.Image = u.Image
+
+	if u.Command != nil {
+		c.Command = u.Command
+	}
+
+	if u.Args != nil {
+		c.Args = u.Args
+	}
+
+	if u.Ports != nil {
+		c.Ports = buildContainerPorts(u.Ports)
+	}
+
+	if u.Resources != nil {
+		c.Resources.Requests = buildResourceList(*u.Resources)
+		c.Resources.Limits = buildResourceList(*u.Resources)
+	}
+}
+
+// deploySetsPorts reports whether any service in a deploy sets Ports.
+func deploySetsPorts(services []provider.ServiceDeploySpec) bool {
+	for i := range services {
+		if services[i].Ports != nil {
+			return true
+		}
+	}
+
+	return false
+}
+
+// syncServicePorts makes the instance's Service expose the ports the
+// updated pod template declares. It updates the Service in place,
+// creates it when ports appear on a workload that had none, and
+// deletes it when no ports remain, which is the shape Provision would
+// have produced for the same services.
+func (p *Provider) syncServicePorts(ctx context.Context, instanceID id.ID, podSpec *corev1.PodSpec, labels map[string]string, headless bool) error {
+	ns := p.cfg.Namespace
+	name := serviceName(instanceID)
+	ports := servicePortsFor(podSpec)
+
+	svc, err := p.client.CoreV1().Services(ns).Get(ctx, name, metav1.GetOptions{})
+
+	switch {
+	case apierrors.IsNotFound(err):
+		if len(ports) == 0 {
+			return nil
+		}
+
+		svc = &corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns, Labels: labels},
+			Spec: corev1.ServiceSpec{
+				Selector: map[string]string{labelInstanceID: instanceID.String()},
+				Ports:    ports,
+				Type:     corev1.ServiceTypeClusterIP,
+			},
+		}
+
+		if headless {
+			svc.Spec.ClusterIP = corev1.ClusterIPNone
+		}
+
+		if _, err := p.client.CoreV1().Services(ns).Create(ctx, svc, metav1.CreateOptions{}); err != nil {
+			return fmt.Errorf("kubernetes: create service for deploy: %w", err)
+		}
+
+		return nil
+	case err != nil:
+		return fmt.Errorf("kubernetes: get service for deploy: %w", err)
+	case len(ports) == 0:
+		if err := p.client.CoreV1().Services(ns).Delete(ctx, name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("kubernetes: delete service for deploy: %w", err)
+		}
+
+		return nil
+	default:
+		svc.Spec.Ports = ports
+
+		if _, err := p.client.CoreV1().Services(ns).Update(ctx, svc, metav1.UpdateOptions{}); err != nil {
+			return fmt.Errorf("kubernetes: update service for deploy: %w", err)
+		}
+
+		return nil
 	}
 }
 

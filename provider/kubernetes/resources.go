@@ -417,6 +417,30 @@ func buildService(req provider.ProvisionRequest, namespace string, labels map[st
 	}
 }
 
+// servicePortsFor rebuilds the instance Service's ports from a pod
+// template, for a deploy that changed container ports. Port names
+// follow buildService ("<service>-<index>"); container names are the
+// service names, and buildContainerPorts keeps each service's port
+// order, so a template built by Provision yields the same ports.
+func servicePortsFor(podSpec *corev1.PodSpec) []corev1.ServicePort {
+	var ports []corev1.ServicePort
+
+	for _, list := range [][]corev1.Container{podSpec.Containers, podSpec.InitContainers} {
+		for i := range list {
+			for j, cp := range list[i].Ports {
+				ports = append(ports, corev1.ServicePort{
+					Name:       fmt.Sprintf("%s-%d", list[i].Name, j),
+					Port:       cp.ContainerPort,
+					TargetPort: intstr.FromInt32(cp.ContainerPort),
+					Protocol:   cp.Protocol,
+				})
+			}
+		}
+	}
+
+	return ports
+}
+
 // buildConfigMaps creates one ConfigMap per service that has env vars.
 // Per-service maps keep service A's env out of service B's container
 // (a single shared map with EnvFrom would expose everything to
