@@ -248,21 +248,16 @@ func recoveryCoverageBindingHeld(ctx context.Context, tx ControllerTransaction, 
 		return managed.ErrAuthority
 	}
 
-	proof, err := recoveryReadFact[managed.RemovalRevalidationFacts](ctx, tx, attemptKey(view), facts.Proof)
+	proof, err := recoveryProofExactHeld(ctx, tx, target, view, facts.Proof)
 	if err != nil {
 		return err
 	}
 
-	if proof.Acceptance.Receipt.AcceptedAt.After(acceptedAt) || proof.Facts.Binding != binding || !token(proof.Facts.GuardID) || !digest(proof.Facts.GuardRootDigest) || !managed.RecoveryProofFresh(proof.Facts, proof.Acceptance.Receipt.AcceptedAt) {
+	if proof.Acceptance.Receipt.AcceptedAt.After(acceptedAt) || proof.Facts.Binding != binding || !token(proof.Facts.GuardID) || !digest(proof.Facts.GuardRootDigest) {
 		return managed.ErrUnavailable
 	}
-	// Configured proof production currently accepts only live observations. Do not
-	// manufacture an effect_complete pre-effect proof association for ordinal zero.
-	if proof.Facts.ProcessDisposition != "live" || proof.Facts.EffectComplete != nil {
-		return managed.ErrUnsupported
-	}
 
-	return recoveryProofBindingHeld(ctx, tx, target, view, proof.Facts, proof.Acceptance.Receipt.AcceptedAt)
+	return nil
 }
 
 func prepareRecoveryCoverageHeld(ctx context.Context, tx ControllerTransaction, target *managed.Target, view attemptView, acceptedAt time.Time) (recoveryCoveragePlan, error) {

@@ -148,10 +148,8 @@ func (r *Repository) verifyRecoveryProof(ctx context.Context, intent managed.Rec
 		return zero, managed.ErrInvalid
 	}
 
-	// Positive resource-to-process discharge needs the selected-result reader.
-	// Until that reader exists, this slice accepts only the live disposition.
-	if input.ProcessDisposition != "live" || input.EffectComplete != nil {
-		return zero, managed.ErrUnsupported
+	if err = recoveryProofDispositionShape(input); err != nil {
+		return zero, err
 	}
 
 	verificationInput, err := recoverySnapshot(input)

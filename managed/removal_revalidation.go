@@ -127,13 +127,15 @@ type RecoveryNativeIntent struct {
 // RecoveryEffectComplete discharges one original process using an exact positive deletion.
 // A missing process, expired lease or empty lookup cannot populate this fact.
 type RecoveryEffectComplete struct {
-	Invocation            ProviderInvocationKey `json:"invocation"`
-	PermissionDigest      string                `json:"permission_digest"`
-	Result                RecoveryAssociation   `json:"result"`
-	ResourceID            string                `json:"resource_id"`
-	Incarnation           string                `json:"incarnation"`
-	OriginalProcessDigest string                `json:"original_process_digest"`
-	PreEffectProofDigest  string                `json:"pre_effect_proof_digest"`
+	Invocation            ProviderInvocationKey      `json:"invocation"`
+	PermissionDigest      string                     `json:"permission_digest"`
+	Result                RecoveryAssociation        `json:"result"`
+	ResourceID            string                     `json:"resource_id"`
+	Incarnation           string                     `json:"incarnation"`
+	OriginalProcessDigest string                     `json:"original_process_digest"`
+	PreEffectProofDigest  string                     `json:"pre_effect_proof_digest"`
+	OriginalPreEffect     *RecoveryOriginalPreEffect `json:"original_pre_effect,omitempty"`
+	RetryPreEffect        *RecoveryAssociation       `json:"retry_pre_effect,omitempty"`
 }
 
 // RemovalRevalidationFacts describe one accepted observation of the same original native guard.

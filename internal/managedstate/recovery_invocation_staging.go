@@ -20,7 +20,8 @@ type invocationProofMember struct {
 }
 
 // invocationLiveProofsHeld derives every active binding at the actual callback clock.
-// This initial slice requires a live process; positive process discharge remains separate.
+// Each current guard has a live observation or an authenticated exact positive
+// process discharge; neither branch infers authority from process absence.
 func invocationLiveProofsHeld(ctx context.Context, tx ControllerTransaction, target *managed.Target, view attemptView, now time.Time) ([]invocationProofMember, error) {
 	if !view.validated || view.state.SchemaVersion != "2" || view.recoveryActivation == nil || view.state.AdmissionDigest == "" || view.state.RevocationDigest != "" || view.state.SettlementDigest != "" || view.state.TerminalDigest != "" || view.state.Successor != nil || target.Phase == managed.Deleted {
 		return nil, managed.ErrBlocked
@@ -47,11 +48,15 @@ func invocationLiveProofsHeld(ctx context.Context, tx ControllerTransaction, tar
 			return nil, err
 		}
 
-		if proof.Facts.Binding != binding || proof.Facts.ProcessDisposition != "live" || proof.Facts.EffectComplete != nil || !managed.RecoveryProofFresh(proof.Facts, now) {
+		if proof.Facts.Binding != binding || !managed.RecoveryProofFresh(proof.Facts, now) {
 			return nil, managed.ErrBlocked
 		}
 
-		if err = recoveryProofBindingHeld(ctx, tx, target, view, proof.Facts, now); err != nil {
+		if _, err = recoveryProofExactHeld(ctx, tx, target, view, current.Proof); err != nil {
+			return nil, err
+		}
+
+		if err = recoveryRevalidationInputsHeld(ctx, tx, target, view, proof.Facts, now); err != nil {
 			return nil, err
 		}
 

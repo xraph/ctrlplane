@@ -545,7 +545,7 @@ The optional removal recovery contracts preserve the original attempt identity,
 provider command and possible effects while retaining revalidation, invocation and
 retry records separately. Complete recovery is still unavailable. Do not advertise
 `ctrlplane.managed.removal-recovery.v1` support from the presence of these types or
-from a successful read of one retained record. Terminal coverage, native closure,
+from a successful read of one retained record. Native closure, terminal settlement,
 provider custody and host integration still need implementation and qualification.
 
 Memory and PostgreSQL retain an unresolved-work index with bounded pages when an
@@ -567,6 +567,19 @@ native commit associations before returning them. Fresh public commands require
 the complete recovery capability, which remains disabled. A retained cutoff
 revokes further issuance but does not prove that an earlier command had no effect
 or authorize settlement. Late results still need their original associations.
+
+Effective coverage keeps each fixed step explicit: unissued, removed or closed
+before dispatch. Uncertainty cannot satisfy coverage. Its ordered binding records
+and close-intent sponsor are bound to an independent acceptance receipt.
+
+Revalidation readers check the retained request, event and receipt before returning
+a proof. An `effect_complete` proof also needs the exact positive provider result,
+resource incarnation and original process association. For the original invocation,
+the fence receipt must precede the permission revision even when their timestamps
+match. Retries name their accepted permission-time proof. Your configured verifier
+must authenticate the resource-to-process association; missing resources and local
+record shapes cannot establish it. Full public recovery and concrete rollback still
+need qualification before the capability can be enabled.
 
 ## Protected writer admission
 
