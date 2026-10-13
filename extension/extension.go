@@ -50,10 +50,10 @@ type Extension struct {
 	cp            *app.CtrlPlane
 	api           *api.API
 	opts          []app.Option
-	useGrove      bool // True when explicitly configured for grove via WithGroveDatabase.
-	storeProvided bool // True when WithStore was called explicitly.
-	useVault      bool // True when explicitly configured for vault via WithVaultName.
-	vaultProvided bool // True when WithVault was called explicitly.
+	useGrove      bool   // True when explicitly configured for grove via WithGroveDatabase.
+	storeProvided bool   // True when WithStore was called explicitly.
+	useVault      bool   // True when explicitly configured for vault via WithVaultName.
+	vaultProvided bool   // True when WithVault was called explicitly.
 	leaderLock    string // Advisory lock name; set by WithLeaderElection.
 }
 
