@@ -412,10 +412,75 @@ func (p *Provider) Deploy(ctx context.Context, req provider.DeployRequest) (*pro
 		}
 	}
 
-	return &provider.DeployResult{
+	result := &provider.DeployResult{
 		ProviderRef: "docker:" + projectName(req.InstanceID),
 		Status:      "succeeded",
-	}, nil
+	}
+
+	// New ports mean new host bindings, so hand back the project's
+	// endpoints for the instance to store. Without ports the endpoints
+	// are unchanged and the result leaves them nil.
+	if deploySetsPorts(req.Services) {
+		endpoints, err := p.projectEndpoints(ctx, req.InstanceID)
+		if err != nil {
+			return nil, fmt.Errorf("docker: deploy: read endpoints: %w", err)
+		}
+
+		result.Endpoints = endpoints
+	}
+
+	return result, nil
+}
+
+// deploySetsPorts reports whether any service in a deploy sets Ports.
+func deploySetsPorts(services []provider.ServiceDeploySpec) bool {
+	for i := range services {
+		if services[i].Ports != nil {
+			return true
+		}
+	}
+
+	return false
+}
+
+// projectEndpoints lists the endpoints of every long-lived container in
+// the project, the way Provision collects them: Main services first,
+// then Sidecars, each container's ports read back from inspect and
+// tagged with its service name. Init containers publish no ports.
+func (p *Provider) projectEndpoints(ctx context.Context, instanceID id.ID) ([]provider.Endpoint, error) {
+	containers, err := p.listProjectContainers(ctx, instanceID)
+	if err != nil {
+		return nil, err
+	}
+
+	var mains, sidecars []projectContainer
+
+	for _, c := range containers {
+		switch c.Role {
+		case provider.RoleInit:
+		case provider.RoleSidecar:
+			sidecars = append(sidecars, c)
+		default:
+			mains = append(mains, c)
+		}
+	}
+
+	endpoints := make([]provider.Endpoint, 0)
+
+	for _, c := range append(mains, sidecars...) {
+		eps, err := p.endpointsFor(ctx, c.ID, c.Name)
+		if err != nil {
+			return nil, fmt.Errorf("inspect endpoints %s: %w", c.Name, err)
+		}
+
+		for i := range eps {
+			eps[i].ServiceName = c.ServiceName
+		}
+
+		endpoints = append(endpoints, eps...)
+	}
+
+	return endpoints, nil
 }
 
 // recreateServiceContainer drops the current container for a service
@@ -504,7 +569,8 @@ func (p *Provider) recreateServiceContainer(ctx context.Context, req provider.De
 //   - Resources set the CPU and memory limits (NanoCPUs and Memory). A
 //     zero value removes that limit. Docker has no separate request, so
 //     only limits are set. Replicas is ignored here because a Docker
-//     project runs one container per service; Scale owns replica count.
+//     project runs one container per service and has no replica axis
+//     (Scale is a no-op for this provider too).
 //     DiskMB and GPU are ignored as well, matching Provision, which
 //     never sets them either.
 func applyDeployOverrides(target provider.ServiceDeploySpec, role provider.ServiceRole, cfg *container.Config, hostCfg *container.HostConfig) (bool, error) {
@@ -746,6 +812,10 @@ func (p *Provider) endpointsFor(ctx context.Context, containerID, name string) (
 	result, err := p.cli.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
 	if err != nil {
 		return nil, err
+	}
+
+	if result.Container.NetworkSettings == nil {
+		return []provider.Endpoint{}, nil
 	}
 
 	return endpointsFromInspect(name, result.Container.NetworkSettings.Ports), nil

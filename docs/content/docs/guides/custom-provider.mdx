@@ -94,6 +94,8 @@ func (p *Provider) Capabilities() []provider.Capability {
 
 At minimum, implement `Provision`, `Deprovision`, `Status`, `Deploy`, `Start`, and `Stop`. Other methods can return `ErrProviderUnavail` if not supported.
 
+If a deploy can change how the instance is reached, for example when it sets `Ports`, return the new endpoints in `DeployResult.Endpoints`. They replace the instance's stored endpoints in full, so list all of them, not just the ones for the services you deployed. Leave the field nil and the stored endpoints stay as they are.
+
 ```go
 func (p *Provider) Provision(ctx context.Context, req provider.ProvisionRequest) (*provider.ProvisionResult, error) {
     // Call your platform API to create the resource

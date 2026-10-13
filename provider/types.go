@@ -68,9 +68,16 @@ type DeployRequest struct {
 }
 
 // DeployResult holds the result of a deploy operation.
+//
+// Endpoints is optional. Leave it nil and the instance keeps the
+// endpoints it has. Set it when the deploy changed how the instance is
+// reached, for example new ports, and it replaces the instance's
+// stored endpoints in full, so list every endpoint of the instance and
+// not only those of the services in the deploy.
 type DeployResult struct {
-	ProviderRef string `json:"provider_ref"`
-	Status      string `json:"status"`
+	ProviderRef string     `json:"provider_ref"`
+	Status      string     `json:"status"`
+	Endpoints   []Endpoint `json:"endpoints,omitempty"`
 }
 
 // InstanceStatus describes the current runtime state of an instance.

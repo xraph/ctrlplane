@@ -114,3 +114,5 @@ func (s *MyStrategy) Execute(ctx context.Context, params deploy.StrategyParams) 
 ```
 
 The deploy service selects a strategy by matching the `strategy` field in the deploy request against registered strategy names.
+
+Call the provider through `params.DeployProvider(ctx, req)` rather than `params.Provider.Deploy`. It does the same call, and when the provider returns endpoints it hands them to the deploy service, which stores them on the instance. Call `Provider.Deploy` directly and the instance keeps the endpoints it had.

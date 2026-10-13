@@ -554,6 +554,35 @@ func buildEndpoints(req provider.ProvisionRequest, namespace string) []provider.
 	return endpoints
 }
 
+// podEndpoints builds the instance endpoints from a pod template, in
+// the shape buildEndpoints gives at Provision: one in-cluster Service
+// URL per container that declares ports, on its first port. Containers
+// are named after their services. The result is never nil, so a deploy
+// that removed every port reports an empty list rather than "unchanged".
+func podEndpoints(instanceID id.ID, namespace string, podSpec *corev1.PodSpec) []provider.Endpoint {
+	svcName := serviceName(instanceID)
+	endpoints := make([]provider.Endpoint, 0)
+
+	for _, list := range [][]corev1.Container{podSpec.Containers, podSpec.InitContainers} {
+		for i := range list {
+			if len(list[i].Ports) == 0 {
+				continue
+			}
+
+			firstPort := int(list[i].Ports[0].ContainerPort)
+
+			endpoints = append(endpoints, provider.Endpoint{
+				ServiceName: list[i].Name,
+				URL:         fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", svcName, namespace, firstPort),
+				Port:        firstPort,
+				Protocol:    "TCP",
+			})
+		}
+	}
+
+	return endpoints
+}
+
 // toK8sProtocol maps a protocol string to a Kubernetes Protocol constant.
 func toK8sProtocol(protocol string) corev1.Protocol {
 	switch strings.ToUpper(protocol) {

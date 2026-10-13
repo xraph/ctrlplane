@@ -26,11 +26,34 @@ type Strategy interface {
 // per-service granularity. Strategies that don't have per-service
 // granularity (rolling, recreate) update every service to the same
 // state in lockstep.
+//
+// OnEndpoints (optional) receives the endpoints a provider returns from
+// Deploy. The deploy service stores the last set it receives on the
+// instance. Strategies that call Deploy through DeployProvider report
+// them without extra work; a strategy that calls Provider.Deploy
+// directly leaves the instance's endpoints as they were.
 type StrategyParams struct {
 	Deployment        *Deployment
 	Provider          provider.Provider
 	OnProgress        func(phase string, percent int, message string)
 	OnServiceProgress func(serviceName string, state string)
+	OnEndpoints       func(endpoints []provider.Endpoint)
+}
+
+// DeployProvider calls Provider.Deploy and passes any endpoints the
+// result carries to OnEndpoints. A nil result, nil Endpoints or a nil
+// OnEndpoints reports nothing.
+func (p StrategyParams) DeployProvider(ctx context.Context, req provider.DeployRequest) (*provider.DeployResult, error) {
+	result, err := p.Provider.Deploy(ctx, req)
+	if err != nil {
+		return result, err
+	}
+
+	if result != nil && result.Endpoints != nil && p.OnEndpoints != nil {
+		p.OnEndpoints(result.Endpoints)
+	}
+
+	return result, nil
 }
 
 // Service-level progress states. Match the keys used in

@@ -327,3 +327,28 @@ func TestIsPortLabelOf(t *testing.T) {
 		}
 	}
 }
+
+// TestDeploy_LeavesEndpointsUnchanged checks that a deploy which sets
+// ports still returns nil endpoints. Provision reports none for a Nomad
+// job, so the instance's stored endpoints stay as they were.
+func TestDeploy_LeavesEndpointsUnchanged(t *testing.T) {
+	t.Parallel()
+
+	req := deployWorkload()
+	p, submitted := deployServer(t, req)
+
+	result, err := p.Deploy(t.Context(), provider.DeployRequest{InstanceID: req.InstanceID, ReleaseID: id.New(id.PrefixRelease), Services: []provider.ServiceDeploySpec{{
+		Name: "api", Image: "app:v2", Ports: []provider.PortSpec{{Container: 9090}},
+	}}})
+	if err != nil {
+		t.Fatalf("deploy: %v", err)
+	}
+
+	if ports := portsByLabel(submitted().TaskGroups[0].Networks[0]); ports["api-0"].To != 9090 {
+		t.Fatalf("ports not applied: %+v", ports)
+	}
+
+	if result.Endpoints != nil {
+		t.Fatalf("endpoints = %+v, want nil", result.Endpoints)
+	}
+}

@@ -304,3 +304,70 @@ func TestServicePortsFor_MatchesProvision(t *testing.T) {
 		t.Fatalf("ports:\n got %+v\nwant %+v", got, want)
 	}
 }
+
+// TestDeploy_ReturnsEndpointsWhenPortsChange checks that a deploy which
+// sets ports returns the instance's endpoints in Provision's shape, one
+// that clears every port returns an empty list, and one without ports
+// returns nil.
+func TestDeploy_ReturnsEndpointsWhenPortsChange(t *testing.T) {
+	p, _, instID := provisionForDeploy(t, provider.KindDeployment, []provider.PortSpec{{Container: 8080}})
+	host := serviceName(instID) + "." + deployNS + ".svc.cluster.local"
+
+	result, err := p.Deploy(t.Context(), provider.DeployRequest{InstanceID: instID, ReleaseID: id.New(id.PrefixRelease), Services: []provider.ServiceDeploySpec{{
+		Name: "api", Image: "app:v2", Ports: []provider.PortSpec{{Container: 9090}, {Container: 9091}},
+	}}})
+	if err != nil {
+		t.Fatalf("deploy: %v", err)
+	}
+
+	want := []provider.Endpoint{
+		{ServiceName: "api", URL: "http://" + host + ":9090", Port: 9090, Protocol: "TCP"},
+		{ServiceName: "proxy", URL: "http://" + host + ":9901", Port: 9901, Protocol: "TCP"},
+	}
+	if !reflect.DeepEqual(result.Endpoints, want) {
+		t.Fatalf("endpoints:\n got %+v\nwant %+v", result.Endpoints, want)
+	}
+
+	result, err = p.Deploy(t.Context(), provider.DeployRequest{InstanceID: instID, ReleaseID: id.New(id.PrefixRelease), Services: []provider.ServiceDeploySpec{{Name: "api", Image: "app:v3"}}})
+	if err != nil {
+		t.Fatalf("deploy: %v", err)
+	}
+
+	if result.Endpoints != nil {
+		t.Fatalf("deploy without ports returned endpoints %+v", result.Endpoints)
+	}
+
+	result, err = p.Deploy(t.Context(), provider.DeployRequest{InstanceID: instID, ReleaseID: id.New(id.PrefixRelease), Services: []provider.ServiceDeploySpec{
+		{Name: "api", Image: "app:v4", Ports: []provider.PortSpec{}},
+		{Name: "proxy", Image: "envoy:v2", Ports: []provider.PortSpec{}},
+	}})
+	if err != nil {
+		t.Fatalf("deploy: %v", err)
+	}
+
+	if result.Endpoints == nil || len(result.Endpoints) != 0 {
+		t.Fatalf("clearing every port: endpoints = %#v, want an empty non-nil list", result.Endpoints)
+	}
+}
+
+// TestPodEndpoints_MatchesProvision checks that endpoints rebuilt from a
+// provisioned pod template equal the ones Provision returned.
+func TestPodEndpoints_MatchesProvision(t *testing.T) {
+	t.Parallel()
+
+	req := provider.ProvisionRequest{
+		InstanceID: id.New(id.PrefixInstance),
+		Services: []provider.ServiceSpec{
+			{Name: "migrate", Image: "m:1", Role: provider.RoleInit},
+			{Name: "api", Image: "a:1", Ports: []provider.PortSpec{{Container: 8080}, {Container: 8443}}},
+			{Name: "worker", Image: "w:1", Role: provider.RoleSidecar},
+			{Name: "proxy", Image: "p:1", Role: provider.RoleSidecar, Ports: []provider.PortSpec{{Container: 9901}}},
+		},
+	}
+
+	podSpec := buildPodSpec(req, nil)
+
+	if got, want := podEndpoints(req.InstanceID, deployNS, &podSpec), buildEndpoints(req, deployNS); !reflect.DeepEqual(got, want) {
+		t.Fatalf("endpoints:\n got %+v\nwant %+v", got, want)
+	}
+}

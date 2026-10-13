@@ -384,12 +384,20 @@ func (p *Provider) Deploy(ctx context.Context, req provider.DeployRequest) (*pro
 		podSpec, labels, headless = &ss.Spec.Template.Spec, ss.Labels, true
 	}
 
+	result := &provider.DeployResult{
+		ProviderRef: providerRef(ns, req.InstanceID),
+		Status:      "deployed",
+	}
+
 	// Container ports alone don't route traffic; the instance's Service
-	// does. When a deploy changes ports, bring the Service in line.
+	// does. When a deploy changes ports, bring the Service in line and
+	// hand back the endpoints for the instance to store.
 	if deploySetsPorts(req.Services) {
 		if err := p.syncServicePorts(ctx, req.InstanceID, podSpec, labels, headless); err != nil {
 			return nil, err
 		}
+
+		result.Endpoints = podEndpoints(req.InstanceID, ns, podSpec)
 	}
 
 	// Update each service's ConfigMap when env was provided. Missing
@@ -410,10 +418,7 @@ func (p *Provider) Deploy(ctx context.Context, req provider.DeployRequest) (*pro
 		}
 	}
 
-	return &provider.DeployResult{
-		ProviderRef: providerRef(ns, req.InstanceID),
-		Status:      "deployed",
-	}, nil
+	return result, nil
 }
 
 // applyServiceUpdates mutates Containers and InitContainers in place,

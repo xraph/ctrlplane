@@ -32,7 +32,7 @@ func (s *Rolling) Execute(ctx context.Context, params deploy.StrategyParams) err
 
 	markAll(params, deploy.ServiceStateRunning)
 
-	_, err := params.Provider.Deploy(ctx, provider.DeployRequest{
+	_, err := params.DeployProvider(ctx, provider.DeployRequest{
 		InstanceID: params.Deployment.InstanceID,
 		ReleaseID:  params.Deployment.ReleaseID,
 		Services:   params.Deployment.Services,

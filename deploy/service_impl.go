@@ -186,6 +186,8 @@ func (s *service) Deploy(ctx context.Context, req DeployRequest) (*Deployment, e
 	// service through its lifecycle so dashboards / observers can see
 	// per-service granularity (especially useful for canary rollouts
 	// that promote one service at a time).
+	var endpoints []provider.Endpoint
+
 	execErr := st.Execute(pctx, StrategyParams{
 		Deployment: dep,
 		Provider:   prov,
@@ -202,7 +204,12 @@ func (s *service) Deploy(ctx context.Context, req DeployRequest) (*Deployment, e
 			// final UpdateDeployment call below.
 			_ = s.store.UpdateDeployment(ctx, dep)
 		},
+		OnEndpoints: func(eps []provider.Endpoint) { endpoints = eps },
 	})
+	if err := s.recordEndpoints(ctx, claims.TenantID, req.InstanceID, endpoints); err != nil && execErr == nil {
+		execErr = err
+	}
+
 	if execErr == nil {
 		execErr = s.awaitReady(ctx, pctx, prov, inst, dep)
 	}
@@ -456,6 +463,8 @@ func (s *service) Rollback(ctx context.Context, instanceID id.ID, releaseID id.I
 	}
 
 	// Execute the rollback deployment.
+	var endpoints []provider.Endpoint
+
 	execErr := st.Execute(pctx, StrategyParams{
 		Deployment: dep,
 		Provider:   prov,
@@ -469,7 +478,12 @@ func (s *service) Rollback(ctx context.Context, instanceID id.ID, releaseID id.I
 
 			_ = s.store.UpdateDeployment(ctx, dep)
 		},
+		OnEndpoints: func(eps []provider.Endpoint) { endpoints = eps },
 	})
+	if err := s.recordEndpoints(ctx, claims.TenantID, instanceID, endpoints); err != nil && execErr == nil {
+		execErr = err
+	}
+
 	if execErr == nil {
 		execErr = s.awaitReady(ctx, pctx, prov, inst, dep)
 	}
@@ -655,6 +669,32 @@ func (s *service) buildReleaseSnapshot(ctx context.Context, tenantID string, ins
 	}
 
 	return out, nil
+}
+
+// recordEndpoints stores the endpoints a provider returned from Deploy
+// on the instance, replacing what it had. Nil means the provider left
+// them unchanged, and nothing is written. It runs whether or not the
+// strategy succeeded, because a provider that returned endpoints has
+// already changed how the instance is reached. The instance is read
+// again first so changes made while the rollout ran aren't lost.
+func (s *service) recordEndpoints(ctx context.Context, tenantID string, instanceID id.ID, endpoints []provider.Endpoint) error {
+	if endpoints == nil {
+		return nil
+	}
+
+	inst, err := s.instStore.GetByID(ctx, tenantID, instanceID)
+	if err != nil {
+		return fmt.Errorf("deploy: reload instance for endpoints: %w", err)
+	}
+
+	inst.Endpoints = endpoints
+	inst.UpdatedAt = time.Now().UTC()
+
+	if err := s.instStore.Update(ctx, inst); err != nil {
+		return fmt.Errorf("deploy: update instance endpoints: %w", err)
+	}
+
+	return nil
 }
 
 // awaitReady holds a deployment open until an asynchronous provider

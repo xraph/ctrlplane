@@ -341,6 +341,11 @@ func (p *Provider) Deploy(ctx context.Context, req provider.DeployRequest) (*pro
 		return nil, fmt.Errorf("nomad: re-submit job for deploy: %w", err)
 	}
 
+	// Endpoints stay nil even when the deploy set ports. Provision
+	// reports no endpoints for a Nomad job, so there is no shape to
+	// rebuild, and the host ports Nomad assigns are only known per
+	// allocation once it is placed. Nil leaves the instance's stored
+	// endpoints as they were.
 	return &provider.DeployResult{
 		ProviderRef: "nomad:" + jobName(req.InstanceID),
 		Status:      "deployed",

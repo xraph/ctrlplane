@@ -232,3 +232,84 @@ func TestDeploy_RejectsBadPort(t *testing.T) {
 		t.Fatalf("running container touched: %v", fake.calls)
 	}
 }
+
+// endpointFake stands in for a daemon running a project with an api
+// main, a proxy sidecar and a finished init. Once Deploy recreates the
+// api, listing and inspect report the new container and its new port.
+func endpointFake(t *testing.T) *Provider {
+	t.Helper()
+
+	recreated := false
+
+	return compatProvider(t, func(r *http.Request) (*http.Response, error) {
+		code, data := http.StatusNoContent, ""
+
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/containers/json"):
+			apiID := "api-old"
+			if recreated {
+				apiID = "api-new"
+			}
+
+			code = http.StatusOK
+			data = `[{"Id":"init","Names":["/proj-migrate"],"Labels":{"ctrlplane.service":"migrate","ctrlplane.role":"init"}},` +
+				`{"Id":"proxy","Names":["/proj-proxy"],"Labels":{"ctrlplane.service":"proxy","ctrlplane.role":"sidecar"}},` +
+				`{"Id":"` + apiID + `","Names":["/proj-api"],"Labels":{"ctrlplane.service":"api","ctrlplane.role":"main"}}]`
+		case strings.HasSuffix(r.URL.Path, "/api-old/json"):
+			code = http.StatusOK
+			data = runningAPI
+		case strings.HasSuffix(r.URL.Path, "/api-new/json"):
+			code = http.StatusOK
+			data = `{"NetworkSettings":{"Ports":{"9090/tcp":[{"HostIp":"0.0.0.0","HostPort":"32768"}]}}}`
+		case strings.HasSuffix(r.URL.Path, "/proxy/json"):
+			code = http.StatusOK
+			data = `{"NetworkSettings":{"Ports":{"9901/tcp":[]}}}`
+		case strings.HasSuffix(r.URL.Path, "/init/json"):
+			t.Errorf("init container inspected for endpoints")
+		case strings.HasSuffix(r.URL.Path, "/images/create"):
+			code = http.StatusOK
+			data = `{"status":"pulled"}`
+		case strings.HasSuffix(r.URL.Path, "/containers/create"):
+			recreated = true
+			code = http.StatusCreated
+			data = `{"Id":"api-new"}`
+		}
+
+		resp, _ := compatResponse(r, code, data)
+
+		return resp, nil
+	})
+}
+
+// TestDeploy_ReturnsEndpointsWhenPortsChange checks that a deploy which
+// sets ports returns every long-lived container's endpoints, built from
+// inspect the way Provision builds them, and that one without ports
+// returns none.
+func TestDeploy_ReturnsEndpointsWhenPortsChange(t *testing.T) {
+	iid := id.New(id.PrefixInstance)
+
+	result, err := endpointFake(t).Deploy(t.Context(), provider.DeployRequest{InstanceID: iid, Services: []provider.ServiceDeploySpec{{
+		Name: "api", Image: "app:v2", Ports: []provider.PortSpec{{Container: 9090}},
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []provider.Endpoint{
+		{ServiceName: "api", URL: "http://proj-api:9090", Port: 9090, Protocol: "http"},
+		{ServiceName: "api", URL: "http://localhost:32768", Port: 32768, Protocol: "http", Public: true},
+		{ServiceName: "proxy", URL: "http://proj-proxy:9901", Port: 9901, Protocol: "http"},
+	}
+	if !reflect.DeepEqual(result.Endpoints, want) {
+		t.Fatalf("endpoints:\n got %+v\nwant %+v", result.Endpoints, want)
+	}
+
+	result, err = endpointFake(t).Deploy(t.Context(), provider.DeployRequest{InstanceID: iid, Services: []provider.ServiceDeploySpec{{Name: "api", Image: "app:v2"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if result.Endpoints != nil {
+		t.Fatalf("deploy without ports returned endpoints %+v", result.Endpoints)
+	}
+}

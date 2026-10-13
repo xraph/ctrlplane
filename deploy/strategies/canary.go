@@ -47,7 +47,7 @@ func (s *Canary) Execute(ctx context.Context, params deploy.StrategyParams) erro
 			params.OnServiceProgress(sd.Name, deploy.ServiceStateRunning)
 		}
 
-		_, err := params.Provider.Deploy(ctx, provider.DeployRequest{
+		_, err := params.DeployProvider(ctx, provider.DeployRequest{
 			InstanceID: params.Deployment.InstanceID,
 			ReleaseID:  params.Deployment.ReleaseID,
 			Services:   []provider.ServiceDeploySpec{sd},
