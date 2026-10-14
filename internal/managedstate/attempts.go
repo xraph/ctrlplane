@@ -2769,7 +2769,7 @@ func (r *Repository) ReadManagedRemovalAttempt(ctx context.Context, k managed.At
 			return e
 		}
 
-		v, e := readAttempt(ctx, tx, t, k)
+		v, e := r.readConfiguredAttemptInspection(ctx, tx, t, k)
 		if e != nil {
 			return e
 		}
@@ -2834,7 +2834,7 @@ func (r *Repository) ReadManagedAttemptBinding(ctx context.Context, k managed.At
 			return e
 		}
 
-		v, e := readAttempt(ctx, tx, t, k.AttemptKey)
+		v, e := r.readConfiguredAttemptInspection(ctx, tx, t, k.AttemptKey)
 		if e != nil {
 			return e
 		}
