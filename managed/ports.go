@@ -42,6 +42,8 @@ const (
 
 // PortCommand retains both digest domains and the original immutable commands.
 // Endpoints, verifier selection and credentials are trusted host configuration.
+// Schema 1 bounds each payload to 4096 bytes. Schema 2 keeps the same combined
+// 8192-byte budget, allowing larger native requests while original stays <=4096.
 type PortCommand struct {
 	SchemaVersion  Decimal `json:"schema_version"`
 	OperationID    id.ID   `json:"operation_id"`
@@ -693,7 +695,24 @@ func wireSeal(value Decimal) (uint64, error) {
 
 // Validate checks the frozen command envelopes without translating their digest domains.
 func (c PortCommand) Validate() error {
-	if c.SchemaVersion != "1" || c.OperationID.Prefix() != PrefixOperation || !wireToken(c.RequestID) || !wireProof(c.Original) || !wireProof(c.Native) || Digest(c.Original) != c.OriginalDigest || Digest(c.Native) != c.NativeDigest {
+	if c.OperationID.Prefix() != PrefixOperation || !wireToken(c.RequestID) || !wireProof(c.Original) {
+		return ErrInvalid
+	}
+
+	switch c.SchemaVersion {
+	case "1":
+		if !wireProof(c.Native) {
+			return ErrInvalid
+		}
+	case "2":
+		if len(c.Native) == 0 || len(c.Native) > 2*MaxEvidence-len(c.Original) {
+			return ErrInvalid
+		}
+	default:
+		return ErrInvalid
+	}
+
+	if Digest(c.Original) != c.OriginalDigest || Digest(c.Native) != c.NativeDigest {
 		return ErrInvalid
 	}
 
