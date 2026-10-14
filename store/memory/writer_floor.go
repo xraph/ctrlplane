@@ -279,7 +279,8 @@ func (t *writerFloorTransaction) insert(ctx context.Context, floor managed.Write
 
 // checkWriterFloorMutationHeld is a future entry point under Store.mu, before other DML.
 // The staged controller store must carry the protected state from its locked parent.
-// This foundation never permits mutation and no existing runtime path calls this helper.
+// Runtime admission uses checkManagedMutationFloor with immutable store configuration.
+// This authority-specific helper alone is not a namespace admission check.
 func (t managedControllerTransaction) checkWriterFloorMutationHeld(ctx context.Context, authority string) error {
 	if !t.held || t.store == nil {
 		return managed.ErrUnavailable

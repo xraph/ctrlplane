@@ -57,7 +57,7 @@ func TestManagedWriterFloorPostgresPublicMutationAndReceiptReplay(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	if _, err = admin.Activate(t.Context(), pgFloorRequest()); err != nil {
+	if _, err = admin.Activate(t.Context(), pgFloorRequestAboveCeiling()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -92,7 +92,7 @@ func TestManagedWriterFloorPostgresPublicMutationAndReceiptReplay(t *testing.T) 
 
 func TestManagedWriterFloorPostgresDirectBatchGuardAndMissingCurrent(t *testing.T) {
 	s, admin, action := enforcementPGFixture(t)
-	if _, err := admin.Activate(t.Context(), pgFloorRequest()); err != nil {
+	if _, err := admin.Activate(t.Context(), pgFloorRequestAboveCeiling()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -128,7 +128,7 @@ func TestManagedWriterFloorPostgresActivationWaitsForHeldZeroTransaction(t *test
 	<-entered
 
 	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
-	_, err := admin.Activate(ctx, pgFloorRequest())
+	_, err := admin.Activate(ctx, pgFloorRequestAboveCeiling())
 
 	cancel()
 	close(release)
@@ -146,7 +146,7 @@ func TestManagedWriterFloorPostgresActivationWaitsForHeldZeroTransaction(t *test
 		t.Fatal("failed activation leaked rows", current, history)
 	}
 
-	if _, err = admin.Activate(t.Context(), pgFloorRequest()); err != nil {
+	if _, err = admin.Activate(t.Context(), pgFloorRequestAboveCeiling()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -156,4 +156,11 @@ func TestManagedWriterFloorPostgresActivationWaitsForHeldZeroTransaction(t *test
 	if !errors.Is(err, managed.ErrUnsupported) {
 		t.Fatal("later transaction reused zero admission", err)
 	}
+}
+
+func pgFloorRequestAboveCeiling() managed.WriterFloorActivation {
+	request := pgFloorRequest()
+	request.MinimumProtocol = "2"
+
+	return request
 }

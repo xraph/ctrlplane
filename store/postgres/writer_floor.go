@@ -334,7 +334,8 @@ func (t *writerFloorTransaction) AdvanceWriterFloor(ctx context.Context, expecte
 // checkWriterFloorMutationHeld is reserved for complete protocol integration.
 // Call it FIRST in a fresh READ COMMITTED authority transaction, before controller,
 // target, or ordinary DML locks. Its shared lock survives until outer commit/rollback.
-// No runtime path invokes it in this foundation; even a valid floor returns unsupported.
+// Runtime admission uses writerFloorAdmissionFor, which also locks and checks the
+// complete protected namespace. This helper alone is not namespace admission.
 func (t managedControllerTransaction) checkWriterFloorMutationHeld(ctx context.Context, authority string) error {
 	if t.tx == nil {
 		return managed.ErrUnavailable

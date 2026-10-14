@@ -161,16 +161,24 @@ func readWriterFloor(ctx context.Context, snapshot WriterFloorSnapshot, authorit
 	return floor, nil
 }
 
-// CheckWriterFloorMutation is a held-transaction check with no caller-supplied protocol.
-// No writer protocol is certified by this foundation. A valid positive floor therefore
-// refuses all fresh mutation until the complete implementation and qualification land.
-// Missing/corrupt metadata also refuses; there is no legacy-mode or cached allow argument.
+// managedWriterProtocol is the compiled managed mutation ceiling. It is not host
+// certification, a configuration option, or authority to reopen database grants.
+const managedWriterProtocol uint64 = 1
+
+// CheckWriterFloorMutation validates exact current/history metadata before comparing
+// the protected floor with the compiled ceiling. Callers hold their original mutation
+// lock through commit/rollback. No request supplies a protocol or cached allow value.
 func CheckWriterFloorMutation(ctx context.Context, snapshot WriterFloorSnapshot, authority string) error {
 	if writerFloorNil(snapshot) || !token(authority) {
 		return managed.ErrUnavailable
 	}
 
-	if _, err := readWriterFloor(ctx, snapshot, authority); err != nil {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	floor, err := readWriterFloor(ctx, snapshot, authority)
+	if err != nil {
 		if errors.Is(err, managed.ErrNotFound) {
 			return managed.ErrUnavailable
 		}
@@ -178,7 +186,16 @@ func CheckWriterFloorMutation(ctx context.Context, snapshot WriterFloorSnapshot,
 		return err
 	}
 
-	return managed.ErrUnsupported
+	protocol, err := floor.MinimumProtocol.Uint64()
+	if err != nil || protocol == 0 {
+		return managed.ErrWriterFloorCorrupt
+	}
+
+	if protocol > managedWriterProtocol {
+		return managed.ErrUnsupported
+	}
+
+	return ctx.Err()
 }
 
 // ActivateWriterFloor stages one monotone administrative activation or returns exact history.

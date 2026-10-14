@@ -9,7 +9,7 @@ import (
 
 // NewWithWriterFloorAdmission selects protected managed-mutation admission before
 // publishing the store. There is no request switch or setter. New remains legacy.
-// This mode does not certify a positive protocol or fence ordinary Store methods.
+// The compiled ceiling does not certify the host or fence ordinary Store methods.
 func NewWithWriterFloorAdmission(authority string) (*Store, error) {
 	s := New()
 	if _, err := NewWriterFloorReader(s, authority); err != nil {
@@ -40,8 +40,7 @@ func (b managedBackend) checkManagedMutationFloorLocked(ctx context.Context) err
 	if len(b.store.writerFloors) == 0 {
 		return nil
 	}
-	// Multiple protected authorities cannot select a permissive fallback. No positive
-	// protocol is implemented, so inspecting further history would not admit mutation.
+	// Multiple protected authorities cannot select a permissive fallback.
 	if len(b.store.writerFloors) != 1 {
 		return managed.ErrUnsupported
 	}

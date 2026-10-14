@@ -333,7 +333,7 @@ func TestWriterFloorPostgresSQLBoundsUniquenessAndHistoryImmutability(t *testing
 
 func TestWriterFloorPostgresSnapshotLockAndDisabledHeldCheck(t *testing.T) {
 	s, a, _ := pgFloorFixture(t)
-	if _, err := a.Activate(t.Context(), pgFloorRequest()); err != nil {
+	if _, err := a.Activate(t.Context(), pgFloorRequestAboveCeiling()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -358,7 +358,7 @@ func TestWriterFloorPostgresSnapshotLockAndDisabledHeldCheck(t *testing.T) {
 		return managedstate.CheckWriterFloorMutation(t.Context(), snapshot, "floor-test")
 	})
 	if !errors.Is(err, managed.ErrUnsupported) {
-		t.Fatal("valid floor allowed mutation", err)
+		t.Fatal("above-ceiling floor allowed mutation", err)
 	}
 
 	tx, err := s.pg.BeginTxQuery(t.Context(), &driver.TxOptions{IsolationLevel: driver.LevelReadCommitted})

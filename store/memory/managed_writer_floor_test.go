@@ -43,7 +43,7 @@ func TestManagedWriterFloorMemoryZeroAndPositivePublicMutations(t *testing.T) {
 		t.Fatal("zero floor provision", err)
 	}
 
-	if _, err = admin.Activate(t.Context(), memoryFloorRequest()); err != nil {
+	if _, err = admin.Activate(t.Context(), memoryFloorRequestAboveCeiling()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -76,7 +76,7 @@ func TestManagedWriterFloorMemoryZeroAndPositivePublicMutations(t *testing.T) {
 
 func TestManagedWriterFloorMemoryDirectWritesAndBatchAreGuarded(t *testing.T) {
 	s, action, admin := enforcementMemoryFixture(t)
-	if _, err := admin.Activate(t.Context(), memoryFloorRequest()); err != nil {
+	if _, err := admin.Activate(t.Context(), memoryFloorRequestAboveCeiling()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -153,7 +153,7 @@ func TestManagedWriterFloorMemoryHeldZeroCannotOverlapActivation(t *testing.T) {
 
 	activationDone := make(chan error, 1)
 
-	go func() { _, err := admin.Activate(t.Context(), memoryFloorRequest()); activationDone <- err }()
+	go func() { _, err := admin.Activate(t.Context(), memoryFloorRequestAboveCeiling()); activationDone <- err }()
 
 	close(release)
 
@@ -171,4 +171,11 @@ func TestManagedWriterFloorMemoryHeldZeroCannotOverlapActivation(t *testing.T) {
 	if !errors.Is(err, managed.ErrUnsupported) {
 		t.Fatal("later transaction reused zero admission", err)
 	}
+}
+
+func memoryFloorRequestAboveCeiling() managed.WriterFloorActivation {
+	request := memoryFloorRequest()
+	request.MinimumProtocol = "2"
+
+	return request
 }

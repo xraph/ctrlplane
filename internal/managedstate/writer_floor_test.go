@@ -300,10 +300,12 @@ func TestWriterFloorOutageAndUncertifiedWriterRefuse(t *testing.T) {
 	}
 
 	f.readErr = nil
-	activateFloor(t, f, floorRequest())
+	request := floorRequest()
+	request.MinimumProtocol = "2"
+	activateFloor(t, f, request)
 
 	if err := CheckWriterFloorMutation(t.Context(), f, "authority-one"); !errors.Is(err, managed.ErrUnsupported) {
-		t.Fatal("constant advertised complete protocol", err)
+		t.Fatal("above-ceiling floor allowed mutation", err)
 	}
 
 	if err := CheckWriterFloorMutation(t.Context(), f, "wrong-authority"); !errors.Is(err, managed.ErrWriterFloorCorrupt) {
@@ -364,5 +366,37 @@ func TestWriterFloorTypedNilRefused(t *testing.T) {
 
 	if err := CheckWriterFloorMutation(t.Context(), backend, "authority-one"); !errors.Is(err, managed.ErrUnavailable) {
 		t.Fatal(err)
+	}
+}
+
+func TestWriterFloorProtocolOneRevalidatesHistoryAndCeiling(t *testing.T) {
+	f := newFloorFixture()
+
+	first := activateFloor(t, f, floorRequest())
+	if err := CheckWriterFloorMutation(t.Context(), f, "authority-one"); err != nil {
+		t.Fatal("compiled protocol-one refused", err)
+	}
+
+	saved := bytes.Clone(f.history[first.ActivationID])
+
+	f.history[first.ActivationID] = []byte("corrupt")
+	if err := CheckWriterFloorMutation(t.Context(), f, "authority-one"); !errors.Is(err, managed.ErrWriterFloorCorrupt) {
+		t.Fatal("positive decision cached past corrupt history", err)
+	}
+
+	f.history[first.ActivationID] = saved
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	if err := CheckWriterFloorMutation(ctx, f, "authority-one"); !errors.Is(err, context.Canceled) {
+		t.Fatal("cancelled check admitted", err)
+	}
+
+	next := nextFloorRequest(first)
+	next.MinimumProtocol = "2"
+	activateFloor(t, f, next)
+
+	if err := CheckWriterFloorMutation(t.Context(), f, "authority-one"); !errors.Is(err, managed.ErrUnsupported) {
+		t.Fatal("above-ceiling floor admitted", err)
 	}
 }

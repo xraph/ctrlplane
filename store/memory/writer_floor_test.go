@@ -252,6 +252,10 @@ func TestWriterFloorMemoryReadOwnershipAndDisabledHeldCheck(t *testing.T) {
 		t.Fatal("read aliases retained bytes", err)
 	}
 
+	if _, err = a.Activate(t.Context(), memoryFloorNext(first)); err != nil {
+		t.Fatal(err)
+	}
+
 	b := managedBackend{store: s}
 
 	err = b.ControllerAtomic(t.Context(), "", nil, func(tx managedstate.ControllerTransaction) error {
@@ -260,7 +264,7 @@ func TestWriterFloorMemoryReadOwnershipAndDisabledHeldCheck(t *testing.T) {
 		return held.checkWriterFloorMutationHeld(t.Context(), "floor-test")
 	})
 	if !errors.Is(err, managed.ErrUnsupported) {
-		t.Fatal("valid floor enabled mutation", err)
+		t.Fatal("above-ceiling floor enabled mutation", err)
 	}
 
 	if _, err = NewWriterFloorAdmin(nil, "floor-test"); !errors.Is(err, managed.ErrInvalid) {

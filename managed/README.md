@@ -608,8 +608,9 @@ The PostgreSQL protected schema must be installed separately through the floor
 administrator before you use this mode. Missing tables or denied reads refuse;
 they do not select legacy behavior.
 
-A pristine protected namespace admits existing managed writes. Every positive
-floor currently refuses them because no capable writer protocol is enabled.
+A pristine protected namespace admits existing managed writes. The compiled core
+writer supports floor 1 and refuses higher floors. Each mutation validates the
+current floor against its retained history before comparing the protocol number.
 The check covers managed commands, retained records and audits, projections and
 direct quiescence batch staging. The floor decision stays inside the same locked
 transaction as the mutation. Exact read-only receipt recovery does not authorize
@@ -631,6 +632,6 @@ checks the roles, sessions and catalog, then revokes table, column, sequence, ro
 schema, database and default privileges before updating the floor and history.
 Any refusal rolls back both the privilege changes and the floor update.
 
-The exclusion administrator grants no replacement writer access. Positive writer
-protocols remain disabled. This database check does not implement the launcher's
-admission barrier or the independent state needed to quarantine a restored database.
+The exclusion administrator grants no replacement writer access. Core support for
+floor 1 does not certify your assembled host. You still need the launcher admission
+barrier and independent state that quarantines a restored database.
