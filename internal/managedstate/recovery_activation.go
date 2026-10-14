@@ -33,7 +33,29 @@ type recoveryOriginalSelection struct {
 }
 
 // recoveryBindingHeld derives identity from retained originals, never producer fields.
+// recoveryBindingHeld is the fresh binding gate. Inspection may retain historical
+// authority after terminal acceptance, but it never renews a completed binding.
 func recoveryBindingHeld(ctx context.Context, tx ControllerTransaction, t *managed.Target, v attemptView, key managed.AttemptBindingKey) (managed.RemovalRecoveryBinding, error) {
+	var zero managed.RemovalRecoveryBinding
+	if !v.validated || key.AttemptKey != attemptKey(v) || v.state.AdmissionDigest == "" {
+		return zero, managed.ErrAuthority
+	}
+
+	binding, err := attemptBindingRead(ctx, tx, t, v, key)
+	if err != nil {
+		return zero, err
+	}
+
+	if binding.Abort != nil || binding.Finish != nil {
+		return zero, managed.ErrBlocked
+	}
+
+	return recoveryBindingInspectionHeld(ctx, tx, t, v, key)
+}
+
+// recoveryBindingInspectionHeld retains the exact original Begin/fence/process
+// identity. Original slot validation still authenticates any later terminal rows.
+func recoveryBindingInspectionHeld(ctx context.Context, tx ControllerTransaction, t *managed.Target, v attemptView, key managed.AttemptBindingKey) (managed.RemovalRecoveryBinding, error) {
 	var out managed.RemovalRecoveryBinding
 	if !v.validated || key.AttemptKey != attemptKey(v) || v.state.AdmissionDigest == "" {
 		return out, managed.ErrAuthority
@@ -44,7 +66,7 @@ func recoveryBindingHeld(ctx context.Context, tx ControllerTransaction, t *manag
 		return out, err
 	}
 
-	if binding.Fence == nil || binding.Abort != nil || binding.Finish != nil {
+	if binding.Fence == nil {
 		return out, managed.ErrBlocked
 	}
 
@@ -371,7 +393,7 @@ func prepareRecoveryActivationPlanHeld(ctx context.Context, tx ControllerTransac
 // recoveryProofBindingHeld rechecks local identity and time after host verification.
 // Native proof authentication alone cannot satisfy these held authority checks.
 func recoveryProofBindingHeld(ctx context.Context, tx ControllerTransaction, target *managed.Target, view attemptView, facts managed.RemovalRevalidationFacts, now time.Time) error {
-	binding, err := recoveryBindingHeld(ctx, tx, target, view, facts.Binding.Key)
+	binding, err := recoveryBindingInspectionHeld(ctx, tx, target, view, facts.Binding.Key)
 	if err != nil {
 		return err
 	}

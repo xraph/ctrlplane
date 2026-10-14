@@ -239,7 +239,7 @@ func recoveryCoverageStepsHeld(ctx context.Context, tx ControllerTransaction, ta
 // recoveryCoverageBindingHeld pins an accepted native guard observation without
 // claiming that its process is still live at the later closure callback.
 func recoveryCoverageBindingHeld(ctx context.Context, tx ControllerTransaction, target *managed.Target, view attemptView, facts managed.EffectiveRemovalBinding, acceptedAt time.Time) error {
-	binding, err := recoveryBindingHeld(ctx, tx, target, view, facts.Binding.Key)
+	binding, err := recoveryBindingInspectionHeld(ctx, tx, target, view, facts.Binding.Key)
 	if err != nil {
 		return err
 	}

@@ -109,7 +109,7 @@ func validateRecoveryActivationInspectionHeld(ctx context.Context, tx Controller
 
 		bindingCount++
 
-		if _, readErr = recoveryBindingHeld(ctx, tx, target, view, attemptBinding(view, reservationID)); readErr != nil {
+		if _, readErr = recoveryBindingInspectionHeld(ctx, tx, target, view, attemptBinding(view, reservationID)); readErr != nil {
 			return readErr
 		}
 	}
@@ -130,7 +130,7 @@ func validateRecoveryActivationInspectionHeld(ctx context.Context, tx Controller
 		}
 	}
 
-	return nil
+	return validateRecoveryTerminalInspectionHeld(ctx, tx, target, view)
 }
 
 func inspectRecoveryFixedSelection(ctx context.Context, tx ControllerTransaction, target *managed.Target, view attemptView, profile managed.RecoveryRecord[managed.RemovalRecoveryActivation], selection recoveryOriginalSelection, index int) error {

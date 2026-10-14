@@ -140,6 +140,10 @@ func recoveryProofFreshHeld(ctx context.Context, tx ControllerTransaction, targe
 		return managed.ErrBlocked
 	}
 
+	if _, err = recoveryBindingHeld(ctx, tx, target, view, request.Facts.Binding.Key); err != nil {
+		return err
+	}
+
 	if err = recoveryRevalidationInputsHeld(ctx, tx, target, view, request.Facts, now); err != nil {
 		return err
 	}

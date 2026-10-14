@@ -545,8 +545,8 @@ The optional removal recovery contracts preserve the original attempt identity,
 provider command and possible effects while retaining revalidation, invocation and
 retry records separately. Complete recovery is still unavailable. Do not advertise
 `ctrlplane.managed.removal-recovery.v1` support from the presence of these types or
-from a successful read of one retained record. Terminal settlement, provider
-custody and host integration still need implementation and qualification.
+from a successful read of one retained record. Guarded original issuance and the
+assembled provider and host still need implementation and qualification.
 
 Memory and PostgreSQL retain an unresolved-work index with bounded pages when an
 action or continuation is accepted. `WorkDiscoveryStore` pages it by ordinal; a newer
@@ -577,6 +577,13 @@ receipt. Close acceptance checks the configured producer outside authority locks
 then checks the same binding, cutoff and coverage again inside the transaction.
 Each retained close intent and result consumes only its matching reserved slot.
 Replaying a request returns its retained record and never grants another send.
+
+Terminal settlement binds complete coverage and every closed guard to an
+independent acceptance receipt. Finish and Abort retain their exact commands and
+historical binding records in the same transaction as the state transition.
+You can inspect those records after completion without renewing authority. The
+complete recovery capability remains disabled until guarded original issuance
+and the full public lifecycle pass qualification.
 
 Revalidation readers check the retained request, event and receipt before returning
 a proof. An `effect_complete` proof also needs the exact positive provider result,

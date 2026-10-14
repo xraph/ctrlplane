@@ -61,7 +61,7 @@ func recoveryEffectCompleteHeld(ctx context.Context, tx ControllerTransaction, t
 		return managed.ErrAuthority
 	}
 
-	binding, err := recoveryBindingHeld(ctx, tx, target, view, facts.Binding.Key)
+	binding, err := recoveryBindingInspectionHeld(ctx, tx, target, view, facts.Binding.Key)
 	if err != nil {
 		return err
 	}

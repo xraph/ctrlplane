@@ -198,7 +198,7 @@ func recoveryNativeCloseReserveHeld(ctx context.Context, tx ControllerTransactio
 			continue
 		}
 
-		binding, err := recoveryBindingHeld(ctx, tx, target, view, attemptBinding(view, reservationID))
+		binding, err := recoveryBindingInspectionHeld(ctx, tx, target, view, attemptBinding(view, reservationID))
 		if err != nil {
 			return after, err
 		}

@@ -125,7 +125,7 @@ func recoveryNativeIntentInputsHeld(ctx context.Context, tx ControllerTransactio
 		return err
 	}
 
-	binding, err := recoveryBindingHeld(ctx, tx, target, view, facts.Binding.Key)
+	binding, err := recoveryBindingInspectionHeld(ctx, tx, target, view, facts.Binding.Key)
 	if err != nil {
 		return err
 	}
@@ -304,6 +304,10 @@ func stageRecoveryNativeIntent(ctx context.Context, tx ControllerTransaction, ta
 	}
 
 	if err := recoveryNativeIntentShape(request.Intent); err != nil {
+		return nil, zero, err
+	}
+
+	if _, err := recoveryBindingHeld(ctx, tx, target, view, request.Intent.Binding.Key); err != nil {
 		return nil, zero, err
 	}
 
