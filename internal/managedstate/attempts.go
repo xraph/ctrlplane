@@ -77,6 +77,10 @@ func attemptHash(domain string, value any) (string, error) {
 }
 func attemptFact(kind string, value any) (string, error) {
 	switch local := value.(type) {
+	case managed.AttemptFenceRecord:
+		if kind == "removal_fence" {
+			return managed.AttemptFenceFactDigest(local)
+		}
 	case managed.ProviderStepPermission:
 		value = managed.ProviderPermissionWire(local)
 	case managed.ProviderStepResult:
