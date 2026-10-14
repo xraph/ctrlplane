@@ -24,25 +24,7 @@ type recoveryAcceptance struct {
 }
 
 func recoveryFactKey(k managed.AttemptKey, kind managed.RecoveryRecordKind, operation id.ID, facts any) (string, error) {
-	if err := attemptVersion(k); err != nil {
-		return "", err
-	}
-
-	if managed.RecoveryRecordLimit(kind) == 0 || operation.Prefix() != managed.PrefixOperation {
-		return "", managed.ErrInvalid
-	}
-
-	subject, err := recoveryFactSubject(facts)
-	if err != nil {
-		return "", err
-	}
-
-	return attemptHash("ctrlplane.managed.recovery-fact-key.v1", struct {
-		Key         managed.AttemptKey         `json:"key"`
-		Kind        managed.RecoveryRecordKind `json:"kind"`
-		OperationID id.ID                      `json:"operation_id"`
-		Subject     any                        `json:"subject"`
-	}{k, kind, operation, subject})
+	return managed.RecoveryFactKey(k, kind, operation, facts)
 }
 
 // recoveryReadFact does not search for a substitute if a named fact or receipt is missing.
@@ -332,56 +314,6 @@ func recoveryLeafSet(ref managed.AttemptRef, proofs []managed.RecoveryRecord[man
 	}
 
 	return owned, nil
-}
-
-// recoveryFactSubject permits one parent transaction to accept distinct fixed-set leaves.
-// A root per step and a proof association per binding may share the same local receipt.
-func recoveryFactSubject(facts any) (any, error) {
-	switch value := facts.(type) {
-	case managed.RemovalRecoveryActivation:
-		return value.Key, nil
-	case managed.RemovalRevalidationFacts:
-		return value.Binding.Key, nil
-	case managed.RecoveryNativeIntent:
-		return struct {
-			Binding   managed.AttemptBindingKey `json:"binding"`
-			Operation string                    `json:"operation"`
-		}{value.Binding.Key, value.Operation}, nil
-	case managed.ProviderNativeCommitFacts:
-		return struct {
-			Binding    managed.AttemptBindingKey     `json:"binding"`
-			Invocation managed.ProviderInvocationKey `json:"invocation"`
-		}{value.Binding.Key, value.Invocation}, nil
-	case managed.RecoveryNativeCloseFacts:
-		return value.Binding.Key, nil
-	case managed.ProviderStepRetryRoot:
-		return value.Step, nil
-	case managed.ProviderPermissionProof:
-		return struct {
-			Invocation    managed.ProviderInvocationKey `json:"invocation"`
-			BindingDigest string                        `json:"binding_digest"`
-		}{value.Invocation, value.BindingDigest}, nil
-	case managed.ProviderInvocationPermission:
-		return value.Key, nil
-	case managed.ProviderStepRetryAuthorization:
-		return value.Key, nil
-	case managed.ProviderInvocationMarker:
-		return value.Key, nil
-	case managed.ProviderInvocationClosure:
-		return value.Key, nil
-	case managed.ProviderInvocationFailure:
-		return value.Key, nil
-	case managed.ProviderInvocationResult:
-		return value.Key, nil
-	case managed.RemovalCutoffFacts:
-		return value.Key, nil
-	case managed.EffectiveRemovalCoverage:
-		return value.Key, nil
-	case managed.EffectiveRemovalBinding:
-		return value.Binding.Key, nil
-	default:
-		return nil, managed.ErrUnsupported
-	}
 }
 
 // recoveryExportShape applies independent producer-export bounds on retention and inspection.
