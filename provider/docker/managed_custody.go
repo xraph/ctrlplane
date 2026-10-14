@@ -26,8 +26,8 @@ type ManagedDockerCommand struct {
 	Service    *managed.ProvisionService `json:"service"`
 }
 
-// ManagedDockerRequest retains the original permission and independent receipt. This
-// first slice handles ordinal zero only. It cannot select or issue retry permission.
+// ManagedDockerRequest retains exact permission and independent receipt custody.
+// Nonzero removal invocations require accepted Retry evidence and explicit authority.
 type ManagedDockerRequest struct {
 	BackendAuthority string                                `json:"backend_authority"`
 	Permission       managed.WireProviderStepPermission    `json:"permission"`
@@ -35,6 +35,7 @@ type ManagedDockerRequest struct {
 	Command          ManagedDockerCommand                  `json:"command"`
 	Binding          *managed.ProviderEffectBindingFacts   `json:"binding"`
 	Invocation       *managed.ProviderInvocationPermission `json:"invocation"`
+	Retry            *ManagedDockerRetryEvidence           `json:"retry,omitempty"`
 }
 
 // ManagedDockerResponse records an actual successful API response, not authenticated
@@ -227,7 +228,7 @@ func (e *ManagedDockerExecutor) validate(ctx context.Context, request ManagedDoc
 		return err
 	}
 
-	if request.BackendAuthority != e.backend || p.Physical.Provider != "docker" || r.ID != p.CommandID || r.Revision != p.Revision || !r.LeaseUntil.After(r.AcceptedAt) || request.Command.Kind != p.Step.Kind {
+	if request.BackendAuthority != e.backend || p.Physical.Provider != "docker" || request.Retry == nil && r.ID != p.CommandID || r.Revision != p.Revision || !r.LeaseUntil.After(r.AcceptedAt) || request.Command.Kind != p.Step.Kind {
 		return managed.ErrInvalid
 	}
 
@@ -255,8 +256,16 @@ func (e *ManagedDockerExecutor) validate(ctx context.Context, request ManagedDoc
 		}
 
 		i := request.Invocation
-		if !reflect.DeepEqual(b.Original.Permission, request.Permission) || !reflect.DeepEqual(b.Original.Receipt, request.Receipt) || !reflect.DeepEqual(i.Permission, request.Permission) || i.Ordinal != "0" || i.Key.CommandID != p.CommandID || i.Key.Step != p.Step || i.Key.AttemptKey != b.Original.Key.AttemptKey || i.ProviderCommandDigest != b.ProviderCommandDigest || !dockerObjectID(i.RootDigest) {
+		if !reflect.DeepEqual(i.Permission, request.Permission) || i.Key.CommandID != p.CommandID || i.Key.Step != p.Step || i.Key.AttemptKey != b.Original.Key.AttemptKey || i.ProviderCommandDigest != b.ProviderCommandDigest || !dockerObjectID(i.RootDigest) {
 			return managed.ErrInvalid
+		}
+
+		if request.Retry == nil {
+			if i.Ordinal != "0" || !reflect.DeepEqual(b.Original.Permission, request.Permission) || !reflect.DeepEqual(b.Original.Receipt, request.Receipt) {
+				return managed.ErrInvalid
+			}
+		} else if err = validateManagedDockerRetry(request); err != nil {
+			return err
 		}
 
 		command, decodeErr := managed.DecodeProviderEffectCommand(b.Command)
@@ -279,7 +288,7 @@ func (e *ManagedDockerExecutor) validate(ctx context.Context, request ManagedDoc
 		if err = e.verifier.VerifyProviderEffectBinding(ctx, custodyClone(b.Original), custodyClone(*b)); err != nil {
 			return err
 		}
-	} else if request.Binding != nil || request.Invocation != nil {
+	} else if request.Binding != nil || request.Invocation != nil || request.Retry != nil {
 		return managed.ErrInvalid
 	}
 
@@ -288,6 +297,17 @@ func (e *ManagedDockerExecutor) validate(ctx context.Context, request ManagedDoc
 	// pair and original request; matching ID/revision alone grants no authority.
 	if err = e.authority.VerifyRequest(ctx, custodyClone(request)); err != nil {
 		return err
+	}
+
+	if request.Retry != nil {
+		authority, ok := e.authority.(ManagedDockerRetryAuthority)
+		if !ok || absent(authority) {
+			return managed.ErrUnsupported
+		}
+
+		if err = authority.VerifyRetry(ctx, custodyClone(request)); err != nil {
+			return err
+		}
 	}
 
 	return ctx.Err()
@@ -468,7 +488,18 @@ func (e *ManagedDockerExecutor) Execute(ctx context.Context, request ManagedDock
 		return record, managed.ErrUnavailable
 	}
 
-	if err = e.authority.Admit(ctx, custodyClone(record.Request)); err != nil {
+	if record.Request.Retry != nil {
+		authority, ok := e.authority.(ManagedDockerRetryAuthority)
+		if !ok || absent(authority) {
+			return record, managed.ErrUnsupported
+		}
+
+		err = authority.AdmitRetry(ctx, custodyClone(record.Request))
+	} else {
+		err = e.authority.Admit(ctx, custodyClone(record.Request))
+	}
+
+	if err != nil {
 		return record, err
 	}
 
