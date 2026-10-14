@@ -227,7 +227,7 @@ func (e *ManagedDockerExecutor) validate(ctx context.Context, request ManagedDoc
 		return err
 	}
 
-	if request.BackendAuthority != e.backend || p.Physical.Provider != "docker" || r.ID != p.CommandID || r.Digest != p.Digest || r.Revision != p.Revision || !r.AcceptedAt.Equal(p.IssuedAt) || !r.LeaseUntil.After(r.AcceptedAt) || request.Command.Kind != p.Step.Kind {
+	if request.BackendAuthority != e.backend || p.Physical.Provider != "docker" || r.ID != p.CommandID || r.Revision != p.Revision || !r.LeaseUntil.After(r.AcceptedAt) || request.Command.Kind != p.Step.Kind {
 		return managed.ErrInvalid
 	}
 
@@ -283,6 +283,9 @@ func (e *ManagedDockerExecutor) validate(ctx context.Context, request ManagedDoc
 		return managed.ErrInvalid
 	}
 
+	// Provision permission and apply receipt use independent digest domains and
+	// callback clocks. The configured authority must authenticate the exact retained
+	// pair and original request; matching ID/revision alone grants no authority.
 	if err = e.authority.VerifyRequest(ctx, custodyClone(request)); err != nil {
 		return err
 	}
