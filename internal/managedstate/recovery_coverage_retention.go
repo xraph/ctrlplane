@@ -329,9 +329,22 @@ func recoveryCoverageReadHeld(ctx context.Context, tx ControllerTransaction, tar
 		return zero, err
 	}
 
-	intent, err := recoveryCoverageSponsorHeld(ctx, tx, view, selection, coverage)
-	if err != nil {
-		return zero, err
+	var intent managed.RecoveryRecord[managed.RecoveryNativeIntent]
+
+	sealed := selection.SchemaVersion == "2"
+	if sealed {
+		if selection.AttemptRef != view.ref || selection.Sponsor != (managed.RecoveryAssociation{}) || selection.Coverage.Kind != managed.RecoveryCoverageRecord {
+			return zero, managed.ErrUnavailable
+		}
+
+		if err = recoveryProtocolEventHeld(ctx, tx, view, "recovery_coverage_seal", selection.Coverage, coverage.Acceptance); err != nil {
+			return zero, err
+		}
+	} else {
+		intent, err = recoveryCoverageSponsorHeld(ctx, tx, view, selection, coverage)
+		if err != nil {
+			return zero, err
+		}
 	}
 
 	cutoff, err := recoveryCutoffHeld(ctx, tx, view)
@@ -402,7 +415,7 @@ func recoveryCoverageReadHeld(ctx context.Context, tx ControllerTransaction, tar
 			return zero, readErr
 		}
 
-		if binding.Facts.Binding == intent.Facts.Binding && binding.Facts.Proof == *intent.Facts.Proof {
+		if !sealed && binding.Facts.Binding == intent.Facts.Binding && binding.Facts.Proof == *intent.Facts.Proof {
 			sponsorMember = true
 		}
 
@@ -415,7 +428,7 @@ func recoveryCoverageReadHeld(ctx context.Context, tx ControllerTransaction, tar
 		bindings = append(bindings, binding.Facts)
 	}
 
-	if !sponsorMember || len(references) == 0 || len(references) > managed.MaxRecoveryBindings || facts.BindingCount != managed.Decimal(strconv.Itoa(len(references))) {
+	if (!sealed && !sponsorMember) || len(references) == 0 || len(references) > managed.MaxRecoveryBindings || facts.BindingCount != managed.Decimal(strconv.Itoa(len(references))) {
 		return zero, managed.ErrUnavailable
 	}
 
@@ -424,7 +437,13 @@ func recoveryCoverageReadHeld(ctx context.Context, tx ControllerTransaction, tar
 		return zero, managed.ErrUnavailable
 	}
 
-	if err = recoveryCoverageAcceptanceMatches(selection, intent, coverage, bindings); err != nil {
+	if sealed {
+		err = recoveryCoverageSealAcceptance(selection, coverage, bindings)
+	} else {
+		err = recoveryCoverageAcceptanceMatches(selection, intent, coverage, bindings)
+	}
+
+	if err != nil {
 		return zero, err
 	}
 
