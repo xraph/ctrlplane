@@ -241,13 +241,13 @@ func TestNativeCloseSelectorUsesActualEncodedCap(t *testing.T) {
 	// Padding tests encoded bytes only; a non-digest selector never supplies authority.
 }
 
-func TestNativeIntentAndCloseDoNotEnableIncompleteLifecycle(t *testing.T) {
+func TestNativeIntentAndCloseRequireConfiguredLifecycle(t *testing.T) {
 	repository := New(&recoveryBackendWitness{})
-	if _, _, _, err := managed.RequireRemovalRecovery(repository); !errors.Is(err, managed.ErrUnsupported) {
+	if err := repository.requireConfiguredRecovery(); !errors.Is(err, managed.ErrUnsupported) {
 		t.Fatal(err)
 	}
 
-	if _, err := managed.RequireRemovalRecoveryLifecycle(repository); !errors.Is(err, managed.ErrUnsupported) {
+	if err := repository.requireConfiguredRecovery(); !errors.Is(err, managed.ErrUnsupported) {
 		t.Fatal(err)
 	}
 }

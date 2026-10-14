@@ -89,7 +89,7 @@ func invocationCommitFactsHeld(ctx context.Context, tx ControllerTransaction, se
 // resolver or raw caller mapping is exposed by this private staging function.
 func stageInvocationMarker(ctx context.Context, tx ControllerTransaction, target *managed.Target, view attemptView, selected retrySelected, expected string, commits []managed.RecoveryAssociation, acceptance managed.RecoveryAcceptance, now time.Time) (*recoveryActivationRows, managed.RecoveryRecord[managed.ProviderInvocationMarker], error) {
 	var zero managed.RecoveryRecord[managed.ProviderInvocationMarker]
-	if selected.current.Ordinal == "0" || selected.current.Digest != expected || selected.marker != nil || selected.result != nil || selected.failure != nil || selected.closure != nil {
+	if selected.current.Ordinal == "0" && !invocationGuardedOriginal(selected) || selected.current.Digest != expected || selected.marker != nil || selected.result != nil || selected.failure != nil || selected.closure != nil {
 		return nil, zero, managed.ErrBlocked
 	}
 
@@ -235,7 +235,7 @@ func stageInvocationResult(ctx context.Context, tx ControllerTransaction, select
 		return nil, zero, managed.ErrConflict
 	}
 
-	if selected.current.Ordinal != "0" && selected.marker == nil {
+	if (selected.current.Ordinal != "0" || invocationGuardedOriginal(selected)) && selected.marker == nil {
 		return nil, zero, managed.ErrAuthority
 	}
 

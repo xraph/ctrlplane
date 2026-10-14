@@ -111,8 +111,8 @@ func TestRecoveryRequestHeaderActualEncodedCapAndCapPlusOne(t *testing.T) {
 	// Oversized owner text tests encoding only; it is never a valid authority command.
 }
 
-func TestRevalidationIntakeDoesNotEnableIncompleteLifecycle(t *testing.T) {
-	if _, _, _, err := managed.RequireRemovalRecovery(New(&recoveryBackendWitness{})); !errors.Is(err, managed.ErrUnsupported) {
+func TestRevalidationIntakeRequiresConfiguredLifecycle(t *testing.T) {
+	if err := New(&recoveryBackendWitness{}).requireConfiguredRecovery(); !errors.Is(err, managed.ErrUnsupported) {
 		t.Fatal("partial lifecycle enabled", err)
 	}
 }

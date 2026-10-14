@@ -112,7 +112,7 @@ func stageRecoveryCutoff(ctx context.Context, tx ControllerTransaction, target *
 		return nil, view, zero, err
 	}
 
-	state := recoveryAttemptState{AttemptState: view.state, Activation: *view.recoveryActivation}
+	state := recoveryAttemptState{AttemptState: view.state, Activation: *view.recoveryActivation, PendingOriginals: append([]string(nil), view.recoveryPendingOriginals...)}
 	state.RevocationDigest, state.Phase = digest, "revoked"
 
 	state.Revision = managed.Decimal(strconv.FormatUint(revision+1, 10))

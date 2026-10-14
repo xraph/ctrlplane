@@ -152,7 +152,7 @@ func recoveryNativeIntentInputsHeld(ctx context.Context, tx ControllerTransactio
 			return readErr
 		}
 
-		if selected.current.Permission != *facts.Permission || selected.current.Ordinal == "0" {
+		if selected.current.Permission != *facts.Permission || selected.current.Ordinal == "0" && !invocationGuardedOriginal(selected) {
 			return managed.ErrBlocked
 		}
 
@@ -425,7 +425,7 @@ func stageRecoveryNativeIntent(ctx context.Context, tx ControllerTransaction, ta
 				return nil, zero, managed.ErrUnsupported
 			}
 
-			state := recoveryAttemptState{AttemptState: view.state, Activation: *view.recoveryActivation}
+			state := recoveryAttemptState{AttemptState: view.state, Activation: *view.recoveryActivation, PendingOriginals: append([]string(nil), view.recoveryPendingOriginals...)}
 
 			state.Revision = managed.Decimal(strconv.FormatUint(revision+1, 10))
 			if err = attemptWrite(ctx, staged, "removal_attempt_state", view.scope, view.ref.AttemptID.String(), state, false, managed.MaxAttemptFact); err != nil {

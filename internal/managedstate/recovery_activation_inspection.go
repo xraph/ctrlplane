@@ -13,49 +13,49 @@ import (
 // readRecoveryCompatibleAttemptState keeps legacy readers on schema 1. Only the private
 // recovery inspection session can decode schema 2, whose full associations are checked
 // after the original attempt has passed its unchanged slot and lineage validation.
-func readRecoveryCompatibleAttemptState(ctx context.Context, reads *attemptCheckedReads, scope, key string) (managed.AttemptState, *managed.RecoveryAssociation, error) {
+func readRecoveryCompatibleAttemptState(ctx context.Context, reads *attemptCheckedReads, scope, key string) (managed.AttemptState, *managed.RecoveryAssociation, []string, error) {
 	var zero managed.AttemptState
 
 	raw, err := reads.ReadRecord(ctx, "removal_attempt_state", scope, key)
 	if err != nil {
-		return zero, nil, err
+		return zero, nil, nil, err
 	}
 
 	if len(raw) > managed.MaxAttemptFact {
-		return zero, nil, managed.ErrCapacity
+		return zero, nil, nil, managed.ErrCapacity
 	}
 
 	var header struct {
 		SchemaVersion managed.Decimal `json:"schema_version"`
 	}
 	if json.Unmarshal(raw, &header) != nil {
-		return zero, nil, managed.ErrUnavailable
+		return zero, nil, nil, managed.ErrUnavailable
 	}
 
 	if header.SchemaVersion == "1" {
 		state, decodeErr := attemptDecode[managed.AttemptState](raw, managed.MaxAttemptFact)
 
-		return state, nil, decodeErr
+		return state, nil, nil, decodeErr
 	}
 
 	if header.SchemaVersion != "2" || !reads.recoveryInspection {
-		return zero, nil, managed.ErrUnsupported
+		return zero, nil, nil, managed.ErrUnsupported
 	}
 
 	state, err := attemptDecode[recoveryAttemptState](raw, managed.MaxAttemptFact)
 	if err != nil {
-		return zero, nil, err
+		return zero, nil, nil, err
 	}
 
 	if state.Activation.Kind != managed.RecoveryActivationRecord {
-		return zero, nil, managed.ErrUnavailable
+		return zero, nil, nil, managed.ErrUnavailable
 	}
 
 	if err = managed.ValidateRecoveryAssociation(state.Activation); err != nil {
-		return zero, nil, err
+		return zero, nil, nil, err
 	}
 
-	return state.AttemptState, &state.Activation, nil
+	return state.AttemptState, &state.Activation, append([]string(nil), state.PendingOriginals...), nil
 }
 
 // validateRecoveryActivationInspectionHeld never calls an attempt reader. It extends an
@@ -86,12 +86,12 @@ func validateRecoveryActivationInspectionHeld(ctx context.Context, tx Controller
 		return err
 	}
 
-	digest, err := attemptHash("ctrlplane.managed.recovery-original-selections.v1", selections)
+	selectionDigest, err := attemptHash("ctrlplane.managed.recovery-original-selections.v1", selections)
 	if err != nil {
 		return err
 	}
 
-	if facts.OriginalSelectionDigest != digest || facts.StepCount != managed.Decimal(strconv.Itoa(len(selections))) {
+	if facts.OriginalSelectionDigest != selectionDigest || facts.StepCount != managed.Decimal(strconv.Itoa(len(selections))) {
 		return managed.ErrUnavailable
 	}
 
@@ -124,6 +124,16 @@ func validateRecoveryActivationInspectionHeld(ctx context.Context, tx Controller
 		}
 	}
 
+	if len(view.recoveryPendingOriginals) != 0 && len(view.recoveryPendingOriginals) != managed.MaxRecoverySteps {
+		return managed.ErrUnavailable
+	}
+
+	for index, commitment := range view.recoveryPendingOriginals {
+		if commitment != "" && (!digest(commitment) || index >= len(selections) || selections[index].Disposition != "unissued") {
+			return managed.ErrUnavailable
+		}
+	}
+
 	for index, selection := range selections {
 		if err = inspectRecoveryFixedSelection(ctx, tx, target, view, profile, selection, index); err != nil {
 			return err
@@ -149,6 +159,32 @@ func inspectRecoveryFixedSelection(ctx context.Context, tx ControllerTransaction
 	}
 
 	if selection.Disposition == "unissued" {
+		commitment := ""
+		if len(view.recoveryPendingOriginals) != 0 {
+			commitment = view.recoveryPendingOriginals[index]
+		}
+
+		selected, pendingErr := guardedOriginalSelectionHeld(ctx, tx, view, selection.Step)
+		if commitment != "" {
+			if pendingErr != nil {
+				return attemptRequiredAssociation(pendingErr)
+			}
+
+			if selected.PendingDigest != commitment {
+				return managed.ErrUnavailable
+			}
+
+			return inspectGuardedOriginalHeld(ctx, tx, target, view, selection.Step)
+		}
+
+		if !errors.Is(pendingErr, managed.ErrNotFound) {
+			if pendingErr != nil {
+				return pendingErr
+			}
+
+			return managed.ErrUnavailable
+		}
+
 		if selection.Association != nil || fixed.Root != nil {
 			return managed.ErrUnavailable
 		}

@@ -110,7 +110,7 @@ func recoverySelectedCoverage(stepDigest string, selected retrySelected) (manage
 			return out, managed.ErrUnavailable
 		}
 
-		if selected.current.Ordinal != "0" && selected.marker == nil {
+		if (selected.current.Ordinal != "0" || invocationGuardedOriginal(selected)) && selected.marker == nil {
 			return out, managed.ErrUnavailable
 		}
 
@@ -179,7 +179,22 @@ func recoveryCoverageStepsHeld(ctx context.Context, tx ControllerTransaction, ta
 			return nil, managed.ErrUnavailable
 		}
 
+		guarded := false
+
 		if fixed.Disposition == "unissued" {
+			origin, originErr := guardedOriginalSelectionHeld(ctx, tx, view, step)
+			if originErr == nil {
+				if origin.Root == nil {
+					return nil, managed.ErrBlocked
+				}
+
+				guarded = true
+			} else if !errors.Is(originErr, managed.ErrNotFound) {
+				return nil, originErr
+			}
+		}
+
+		if fixed.Disposition == "unissued" && !guarded {
 			if fixed.Root != nil || view.state.ProviderSlots[index] != 0 {
 				return nil, managed.ErrUnavailable
 			}
@@ -208,7 +223,7 @@ func recoveryCoverageStepsHeld(ctx context.Context, tx ControllerTransaction, ta
 			continue
 		}
 
-		if fixed.Disposition != "original" || fixed.Root == nil || view.state.ProviderSlots[index]&attemptPermissionBit == 0 {
+		if !guarded && (fixed.Disposition != "original" || fixed.Root == nil || view.state.ProviderSlots[index]&attemptPermissionBit == 0) {
 			return nil, managed.ErrUnavailable
 		}
 

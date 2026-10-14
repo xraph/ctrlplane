@@ -54,16 +54,17 @@ type attemptEvent struct {
 	Receipt       managed.Receipt    `json:"receipt"`
 }
 type attemptView struct {
-	recoveryActivation *managed.RecoveryAssociation
-	lineageRoot        *attemptView
-	validated          bool
-	originals          map[id.ID]managed.AttemptBindingReference
-	commands           map[managed.AttemptCommandKey]managed.AttemptCommandRecord
-	fences             map[managed.AttemptBindingKey]managed.AttemptFenceRecord
-	scope              string
-	descriptor         managed.AttemptDescriptor
-	state              managed.AttemptState
-	ref                managed.AttemptRef
+	recoveryActivation       *managed.RecoveryAssociation
+	recoveryPendingOriginals []string
+	lineageRoot              *attemptView
+	validated                bool
+	originals                map[id.ID]managed.AttemptBindingReference
+	commands                 map[managed.AttemptCommandKey]managed.AttemptCommandRecord
+	fences                   map[managed.AttemptBindingKey]managed.AttemptFenceRecord
+	scope                    string
+	descriptor               managed.AttemptDescriptor
+	state                    managed.AttemptState
+	ref                      managed.AttemptRef
 }
 
 func attemptHash(domain string, value any) (string, error) {
@@ -1085,7 +1086,7 @@ func readAttemptBaseHeld(ctx context.Context, tx ControllerTransaction, t *manag
 		}
 	}
 
-	state, activation, err := readRecoveryCompatibleAttemptState(ctx, checked, scope, d.AttemptID.String())
+	state, activation, pendingOriginals, err := readRecoveryCompatibleAttemptState(ctx, checked, scope, d.AttemptID.String())
 	if err != nil {
 		return v, err
 	}
@@ -1101,6 +1102,7 @@ func readAttemptBaseHeld(ctx context.Context, tx ControllerTransaction, t *manag
 
 	v.state = state
 	v.recoveryActivation = activation
+	v.recoveryPendingOriginals = pendingOriginals
 
 	original, err := acceptedOperationBase(ctx, tx, root.OriginalOperationKey)
 	if err != nil {

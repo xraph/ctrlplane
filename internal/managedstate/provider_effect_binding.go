@@ -74,9 +74,34 @@ func providerEffectKey(key managed.ProviderEffectBindingKey) (string, string, er
 func providerEffectOriginalHeld(ctx context.Context, tx ControllerTransaction, target *managed.Target, key managed.ProviderEffectBindingKey) (managed.ProviderEffectOriginal, error) {
 	var zero managed.ProviderEffectOriginal
 
-	view, err := readAttempt(ctx, tx, target, key.AttemptKey)
+	view, _, err := readRecoveryAttemptInspection(ctx, tx, target, key.AttemptKey)
 	if err != nil {
 		return zero, err
+	}
+
+	if view.recoveryActivation != nil {
+		pending, _, pendingErr := guardedOriginalPendingHeld(ctx, tx, target, view, key.Step)
+		if pendingErr == nil {
+			if pending.Original.Key != key {
+				return zero, managed.ErrAuthority
+			}
+
+			return pending.Original, nil
+		}
+		// Adopted original slots still use their unchanged legacy permission.
+		stepKey, keyErr := retryStepKey(key.AttemptKey, key.Step)
+		if keyErr != nil {
+			return zero, keyErr
+		}
+
+		fixed, readErr := attemptRead[recoveryFixedSelection](ctx, tx, recoveryFixedSelectionKind, view.scope, stepKey, managed.MaxStepRetryPointer)
+		if readErr != nil {
+			return zero, readErr
+		}
+
+		if fixed.Disposition != "original" {
+			return zero, pendingErr
+		}
 	}
 
 	steps, err := attemptSteps(target, view)

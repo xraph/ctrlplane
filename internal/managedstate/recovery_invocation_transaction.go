@@ -172,21 +172,12 @@ func invocationReplay(ctx context.Context, tx ControllerTransaction, request inv
 func invocationSelectedHeld(ctx context.Context, tx ControllerTransaction, view attemptView, step managed.ProviderStepKey) (retrySelected, error) {
 	var zero retrySelected
 
-	stepKey, err := retryStepKey(attemptKey(view), step)
+	rootReference, err := recoveryInvocationRootReferenceHeld(ctx, tx, view, step)
 	if err != nil {
 		return zero, err
 	}
 
-	fixed, err := attemptRead[recoveryFixedSelection](ctx, tx, recoveryFixedSelectionKind, view.scope, stepKey, managed.MaxStepRetryPointer)
-	if err != nil {
-		return zero, err
-	}
-
-	if view.recoveryActivation == nil || fixed.Activation != *view.recoveryActivation || fixed.AttemptRef != view.ref || fixed.Step != step || fixed.Disposition != "original" || fixed.Root == nil {
-		return zero, managed.ErrBlocked
-	}
-
-	selected, err := retryReadSelected(ctx, tx, attemptKey(view), *fixed.Root)
+	selected, err := retryReadSelected(ctx, tx, attemptKey(view), rootReference)
 	if err != nil {
 		return zero, err
 	}
@@ -215,10 +206,29 @@ func invocationRemainingReserve(ctx context.Context, tx ControllerTransaction, t
 
 	for index, step := range steps {
 		if view.state.ProviderSlots[index]&attemptPermissionBit == 0 {
-			after.markerObligations++
-			after.closureObligations++
+			origin, originErr := guardedOriginalSelectionHeld(ctx, tx, view, step)
+			if errors.Is(originErr, managed.ErrNotFound) {
+				after.markerObligations++
+				after.closureObligations++
 
-			continue
+				continue
+			}
+
+			if originErr != nil {
+				return after, originErr
+			}
+			// Pending acceptance consumes the reserved original permission write.
+			if after.existing == 0 {
+				return after, managed.ErrUnavailable
+			}
+
+			after.existing--
+			if origin.Root == nil {
+				after.markerObligations++
+				after.closureObligations++
+
+				continue
+			}
 		}
 
 		selected, readErr := invocationSelectedHeld(ctx, tx, view, step)
@@ -399,7 +409,7 @@ func (r *Repository) transitionInvocation(ctx context.Context, request invocatio
 				return managed.Receipt{}, heldErr
 			}
 
-			state := recoveryAttemptState{AttemptState: checked.state, Activation: *checked.recoveryActivation}
+			state := recoveryAttemptState{AttemptState: checked.state, Activation: *checked.recoveryActivation, PendingOriginals: append([]string(nil), checked.recoveryPendingOriginals...)}
 
 			state.Revision = managed.Decimal(strconv.FormatUint(attemptRevision+cost, 10))
 			if heldErr = attemptWrite(ctx, staged, "removal_attempt_state", checked.scope, checked.ref.AttemptID.String(), state, false, managed.MaxAttemptFact); heldErr != nil {

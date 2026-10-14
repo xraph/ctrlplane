@@ -215,9 +215,9 @@ func TestRecoveryTerminalRequestActualCapAndCapPlusOne(t *testing.T) {
 	}
 }
 
-func TestTerminalMethodsKeepGuardedOriginalRequirementDisabled(t *testing.T) {
-	if _, _, _, err := managed.RequireRemovalRecovery(New(&recoveryBackendWitness{})); !errors.Is(err, managed.ErrUnsupported) {
-		t.Fatal("incomplete guarded-original lifecycle enabled", err)
+func TestTerminalMethodsRequireConfiguredLifecycle(t *testing.T) {
+	if err := New(&recoveryBackendWitness{}).requireConfiguredRecovery(); !errors.Is(err, managed.ErrUnsupported) {
+		t.Fatal("unconfigured lifecycle enabled", err)
 	}
 }
 

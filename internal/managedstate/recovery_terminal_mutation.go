@@ -219,7 +219,7 @@ func stageRecoveryTerminalCustody(ctx context.Context, staged *recoveryActivatio
 		return zero, managed.ErrUnsupported
 	}
 
-	state := recoveryAttemptState{AttemptState: view.state, Activation: *view.recoveryActivation}
+	state := recoveryAttemptState{AttemptState: view.state, Activation: *view.recoveryActivation, PendingOriginals: append([]string(nil), view.recoveryPendingOriginals...)}
 	if err := attemptWrite(ctx, staged, "removal_attempt_state", view.scope, view.ref.AttemptID.String(), state, false, managed.MaxAttemptFact); err != nil {
 		return zero, err
 	}

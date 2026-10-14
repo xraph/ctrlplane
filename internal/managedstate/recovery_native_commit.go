@@ -29,7 +29,7 @@ func invocationNativeCommitHeadroom(parent, attempt uint64, remaining recoveryRe
 
 func invocationNativeCommitMemberHeld(ctx context.Context, tx ControllerTransaction, target *managed.Target, view attemptView, selected retrySelected, facts managed.ProviderNativeCommitFacts, now time.Time) (invocationProofMember, error) {
 	var zero invocationProofMember
-	if selected.permission.Facts.Key != facts.Invocation || selected.current.Ordinal == "0" || selected.marker != nil || selected.result != nil || selected.closure != nil {
+	if selected.permission.Facts.Key != facts.Invocation || selected.current.Ordinal == "0" && !invocationGuardedOriginal(selected) || selected.marker != nil || selected.result != nil || selected.closure != nil {
 		return zero, managed.ErrBlocked
 	}
 
@@ -337,7 +337,7 @@ func (r *Repository) RecordManagedProviderNativeCommit(ctx context.Context, requ
 				return managed.Receipt{}, heldErr
 			}
 
-			state := recoveryAttemptState{AttemptState: checked.state, Activation: *checked.recoveryActivation}
+			state := recoveryAttemptState{AttemptState: checked.state, Activation: *checked.recoveryActivation, PendingOriginals: append([]string(nil), checked.recoveryPendingOriginals...)}
 			if heldErr = attemptWrite(ctx, staged, "removal_attempt_state", checked.scope, checked.ref.AttemptID.String(), state, false, managed.MaxAttemptFact); heldErr != nil {
 				return managed.Receipt{}, heldErr
 			}

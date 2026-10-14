@@ -379,14 +379,14 @@ func TestRecoveryInspectionSchemaFloorAndMutationFence(t *testing.T) {
 	}
 
 	legacy := newAttemptCheckedReads(staged)
-	if _, _, err = readRecoveryCompatibleAttemptState(t.Context(), legacy, view.scope, view.ref.AttemptID.String()); !errors.Is(err, managed.ErrUnsupported) {
+	if _, _, _, err = readRecoveryCompatibleAttemptState(t.Context(), legacy, view.scope, view.ref.AttemptID.String()); !errors.Is(err, managed.ErrUnsupported) {
 		t.Fatal("legacy state reader accepted schema 2", err)
 	}
 
 	inspection := newAttemptCheckedReads(staged)
 	inspection.recoveryInspection = true
 
-	state, activation, err := readRecoveryCompatibleAttemptState(t.Context(), inspection, view.scope, view.ref.AttemptID.String())
+	state, activation, _, err := readRecoveryCompatibleAttemptState(t.Context(), inspection, view.scope, view.ref.AttemptID.String())
 	if err != nil || state.SchemaVersion != "2" || activation == nil || *activation != plan.State.Activation {
 		t.Fatal(err)
 	}
@@ -398,7 +398,7 @@ func TestRecoveryInspectionSchemaFloorAndMutationFence(t *testing.T) {
 		t.Fatal("legacy mutation stripped activation", err)
 	}
 
-	if _, _, _, err = managed.RequireRemovalRecovery(New(&recoveryBackendWitness{})); !errors.Is(err, managed.ErrUnsupported) {
+	if err = New(&recoveryBackendWitness{}).requireConfiguredRecovery(); !errors.Is(err, managed.ErrUnsupported) {
 		t.Fatal("partial activation enabled full capability", err)
 	}
 }

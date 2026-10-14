@@ -72,8 +72,8 @@ func TestRecoveryHostRefusesMissingAndTypedNilCapabilities(t *testing.T) {
 		})
 	}
 
-	if _, _, _, err := managed.RequireRemovalRecovery(repository); !errors.Is(err, managed.ErrUnsupported) {
-		t.Fatalf("unfinished optional capability advertised: %v", err)
+	if _, _, _, err := managed.RequireRemovalRecovery(repository); err != nil {
+		t.Fatalf("configured complete recovery contract unavailable: %v", err)
 	}
 
 	host.RevalidationIdentity.Version = "9223372036854775808"

@@ -543,10 +543,10 @@ race on the exact commit and audits every required case without skips.
 
 The optional removal recovery contracts preserve the original attempt identity,
 provider command and possible effects while retaining revalidation, invocation and
-retry records separately. Complete recovery is still unavailable. Do not advertise
-`ctrlplane.managed.removal-recovery.v1` support from the presence of these types or
-from a successful read of one retained record. Guarded original issuance and the
-assembled provider and host still need implementation and qualification.
+retry records separately. Configure the complete native and provider adapters
+before you use `ctrlplane.managed.removal-recovery.v1`. A successful read of one
+retained record does not establish that host contract. The assembled provider and
+host still need implementation and qualification.
 
 Memory and PostgreSQL retain an unresolved-work index with bounded pages when an
 action or continuation is accepted. `WorkDiscoveryStore` pages it by ordinal; a newer
@@ -564,7 +564,7 @@ before accepting the result.
 
 Recovery invocation readers verify the retained permission, marker, result and
 native commit associations before returning them. Fresh public commands require
-the complete recovery capability, which remains disabled. A retained cutoff
+the complete configured recovery capability. A retained cutoff
 revokes further issuance but does not prove that an earlier command had no effect
 or authorize settlement. Late results still need their original associations.
 
@@ -581,9 +581,15 @@ Replaying a request returns its retained record and never grants another send.
 Terminal settlement binds complete coverage and every closed guard to an
 independent acceptance receipt. Finish and Abort retain their exact commands and
 historical binding records in the same transaction as the state transition.
-You can inspect those records after completion without renewing authority. The
-complete recovery capability remains disabled until guarded original issuance
-and the full public lifecycle pass qualification.
+You can inspect those records after completion without renewing authority.
+
+Use `PrepareManagedGuardedOriginal` to retain a pending original permission and its
+exact native proof set. This does not authorize a send. After the configured
+provider binds the exact resource and incarnation, `MaterializeManagedGuardedOriginal`
+retains that same permission's root and current selection. Native binding and the
+one-shot marker are still required before execution. A missing pending selector
+refuses inspection and further work because the attempt state independently
+commits the accepted pending record. It cannot turn into unissued coverage.
 
 Revalidation readers check the retained request, event and receipt before returning
 a proof. An `effect_complete` proof also needs the exact positive provider result,

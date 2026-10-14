@@ -177,7 +177,22 @@ func invocationHistoricalSelectionHeld(ctx context.Context, tx ControllerTransac
 		return zero, err
 	}
 
-	if fixed.SchemaVersion != "1" || fixed.AttemptRef != reference || fixed.Step != key.Step || fixed.Disposition != "original" || fixed.Root == nil {
+	if fixed.Disposition == "unissued" && fixed.Root == nil {
+		selected, readErr := attemptRead[guardedOriginalSelection](ctx, tx, guardedOriginalSelectionKind, scope, stepKey, managed.MaxStepRetryPointer)
+		if readErr != nil {
+			return zero, readErr
+		}
+
+		if selected.SchemaVersion != "1" || selected.AttemptRef != reference || selected.Step != key.Step || selected.Root == nil {
+			return zero, managed.ErrUnavailable
+		}
+
+		fixed.Root = selected.Root
+	} else if fixed.Disposition != "original" {
+		return zero, managed.ErrUnavailable
+	}
+
+	if fixed.SchemaVersion != "1" || fixed.AttemptRef != reference || fixed.Step != key.Step || fixed.Root == nil {
 		return zero, managed.ErrUnavailable
 	}
 

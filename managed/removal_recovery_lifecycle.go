@@ -10,6 +10,7 @@ import (
 // their authority through exact effective invocation coverage and retained guard closure.
 // Implementing only revalidation, invocation and retry stores is incomplete.
 type RemovalRecoveryLifecycleStore interface {
+	ProviderGuardedOriginalStore
 	ReadManagedEffectiveRemovalCoverageExact(ctx context.Context, request RecoveryExactRequest) (RecoveryRecord[EffectiveRemovalCoverage], error)
 	SettleManagedRemovalRecovery(ctx context.Context, request AttemptSettlementRequest) (Receipt, error)
 	RecordManagedRemovalRecoveryCommand(ctx context.Context, request AttemptCommandRequest) (AttemptCommandGrant, error)

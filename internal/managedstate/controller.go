@@ -56,8 +56,12 @@ func ImmutableRecordLimit(kind string) int {
 	}
 
 	switch kind {
-	case recoveryCoverageSelectionKind, recoveryRequestKind, recoveryNativeCloseSelectionKind, recoveryTerminalSelectionKind:
+	case guardedOriginalSelectionKind, recoveryCoverageSelectionKind, recoveryRequestKind, recoveryNativeCloseSelectionKind, recoveryTerminalSelectionKind:
 		return managed.MaxRecoveryReceipt
+	case guardedOriginalKind:
+		return maxGuardedOriginal
+	case guardedOriginalMaterializationKind:
+		return managed.MaxAttemptFact
 	case recoveryTerminalRequestKind:
 		return maxRecoveryTerminalRequest
 	case managed.ProviderEffectBindingKind:
@@ -99,7 +103,7 @@ func ValidateImmutableRecordKeys(keys []ControllerRecordKey) error {
 			return managed.ErrInvalid
 		}
 
-		if selected.Kind == managed.OriginalRegistration || selected.Kind == "removal_attempt_event" {
+		if selected.Kind == managed.OriginalRegistration || selected.Kind == "removal_attempt_event" || selected.Kind == guardedOriginalKind || selected.Kind == guardedOriginalMaterializationKind {
 			parsed, err := id.ParseWithPrefix(selected.Key, managed.PrefixOperation)
 			if err != nil || parsed.String() != selected.Key {
 				return managed.ErrInvalid

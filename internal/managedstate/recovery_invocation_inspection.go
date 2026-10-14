@@ -25,16 +25,12 @@ func invocationStatusSelectionHeld(ctx context.Context, tx ControllerTransaction
 		return zero, err
 	}
 
-	fixed, err := attemptRead[recoveryFixedSelection](ctx, tx, recoveryFixedSelectionKind, view.scope, stepKey, managed.MaxStepRetryPointer)
+	rootReference, err := recoveryInvocationRootReferenceHeld(ctx, tx, view, key.Step)
 	if err != nil {
 		return zero, err
 	}
 
-	if fixed.Activation != *view.recoveryActivation || fixed.AttemptRef != view.ref || fixed.Step != key.Step || fixed.Disposition != "original" || fixed.Root == nil {
-		return zero, managed.ErrAuthority
-	}
-
-	root, err := recoveryReadFact[managed.ProviderStepRetryRoot](ctx, tx, key.AttemptKey, *fixed.Root)
+	root, err := recoveryReadFact[managed.ProviderStepRetryRoot](ctx, tx, key.AttemptKey, rootReference)
 	if err != nil {
 		return zero, err
 	}
@@ -53,7 +49,7 @@ func invocationStatusSelectionHeld(ctx context.Context, tx ControllerTransaction
 	var previous *managed.ProviderStepRetryPrevious
 
 	if current.Ordinal == "0" {
-		current.Authority = *fixed.Root
+		current.Authority = rootReference
 
 		if permission.Acceptance != root.Acceptance {
 			return zero, managed.ErrUnavailable
@@ -69,7 +65,7 @@ func invocationStatusSelectionHeld(ctx context.Context, tx ControllerTransaction
 			return zero, readErr
 		}
 
-		if locator.SchemaVersion != "1" || locator.Key != key || locator.Root != *fixed.Root || locator.Permission != status.Permission {
+		if locator.SchemaVersion != "1" || locator.Key != key || locator.Root != rootReference || locator.Permission != status.Permission {
 			return zero, managed.ErrUnavailable
 		}
 
@@ -130,7 +126,7 @@ func invocationStatusSelectionHeld(ctx context.Context, tx ControllerTransaction
 
 	reads := &invocationHistoricalCertificateReads{ControllerTransaction: tx, scope: view.scope, stepKey: stepKey, current: current, previous: previous}
 
-	selected, err := retryReadSelected(ctx, reads, key.AttemptKey, *fixed.Root)
+	selected, err := retryReadSelected(ctx, reads, key.AttemptKey, rootReference)
 	if err != nil {
 		return zero, err
 	}

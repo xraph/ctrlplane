@@ -334,7 +334,7 @@ func TestCoverageCloseIntentHeadroomConsumesOnlyItsReservedSlot(t *testing.T) {
 		t.Fatal("unreserved intent", err)
 	}
 
-	if _, _, _, err = managed.RequireRemovalRecovery(New(&recoveryBackendWitness{})); !errors.Is(err, managed.ErrUnsupported) {
+	if err = New(&recoveryBackendWitness{}).requireConfiguredRecovery(); !errors.Is(err, managed.ErrUnsupported) {
 		t.Fatal("coverage enabled incomplete lifecycle", err)
 	}
 }

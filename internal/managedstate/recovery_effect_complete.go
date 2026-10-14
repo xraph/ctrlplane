@@ -70,7 +70,7 @@ func recoveryEffectCompleteHeld(ctx context.Context, tx ControllerTransaction, t
 		return managed.ErrAuthority
 	}
 
-	if selected.current.Ordinal == "0" {
+	if selected.current.Ordinal == "0" && !invocationGuardedOriginal(selected) {
 		return recoveryOriginalPreEffectHeld(ctx, tx, target, view, facts, selected)
 	}
 

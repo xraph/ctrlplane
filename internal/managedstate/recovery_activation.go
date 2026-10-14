@@ -15,7 +15,8 @@ import (
 type recoveryAttemptState struct {
 	managed.AttemptState
 
-	Activation managed.RecoveryAssociation `json:"recovery_activation"`
+	Activation       managed.RecoveryAssociation `json:"recovery_activation"`
+	PendingOriginals []string                    `json:"pending_originals,omitempty"`
 }
 
 // recoveryActivationPlan is transaction-local preparation. It is never persisted as a unit.

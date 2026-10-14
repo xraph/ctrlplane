@@ -160,7 +160,7 @@ func stageRecoveryCoverageCloseIntent(ctx context.Context, tx ControllerTransact
 		return nil, zero, err
 	}
 
-	state := recoveryAttemptState{AttemptState: view.state, Activation: *view.recoveryActivation}
+	state := recoveryAttemptState{AttemptState: view.state, Activation: *view.recoveryActivation, PendingOriginals: append([]string(nil), view.recoveryPendingOriginals...)}
 
 	state.Revision = managed.Decimal(strconv.FormatUint(revision+1, 10))
 	if err = attemptWrite(ctx, staged, "removal_attempt_state", view.scope, view.ref.AttemptID.String(), state, false, managed.MaxAttemptFact); err != nil {

@@ -350,9 +350,9 @@ func (r *Repository) RecordManagedRemovalRecoveryAbort(ctx context.Context, requ
 	return recordRecoveryTerminal(ctx, r, q.AttemptRequest, q.ReservationID, q.Acceptance, q.ProofVerifiedAt, q.ProofValidUntil, managed.AttemptAbort, q)
 }
 
-// tombstoneRecovery is private until guarded original issuance and the complete
-// public fixture are implemented. It is a real transition, not a success stub.
-func (r *Repository) tombstoneRecovery(ctx context.Context, q managed.AttemptRequest) (managed.Receipt, error) {
+// TombstoneManagedRemovalRecovery completes an exactly settled removal after
+// every original binding has accepted Finish. Replays retain the same receipt.
+func (r *Repository) TombstoneManagedRemovalRecovery(ctx context.Context, q managed.AttemptRequest) (managed.Receipt, error) {
 	out, _, _, err := mutateRecoveryTerminal(ctx, r, q, "attempt_tombstone", q, func(tx ControllerTransaction, target *managed.Target, view *attemptView, authority recoveryTerminalAuthority, fingerprint string, _ time.Time) error {
 		if authority.coverage.Facts.Disposition != managed.Removed {
 			return managed.ErrBlocked
