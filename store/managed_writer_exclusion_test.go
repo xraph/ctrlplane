@@ -354,6 +354,16 @@ func TestWriterExclusionAdministrativeDeadline(t *testing.T) {
 		t.Fatal("caller deadline not honored")
 	}
 
+	// A live blocker must not be mistaken for completed session teardown.
+	drainCtx, drainCancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	drainErr := waitForExclusionSessionDrain(drainCtx, f)
+
+	drainCancel()
+
+	if !errors.Is(drainErr, context.DeadlineExceeded) {
+		t.Fatal("expected session drain to wait for the open blocker", drainErr)
+	}
+
 	if err = held.Rollback(); err != nil {
 		t.Fatal(err)
 	}
@@ -370,8 +380,39 @@ func TestWriterExclusionAdministrativeDeadline(t *testing.T) {
 	// Cancellation may discard the session with SET ROLE. Reestablish it explicitly.
 	exclusionExec(t, f.admin, "SET ROLE "+f.owner)
 
+	// Close and canceled-query cleanup do not wait for PostgreSQL to remove
+	// their backends. Observe that removal before the single activation retry.
+	retryCtx, retryCancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer retryCancel()
+
+	if err := waitForExclusionSessionDrain(retryCtx, f); err != nil {
+		t.Fatal("closed fixture sessions did not drain", err)
+	}
+
 	if _, err := f.activate(t.Context(), f.activation()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func waitForExclusionSessionDrain(ctx context.Context, f *exclusionFixture) error {
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		var active bool
+		if err := pgdriver.Unwrap(f.admin.DB()).NewRaw("SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid())").Scan(ctx, &active); err != nil {
+			return err
+		}
+
+		if !active {
+			return nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
 	}
 }
 
