@@ -249,7 +249,7 @@ func TestProviderEffectCompleteRowCapIncludesBase64AndWrappers(t *testing.T) {
 
 func TestProviderEffectOriginalAssociationsRefuseSubstitution(t *testing.T) {
 	for name, change := range map[string]func(*ProviderEffectOriginal){
-		"request":   func(o *ProviderEffectOriginal) { o.Receipt.Digest = strings.Repeat("f", 64) },
+		"request":   func(o *ProviderEffectOriginal) { o.Receipt.Digest = "invalid" },
 		"revision":  func(o *ProviderEffectOriginal) { o.Receipt.Revision = "2" },
 		"operation": func(o *ProviderEffectOriginal) { o.Key.OriginalCommandID = id.New(PrefixOperation) },
 		"attempt":   func(o *ProviderEffectOriginal) { o.AttemptRef.AttemptID = id.New(PrefixOperation) },
@@ -291,4 +291,20 @@ func TestProviderEffectReceiptBindsVerifiedFacts(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The store must now find this different digest in its independent parent receipt.
+}
+
+// Shape validation cannot authenticate either digest. The held store reader must
+// reload the full original permission association and independent command receipt.
+func TestProviderEffectOriginalIndependentReceiptDigest(t *testing.T) {
+	record := effectCodecFixture(t)
+
+	record.Facts.Original.Receipt.Digest = strings.Repeat("9", 64)
+	if err := ValidateProviderEffectOriginal(record.Facts.Original); err != nil {
+		t.Fatal("independent receipt digest", err)
+	}
+
+	record.Facts.Original.Receipt.AcceptedAt = record.Facts.Original.Receipt.AcceptedAt.Add(time.Nanosecond)
+	if err := ValidateProviderEffectOriginal(record.Facts.Original); err == nil {
+		t.Fatal("fixed-attempt issuance clock mismatch accepted")
+	}
 }

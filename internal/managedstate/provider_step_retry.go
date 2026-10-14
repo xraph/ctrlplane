@@ -134,7 +134,7 @@ func retryReadSelected(ctx context.Context, tx ControllerTransaction, k managed.
 		return selected, err
 	}
 
-	if originalReceipt.ID != root.Facts.OriginalPermission.CommandID || originalReceipt.Digest != root.Facts.OriginalPermission.Digest || managed.Decimal(strconv.FormatUint(originalReceipt.Revision, 10)) != root.Facts.OriginalPermission.Revision || !originalReceipt.AcceptedAt.Equal(root.Facts.OriginalPermission.IssuedAt) {
+	if !digest(originalReceipt.Digest) || originalReceipt.ID != root.Facts.OriginalPermission.CommandID || managed.Decimal(strconv.FormatUint(originalReceipt.Revision, 10)) != root.Facts.OriginalPermission.Revision || !originalReceipt.AcceptedAt.Equal(root.Facts.OriginalPermission.IssuedAt) {
 		return selected, managed.ErrUnavailable
 	}
 

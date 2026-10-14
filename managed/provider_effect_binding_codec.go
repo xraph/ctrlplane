@@ -76,7 +76,8 @@ func ProviderEffectCommandDigest(raw []byte) (string, error) {
 	return Digest(append([]byte(ProviderEffectBindingProfile+".command\n"), raw...)), nil
 }
 
-// ValidateProviderEffectOriginal checks exact permission and receipt associations.
+// ValidateProviderEffectOriginal checks shape and local identity associations.
+// Ordinary permissions and command receipts use different digest domains.
 // The store must also reload both records from the same persistence authority.
 func ValidateProviderEffectOriginal(original ProviderEffectOriginal) error {
 	key := original.Key
@@ -96,7 +97,7 @@ func ValidateProviderEffectOriginal(original ProviderEffectOriginal) error {
 	}
 
 	receipt, err := original.Receipt.Value()
-	if err != nil || receipt.ID != permission.CommandID || receipt.Digest != permission.Digest || receipt.Revision != permission.Revision || !receipt.AcceptedAt.Equal(permission.IssuedAt) || !receipt.LeaseUntil.After(receipt.AcceptedAt) {
+	if err != nil || !hexDigest(receipt.Digest) || receipt.ID != permission.CommandID || receipt.Revision != permission.Revision || !receipt.AcceptedAt.Equal(permission.IssuedAt) || !receipt.LeaseUntil.After(receipt.AcceptedAt) {
 		return ErrInvalid
 	}
 
