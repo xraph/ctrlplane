@@ -6,11 +6,15 @@ import (
 	"strings"
 	"time"
 
+	gometrics "github.com/xraph/go-utils/metrics"
+	"go.opentelemetry.io/otel/trace"
+
 	ctrlplane "github.com/xraph/ctrlplane"
 	"github.com/xraph/ctrlplane/auth"
 	"github.com/xraph/ctrlplane/event"
 	"github.com/xraph/ctrlplane/id"
 	"github.com/xraph/ctrlplane/instance"
+	"github.com/xraph/ctrlplane/internal/obs"
 	"github.com/xraph/ctrlplane/managed"
 	"github.com/xraph/ctrlplane/network"
 	"github.com/xraph/ctrlplane/provider"
@@ -47,6 +51,13 @@ type service struct {
 	events         event.Bus
 	auth           auth.Provider
 	providerHealth ProviderHealthGetter
+	metrics        *obs.Metrics
+}
+
+// SetMetrics times provider health tests on m. A nil m records nothing.
+// In a Forge app the ctrlplane extension passes app.Metrics() in for you.
+func (s *service) SetMetrics(m gometrics.Metrics) {
+	s.metrics = obs.NewMetrics(m)
 }
 
 // NewService creates a new admin service.
@@ -476,7 +487,29 @@ func (s *service) TestProviderHealth(ctx context.Context, providerName string) (
 
 	// If the provider implements HealthChecker, use it.
 	if hc, ok := p.(provider.HealthChecker); ok {
-		status, healthErr := hc.HealthCheck(pctx)
+		providerType := provider.TypeName(p)
+		started := time.Now()
+
+		hctx, span := obs.StartChild(pctx, "check provider health",
+			trace.WithAttributes(obs.AttrProviderType.String(providerType)))
+		status, healthErr := hc.HealthCheck(hctx)
+
+		outcome := obs.HealthHealthy
+
+		switch {
+		case healthErr != nil:
+			outcome = obs.ResultError
+
+			obs.Fail(span, healthErr)
+		case status != nil && !status.Healthy:
+			outcome = obs.HealthUnhealthy
+
+			obs.FailClass(span, "unhealthy")
+		}
+
+		span.SetAttributes(obs.AttrProviderHealthy.Bool(outcome == obs.HealthHealthy))
+		span.End()
+		s.metrics.ProviderHealthChecked(providerType, outcome, time.Since(started))
 
 		result := &ProviderHealthResult{
 			Name:      providerName,
