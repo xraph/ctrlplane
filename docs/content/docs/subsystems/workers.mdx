@@ -3,7 +3,7 @@ title: Background Workers
 description: The worker scheduler and the built-in periodic tasks that keep the system running.
 ---
 
-Ctrl Plane uses background workers for tasks that run on a schedule: health checks, state reconciliation, telemetry collection, garbage collection, and certificate renewal. The `worker.Scheduler` manages their lifecycle.
+Ctrl Plane uses background workers for tasks that run on a schedule: datacenter reconciliation, garbage collection, and the health check, telemetry and certificate passes. The `worker.Scheduler` manages their lifecycle.
 
 ## Worker interface
 
@@ -41,36 +41,37 @@ When using `app.New()`, the scheduler is created and populated automatically. Th
 
 ### Reconciler
 
-Detects drift between the state stored in the database and the actual state reported by the provider. If an instance is recorded as `running` but the provider reports it as `stopped`, the reconciler updates the database.
+Walks every datacenter and drives its bootstrap services forward: it installs the services the datacenter declares or a bootstrap hook contributes, retries the ones that failed, and retires the ones nobody wants any more. A broken datacenter doesn't stop the others. Instance drift correction is planned but not there yet.
 
 **Default interval:** 60 seconds
 
 ### HealthRunner
 
-Executes all configured health checks for all instances. Results are stored and status changes publish events.
+A placeholder today. Health checks run when you call `health.Service.RunCheck`.
 
 **Default interval:** 30 seconds (configurable via `Config.HealthInterval`)
 
 ### TelemetryCollector
 
-Invokes all registered telemetry collectors to gather metrics and resource snapshots from providers.
+A placeholder today. The metrics poller samples instance resources on its own schedule.
 
 **Default interval:** 10 seconds (configurable via `Config.TelemetryFlushInterval`)
 
 ### GarbageCollector
 
-Cleans up old records that are no longer needed:
-- Completed deployments older than a retention window
-- Health check results beyond a history limit
-- Audit entries past the retention period
+Deletes orphaned instances, one tenant at a time: instances whose `ctrlplane.workload` label points at a workload that no longer exists and that are older than the grace period (15 minutes by default). It goes through `instance.Service.Delete`, so the provider tears the workload down and the usual events fire. One tenant failing doesn't stop the sweep.
 
 **Default interval:** 5 minutes
 
 ### CertRenewer
 
-Checks TLS certificates for domains approaching expiry and renews them through the network router.
+A placeholder today.
 
-**Default interval:** 1 hour
+**Default interval:** 12 hours
+
+## Telemetry
+
+The scheduler times every pass in `forge_ctrlplane_worker_run_duration_seconds`, labelled by worker name and result, and counts ticks it skipped because another replica leads. The reconciler and garbage collector start one root span per pass that has work to do, and the scheduler runs workers without the span of the context you started it with, so nothing they do lands in your boot trace. See [Observability](/docs/subsystems/observability).
 
 ## Custom workers
 

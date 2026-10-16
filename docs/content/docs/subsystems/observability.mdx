@@ -1,0 +1,122 @@
+---
+title: Observability
+description: The spans and metrics Ctrl Plane records about its own work, and how to see them.
+---
+
+Ctrl Plane traces and measures its own work: the background workers, every call it makes to a provider, deployments and the readiness waits behind them, health checks, credential lookups and the managed-state transactions. This page lists everything it emits. The [Telemetry](/docs/subsystems/telemetry) subsystem is a different thing: that one stores metrics and logs your tenants' workloads produce.
+
+## Turning it on
+
+In a Forge app you don't do anything. The ctrlplane extension hands `app.Metrics()` to Ctrl Plane, so every series below shows up on `/_/metrics` next to forge's own, and spans go to the tracer provider `forge.New` installs, with the HTTP server span as their parent.
+
+```go
+app := forge.New()
+app.Use(cpext.New(cpext.WithProvider("k8s", kubernetesProvider)))
+app.Run()
+// curl localhost:8080/_/metrics | grep forge_ctrlplane_
+```
+
+When you use Ctrl Plane as a library, pass a go-utils metrics sink yourself. A nil sink records nothing.
+
+```go
+cp, err := app.New(
+    app.WithStore(store),
+    app.WithMetrics(metrics), // a github.com/xraph/go-utils/metrics.Metrics
+)
+```
+
+Spans need no option. They go to the global OpenTelemetry tracer provider, so install one (or let `forge.New` do it) and you'll see them.
+
+## How the spans are shaped
+
+Background work gets one root span per unit of work, started as a new trace. A pass that finds nothing to do (no datacenters to reconcile, no tenants to sweep, no provider with a health probe) starts no trace at all, so an idle replica doesn't fill your backend with empty traces every tick.
+
+Everything else only starts a span when the context already carries one. A deployment you trigger over HTTP nests under the request's server span, a provider call made by the reconciler nests under the reconcile pass, and the metrics poller, which reads resources for every instance every ten seconds and has no trace of its own, adds no spans at all. Its calls are still timed by the metrics below.
+
+The long-lived loops (the worker scheduler, the provider health poller and the workload log, health and metrics fan-ins) drop the span of the context they were started from. Forge starts extensions under a boot span and a streaming request carries its server span for as long as the stream is open; without this, every idle-tick query grove traces would hang off a trace that ended long ago.
+
+A failed span gets an error status whose description is the error's class: a sentinel name such as `ctrlplane.ErrNotFound` or `provider.ErrNotReady`, or the Go type of the innermost error. Its `exception` event carries only `exception.type`. Error messages never reach a span, because provider and driver messages quote names, addresses and tokens. Neither do tenant IDs, subject IDs, instance names, provider registry keys (they can name a customer's cloud connection), health check targets or URL paths. Opaque resource IDs (instance, datacenter, deployment, workload and health check IDs) are on spans so you can find the row you're looking at.
+
+## Spans
+
+Every span below uses the instrumentation scope `github.com/xraph/ctrlplane` and kind Internal, unless the table says otherwise.
+
+### Background roots
+
+| Span | Started by | Attributes |
+|------|-----------|------------|
+| `reconcile datacenters` | Reconciler, once per pass that has at least one datacenter | `ctrlplane.reconcile.datacenters`, `ctrlplane.reconcile.failed` |
+| `sweep orphan instances` | Garbage collector, once per pass that has at least one tenant | `ctrlplane.gc.tenants`, `ctrlplane.gc.reaped`, `ctrlplane.gc.tenants_failed`; an `orphan delete failed` event per failed delete, with `ctrlplane.instance.id` and `exception.type` |
+| `check providers` | Provider health poller, once per sweep that has a provider with a health probe. `CheckNow` starts it as a child of your span instead | `ctrlplane.providers.checked`, `ctrlplane.providers.unhealthy` |
+
+### Under a traced call
+
+| Span | Where it comes from | Attributes |
+|------|--------------------|------------|
+| `reconcile datacenter` | Bootstrap reconcile for one datacenter | `ctrlplane.datacenter.id`, `ctrlplane.bootstrap.desired`, `ctrlplane.bootstrap.provisioned`, `ctrlplane.bootstrap.retired`, `ctrlplane.bootstrap.failed` |
+| `run bootstrap hook` | One bootstrap hook asked for its services | `ctrlplane.bootstrap.hook` (the hook's `Name()`) |
+| `provision bootstrap workload`, `retire bootstrap workload` | One bootstrap workload driven forward | `ctrlplane.bootstrap.id` |
+| `provision instance`, `deprovision instance`, `start instance`, `stop instance`, `restart instance`, `scale instance`, `deploy instance`, `read instance status`, `read instance logs`, `read instance resources` | One provider operation | `ctrlplane.provider.type`, `ctrlplane.provider.operation`, `ctrlplane.instance.id`, and `ctrlplane.source.type` for calls the instance service makes |
+| `resolve provider credentials` | The credentials resolver, when you set one | `ctrlplane.provider.type` |
+| `render deployment source` | Variable resolution and template, kustomize or Helm rendering on create | `ctrlplane.source.type` |
+| `wait for instance readiness` | Polling an asynchronous provider until the instance is ready | `ctrlplane.readiness.polls`, `ctrlplane.readiness.outcome` (`ready`, `failed`, `timeout`, `canceled`) |
+| `execute deployment` | A deployment or rollback: strategy, endpoints and readiness | `ctrlplane.deployment.id`, `ctrlplane.deployment.strategy`, `ctrlplane.deployment.rollback`, `ctrlplane.deployment.services`, `ctrlplane.instance.id`, `ctrlplane.provider.type` |
+| `spawn replica` | One workload replica created or adopted | `ctrlplane.workload.id`, `ctrlplane.workload.replica`, `ctrlplane.workload.replica_adopted`, `ctrlplane.instance.id` |
+| `run health check` | `health.Service.RunCheck` | `ctrlplane.health.check.id`, `ctrlplane.instance.id`, `ctrlplane.health.check_type`, `ctrlplane.health.status` |
+| `check provider health` | One provider's health probe, from the poller or the admin test | `ctrlplane.provider.type`, `ctrlplane.provider.healthy` |
+| `transact managed target`, `transact managed controller` | A Postgres managed-state transaction | `ctrlplane.instance.id` (target only), `ctrlplane.managed.refusal` when the protocol refused the command |
+| `execute managed docker step` | One Docker custody mutation | `ctrlplane.managed.step` (`create_network`, `create_container`, `start_container`, `remove_container`, `remove_network`) |
+| `GET`, `POST`, ... (kind Client) | A Kubernetes or Nomad API request made under a traced call | `http.request.method`, `server.address`, `server.port`, `http.response.status_code`, `error.type` |
+
+Docker daemon requests get client spans from the Docker SDK's own instrumentation, only under a traced call, named after the method. The Kubernetes and Nomad client spans carry the trace context to the API server and never record the URL path, which names tenant namespaces and workloads. Database statements under any of these spans are traced by grove.
+
+## Metrics
+
+Forge exports these under its namespace, so `ctrlplane_worker_run_duration_seconds` scrapes as `forge_ctrlplane_worker_run_duration_seconds`. Histograms are in seconds. Every label is a bounded enum: no tenant, instance, registry key, URL or error text is ever a label value.
+
+| Scraped name | Type | Labels |
+|--------------|------|--------|
+| `forge_ctrlplane_worker_run_duration_seconds` | histogram | `worker`, `result` (`ok`, `error`) |
+| `forge_ctrlplane_worker_runs_skipped_total` | counter | `worker` |
+| `forge_ctrlplane_scheduler_leader` | gauge | none; 1 while this replica runs the workers |
+| `forge_ctrlplane_leader_checks_total` | counter | `result` (`leader`, `follower`, `error`) |
+| `forge_ctrlplane_datacenter_reconciles_total` | counter | `result` (`ok`, `error`) |
+| `forge_ctrlplane_bootstrap_actions_total` | counter | `action` (`provision`, `retire`), `result` (`ok`, `error`) |
+| `forge_ctrlplane_gc_tenant_sweeps_total` | counter | `result` (`ok`, `error`) |
+| `forge_ctrlplane_gc_instances_reaped_total` | counter | `result` (`ok`, `error`) |
+| `forge_ctrlplane_provider_call_duration_seconds` | histogram | `provider`, `operation`, `result` (`ok`, `error`) |
+| `forge_ctrlplane_provider_credentials_duration_seconds` | histogram | `result` (`ok`, `error`) |
+| `forge_ctrlplane_readiness_wait_duration_seconds` | histogram | `result` (`ready`, `failed`, `timeout`, `canceled`) |
+| `forge_ctrlplane_deployment_duration_seconds` | histogram | `strategy`, `action` (`deploy`, `rollback`), `result` (`ok`, `error`) |
+| `forge_ctrlplane_provider_health_check_duration_seconds` | histogram | `provider`, `result` (`healthy`, `unhealthy`, `error`) |
+| `forge_ctrlplane_resource_samples_total` | counter | `result` (`ok`, `empty`, `error`) |
+| `forge_ctrlplane_resource_pollers` | gauge | none; instances the metrics poller tracks |
+| `forge_ctrlplane_health_check_duration_seconds` | histogram | `check_type`, `status` (`healthy`, `degraded`, `unhealthy`, `unknown`, `error`) |
+| `forge_ctrlplane_lifecycle_events_total` | counter | `event` |
+| `forge_ctrlplane_plugin_hook_errors_total` | counter | `hook` |
+
+The label values come from code, never from requests:
+
+- `worker` is a worker's `Name()`: `reconciler`, `health_runner`, `telemetry_collector`, `gc` and `cert_renewer` for the built-in ones, plus the name of any worker you register.
+- `provider` is the provider's `Info().Name` (`docker`, `kubernetes`, `nomad`, or your custom provider's name), never the key you registered it under.
+- `operation` is one of `provision`, `deprovision`, `start`, `stop`, `restart`, `scale`, `deploy`, `status`, `logs` and `resources`. Suspend and unsuspend count as `stop` and `start`.
+- `strategy` is a registered strategy name: `rolling`, `blue-green`, `canary`, `recreate`, or one you registered. Rollbacks use `recreate`.
+- `check_type` is a type a checker is registered for (`http`, `tcp`, `grpc`, `command`, `custom`).
+- `event` is a lifecycle event type that reaches plugins, such as `instance.created`, `workload.scaled`, `deploy.failed` or `quota.exceeded`.
+- `hook` is the plugin hook method that failed, such as `OnInstanceCreated`.
+
+Here are a few queries to start from:
+
+```text
+# p95 provider call latency, by provider and operation
+histogram_quantile(0.95, sum by (le, provider, operation) (rate(forge_ctrlplane_provider_call_duration_seconds_bucket[5m])))
+
+# deployments failing
+sum by (strategy) (rate(forge_ctrlplane_deployment_duration_seconds_count{result="error"}[15m]))
+
+# a provider that stopped answering its health probe
+sum by (provider) (increase(forge_ctrlplane_provider_health_check_duration_seconds_count{result!="healthy"}[5m])) > 0
+
+# no replica is leading
+max(forge_ctrlplane_scheduler_leader) == 0
+```
