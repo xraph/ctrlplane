@@ -7,10 +7,14 @@ import (
 	"sync"
 	"time"
 
+	gometrics "github.com/xraph/go-utils/metrics"
+	"go.opentelemetry.io/otel/trace"
+
 	ctrlplane "github.com/xraph/ctrlplane"
 	"github.com/xraph/ctrlplane/auth"
 	"github.com/xraph/ctrlplane/event"
 	"github.com/xraph/ctrlplane/id"
+	"github.com/xraph/ctrlplane/internal/obs"
 )
 
 // watchBufferSize is the per-subscriber channel buffer. Slow
@@ -32,6 +36,8 @@ type service struct {
 	// background-runner code path).
 	subsMu sync.RWMutex
 	subs   map[string][]chan *HealthResult
+
+	metrics *obs.Metrics
 }
 
 // NewService creates a new health service.
@@ -43,6 +49,13 @@ func NewService(store Store, events event.Bus, auth auth.Provider) Service {
 		checkers: make(map[CheckType]Checker),
 		subs:     make(map[string][]chan *HealthResult),
 	}
+}
+
+// SetMetrics times every health check RunCheck executes on m, labelled by
+// check type and resulting status. A nil m records nothing. In a Forge app
+// the ctrlplane extension passes app.Metrics() in for you.
+func (s *service) SetMetrics(m gometrics.Metrics) {
+	s.metrics = obs.NewMetrics(m)
 }
 
 // Configure adds or updates a health check for an instance.
@@ -226,7 +239,7 @@ func (s *service) RunCheck(ctx context.Context, checkID id.ID) (*HealthResult, e
 		return nil, fmt.Errorf("run check: no checker registered for type %q", check.Type)
 	}
 
-	result, err := checker.Check(ctx, check)
+	result, err := s.execute(ctx, checker, check)
 	if err != nil {
 		return nil, fmt.Errorf("run check: execute: %w", err)
 	}
@@ -238,6 +251,43 @@ func (s *service) RunCheck(ctx context.Context, checkID id.ID) (*HealthResult, e
 	s.fanOutResult(result)
 
 	return result, nil
+}
+
+// execute runs one check under a "run health check" span and times it. The
+// span records the check's type and the status it found, never its target:
+// that is a tenant's URL or address.
+func (s *service) execute(ctx context.Context, checker Checker, check *HealthCheck) (*HealthResult, error) {
+	checkType := string(check.Type)
+
+	ctx, span := obs.StartChild(ctx, "run health check", trace.WithAttributes(
+		obs.AttrHealthCheckID.String(check.ID.String()),
+		obs.AttrInstanceID.String(check.InstanceID.String()),
+		obs.AttrHealthCheckType.String(checkType),
+	))
+	defer span.End()
+
+	started := time.Now()
+	result, err := checker.Check(ctx, check)
+
+	status := obs.ResultError
+
+	switch {
+	case err != nil:
+		obs.Fail(span, err)
+	case result == nil:
+		status = string(StatusUnknown)
+	default:
+		status = string(result.Status)
+
+		if result.Status == StatusUnhealthy {
+			obs.FailClass(span, string(StatusUnhealthy))
+		}
+	}
+
+	span.SetAttributes(obs.AttrHealthStatus.String(status))
+	s.metrics.HealthChecked(checkType, status, time.Since(started))
+
+	return result, err
 }
 
 // RegisterChecker adds a custom checker type.

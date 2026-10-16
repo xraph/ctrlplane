@@ -6,9 +6,9 @@
 // The package is intentionally lightweight: an in-memory ring
 // buffer per instance, a 10s polling loop, and SSE-friendly fan-out
 // for live consumers. Historical buckets are downsampled at query
-// time. Samples are lost on restart — operators who need durable
-// metrics push samples into Prometheus / VictoriaMetrics / etc. via
-// the observability extension.
+// time. Samples are lost on restart, and nothing exports them: if you
+// need durable per-instance metrics, scrape the workloads yourself. The
+// observability package records Ctrl Plane's own metrics, not these.
 package metrics
 
 import (

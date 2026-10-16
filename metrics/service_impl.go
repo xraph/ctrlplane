@@ -5,7 +5,10 @@ import (
 	"sync"
 	"time"
 
+	gometrics "github.com/xraph/go-utils/metrics"
+
 	"github.com/xraph/ctrlplane/id"
+	"github.com/xraph/ctrlplane/internal/obs"
 )
 
 // service is the concrete Service. Holds a per-instance ring
@@ -21,6 +24,8 @@ type service struct {
 
 	subsMu sync.RWMutex
 	subs   map[instanceKey][]chan Sample
+
+	telemetry *obs.Metrics
 }
 
 // NewService wires the metrics service. The Sampler is invoked
@@ -49,6 +54,18 @@ func NewService(sampler Sampler, cfg Config) Service {
 	}
 }
 
+// SetMetrics counts the poller's samples by result and reports how many
+// instances it tracks on m. A nil m records nothing. The poller takes no
+// spans: it runs every PollInterval for every instance, and its provider
+// calls are already timed by the instance service.
+func (s *service) SetMetrics(m gometrics.Metrics) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.telemetry = obs.NewMetrics(m)
+	s.telemetry.SetResourcePollers(len(s.pollers))
+}
+
 // Track is idempotent. First call spawns the poller; subsequent
 // calls return immediately.
 func (s *service) Track(instanceID id.ID) {
@@ -67,6 +84,7 @@ func (s *service) Track(instanceID id.ID) {
 
 	ctx, cancel := context.WithCancel(context.Background()) // cancel is retained in s.pollers and invoked by Untrack
 	s.pollers[key] = cancel
+	s.telemetry.SetResourcePollers(len(s.pollers))
 	s.mu.Unlock()
 
 	go s.runPoller(ctx, instanceID)
@@ -81,6 +99,7 @@ func (s *service) Untrack(instanceID id.ID) {
 	if cancel, ok := s.pollers[key]; ok {
 		cancel()
 		delete(s.pollers, key)
+		s.telemetry.SetResourcePollers(len(s.pollers))
 	}
 
 	delete(s.rings, key)
@@ -186,8 +205,18 @@ func (s *service) runPoller(ctx context.Context, instanceID id.ID) {
 		defer cancel()
 
 		raw, err := s.sampler.Sample(sampleCtx, instanceID)
-		if err != nil || raw == nil {
+
+		switch {
+		case err != nil:
+			s.recordSample(obs.ResultError)
+
 			return
+		case raw == nil:
+			s.recordSample(obs.SampleEmpty)
+
+			return
+		default:
+			s.recordSample(obs.ResultOK)
 		}
 
 		now := raw.At
@@ -244,6 +273,16 @@ func (s *service) runPoller(ctx context.Context, instanceID id.ID) {
 			tick()
 		}
 	}
+}
+
+// recordSample counts one poller sample. The sink is read under the lock
+// because SetMetrics may swap it while pollers run.
+func (s *service) recordSample(result string) {
+	s.mu.RLock()
+	m := s.telemetry
+	s.mu.RUnlock()
+
+	m.ResourceSampled(result)
 }
 
 // push stores the sample and fans out to subscribers. Send is
