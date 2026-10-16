@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/xraph/ctrlplane/internal/obs"
 )
 
 // Defaults used when a ReadinessPolicy leaves a field at zero.
@@ -43,13 +45,62 @@ type ReadinessPolicy struct {
 // StatusFunc reads the current status of the workload being waited on.
 type StatusFunc func(ctx context.Context) (*InstanceStatus, error)
 
+// Readiness outcomes, as ReadinessOutcome reports them.
+const (
+	ReadinessReady    = "ready"
+	ReadinessFailed   = "failed"
+	ReadinessTimeout  = "timeout"
+	ReadinessCanceled = "canceled"
+)
+
+// ReadinessOutcome says how a WaitReady call that returned st and err
+// ended: ready, failed (the provider reported StateFailed), canceled (the
+// caller's context was cancelled) or timeout.
+func ReadinessOutcome(st *InstanceStatus, err error) string {
+	switch {
+	case err == nil:
+		return ReadinessReady
+	case errors.Is(err, context.Canceled):
+		return ReadinessCanceled
+	case st != nil && st.State == StateFailed:
+		return ReadinessFailed
+	default:
+		return ReadinessTimeout
+	}
+}
+
 // WaitReady polls status until it reports Ready, reports StateFailed, or
 // the policy's timeout passes. It polls once straight away. A status read
 // that errors is retried on the next tick, since an asynchronous platform
 // often reports "not found" for a moment after accepting a request; the
 // last error is included if the wait times out. The returned status is the
 // last one read, which may be nil.
+//
+// Under a traced context the wait gets a "wait for instance readiness" span
+// recording how many times it polled and how it ended.
 func WaitReady(ctx context.Context, policy ReadinessPolicy, status StatusFunc) (*InstanceStatus, error) {
+	ctx, span := obs.StartChild(ctx, "wait for instance readiness")
+	defer span.End()
+
+	polls := 0
+
+	st, err := waitReady(ctx, policy, func(ctx context.Context) (*InstanceStatus, error) {
+		polls++
+
+		return status(ctx)
+	})
+
+	outcome := ReadinessOutcome(st, err)
+	span.SetAttributes(obs.AttrReadinessPolls.Int(polls), obs.AttrReadinessOutcome.String(outcome))
+
+	if outcome == ReadinessFailed || outcome == ReadinessTimeout {
+		obs.Fail(span, err, obs.Sentinel{Err: ErrNotReady, Name: "provider.ErrNotReady"})
+	}
+
+	return st, err
+}
+
+func waitReady(ctx context.Context, policy ReadinessPolicy, status StatusFunc) (*InstanceStatus, error) {
 	timeout := policy.Timeout
 	if timeout <= 0 {
 		timeout = DefaultReadinessTimeout
