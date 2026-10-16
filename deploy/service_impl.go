@@ -5,12 +5,16 @@ import (
 	"fmt"
 	"time"
 
+	gometrics "github.com/xraph/go-utils/metrics"
+	"go.opentelemetry.io/otel/trace"
+
 	ctrlplane "github.com/xraph/ctrlplane"
 	"github.com/xraph/ctrlplane/auth"
 	"github.com/xraph/ctrlplane/dispatch"
 	"github.com/xraph/ctrlplane/event"
 	"github.com/xraph/ctrlplane/id"
 	"github.com/xraph/ctrlplane/instance"
+	"github.com/xraph/ctrlplane/internal/obs"
 	"github.com/xraph/ctrlplane/managed"
 	"github.com/xraph/ctrlplane/provider"
 	"github.com/xraph/ctrlplane/secrets"
@@ -26,6 +30,7 @@ type service struct {
 	auth       auth.Provider
 	vault      secrets.Vault
 	strategies map[string]Strategy
+	metrics    *obs.Metrics
 }
 
 // NewService creates a deploy service with the given dependencies.
@@ -52,6 +57,14 @@ func NewService(
 // SetVault replaces the vault backend used for config file storage.
 func (s *service) SetVault(v secrets.Vault) {
 	s.vault = v
+}
+
+// SetMetrics times every deployment and rollback, the provider calls their
+// strategies make and the readiness waits that follow, on m. A nil m
+// records nothing. In a Forge app the ctrlplane extension passes
+// app.Metrics() in for you.
+func (s *service) SetMetrics(m gometrics.Metrics) {
+	s.metrics = obs.NewMetrics(m)
 }
 
 // RegisterStrategy adds a deployment strategy to the service.
@@ -186,33 +199,7 @@ func (s *service) Deploy(ctx context.Context, req DeployRequest) (*Deployment, e
 	// service through its lifecycle so dashboards / observers can see
 	// per-service granularity (especially useful for canary rollouts
 	// that promote one service at a time).
-	var endpoints []provider.Endpoint
-
-	execErr := st.Execute(pctx, StrategyParams{
-		Deployment: dep,
-		Provider:   prov,
-		OnProgress: func(string, int, string) {},
-		OnServiceProgress: func(serviceName, state string) {
-			if dep.ServiceProgress == nil {
-				dep.ServiceProgress = make(map[string]string, 1)
-			}
-
-			dep.ServiceProgress[serviceName] = state
-
-			// Best-effort persist; a failed update doesn't fail the
-			// rollout itself — the in-memory state still drives the
-			// final UpdateDeployment call below.
-			_ = s.store.UpdateDeployment(ctx, dep)
-		},
-		OnEndpoints: func(eps []provider.Endpoint) { endpoints = eps },
-	})
-	if err := s.recordEndpoints(ctx, claims.TenantID, req.InstanceID, endpoints); err != nil && execErr == nil {
-		execErr = err
-	}
-
-	if execErr == nil {
-		execErr = s.awaitReady(ctx, pctx, prov, inst, dep)
-	}
+	execErr := s.execute(ctx, pctx, st, prov, inst, dep, obs.ActionDeploy)
 
 	finished := time.Now().UTC()
 	dep.FinishedAt = &finished
@@ -463,30 +450,7 @@ func (s *service) Rollback(ctx context.Context, instanceID id.ID, releaseID id.I
 	}
 
 	// Execute the rollback deployment.
-	var endpoints []provider.Endpoint
-
-	execErr := st.Execute(pctx, StrategyParams{
-		Deployment: dep,
-		Provider:   prov,
-		OnProgress: func(string, int, string) {},
-		OnServiceProgress: func(serviceName, state string) {
-			if dep.ServiceProgress == nil {
-				dep.ServiceProgress = make(map[string]string, 1)
-			}
-
-			dep.ServiceProgress[serviceName] = state
-
-			_ = s.store.UpdateDeployment(ctx, dep)
-		},
-		OnEndpoints: func(eps []provider.Endpoint) { endpoints = eps },
-	})
-	if err := s.recordEndpoints(ctx, claims.TenantID, instanceID, endpoints); err != nil && execErr == nil {
-		execErr = err
-	}
-
-	if execErr == nil {
-		execErr = s.awaitReady(ctx, pctx, prov, inst, dep)
-	}
+	execErr := s.execute(ctx, pctx, st, prov, inst, dep, obs.ActionRollback)
 
 	finished := time.Now().UTC()
 	dep.FinishedAt = &finished
@@ -671,6 +635,64 @@ func (s *service) buildReleaseSnapshot(ctx context.Context, tenantID string, ins
 	return out, nil
 }
 
+// execute runs dep's strategy against prov, stores any endpoints the
+// provider returned and waits for readiness. action is deploy or rollback.
+// The whole rollout is one "execute deployment" span under a traced
+// context, and one observation of the deployment duration histogram.
+//
+// ctx is used for the store, pctx (which may carry credentials) for the
+// provider.
+func (s *service) execute(ctx, pctx context.Context, st Strategy, prov provider.Provider, inst *instance.Instance, dep *Deployment, action string) error {
+	started := time.Now()
+
+	pctx, span := obs.StartChild(pctx, "execute deployment", trace.WithAttributes(
+		obs.AttrDeploymentID.String(dep.ID.String()),
+		obs.AttrInstanceID.String(dep.InstanceID.String()),
+		obs.AttrDeploymentStrategy.String(st.Name()),
+		obs.AttrDeploymentRollback.Bool(action == obs.ActionRollback),
+		obs.AttrDeploymentServices.Int(len(dep.Services)),
+		obs.AttrProviderType.String(provider.TypeName(prov)),
+	))
+	defer span.End()
+
+	// The store calls below hang off the rollout span too.
+	ctx = trace.ContextWithSpan(ctx, span)
+
+	var endpoints []provider.Endpoint
+
+	execErr := st.Execute(pctx, StrategyParams{
+		Deployment: dep,
+		Provider:   prov,
+		OnProgress: func(string, int, string) {},
+		OnServiceProgress: func(serviceName, state string) {
+			if dep.ServiceProgress == nil {
+				dep.ServiceProgress = make(map[string]string, 1)
+			}
+
+			dep.ServiceProgress[serviceName] = state
+
+			// Best-effort persist; a failed update doesn't fail the
+			// rollout itself — the in-memory state still drives the
+			// final UpdateDeployment call below.
+			_ = s.store.UpdateDeployment(ctx, dep)
+		},
+		OnEndpoints: func(eps []provider.Endpoint) { endpoints = eps },
+		metrics:     s.metrics,
+	})
+	if err := s.recordEndpoints(ctx, dep.TenantID, dep.InstanceID, endpoints); err != nil && execErr == nil {
+		execErr = err
+	}
+
+	if execErr == nil {
+		execErr = s.awaitReady(ctx, pctx, prov, inst, dep)
+	}
+
+	obs.Fail(span, execErr)
+	s.metrics.DeploymentFinished(st.Name(), action, time.Since(started), execErr)
+
+	return execErr
+}
+
 // recordEndpoints stores the endpoints a provider returned from Deploy
 // on the instance, replacing what it had. Nil means the provider left
 // them unchanged, and nothing is written. It runs whether or not the
@@ -709,9 +731,19 @@ func (s *service) awaitReady(ctx, pctx context.Context, prov provider.Provider, 
 		return nil
 	}
 
-	_, err := provider.WaitReady(pctx, waiter.ReadinessPolicy(), func(ctx context.Context) (*provider.InstanceStatus, error) {
-		return dispatch.Status(ctx, prov, inst.Source.Type, inst.ID)
+	started := time.Now()
+
+	st, err := provider.WaitReady(pctx, waiter.ReadinessPolicy(), func(ctx context.Context) (*provider.InstanceStatus, error) {
+		ctx, call := s.metrics.StartProviderCall(ctx, provider.TypeName(prov), obs.OpStatus,
+			obs.AttrInstanceID.String(inst.ID.String()))
+		st, err := dispatch.Status(ctx, prov, inst.Source.Type, inst.ID)
+		call.End(err)
+
+		return st, err
 	})
+
+	s.metrics.ReadinessWaited(provider.ReadinessOutcome(st, err), time.Since(started))
+
 	if err == nil {
 		return nil
 	}

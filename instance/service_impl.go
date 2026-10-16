@@ -8,11 +8,15 @@ import (
 	"strings"
 	"time"
 
+	gometrics "github.com/xraph/go-utils/metrics"
+	"go.opentelemetry.io/otel/trace"
+
 	ctrlplane "github.com/xraph/ctrlplane"
 	"github.com/xraph/ctrlplane/auth"
 	"github.com/xraph/ctrlplane/dispatch"
 	"github.com/xraph/ctrlplane/event"
 	"github.com/xraph/ctrlplane/id"
+	"github.com/xraph/ctrlplane/internal/obs"
 	"github.com/xraph/ctrlplane/managed"
 	"github.com/xraph/ctrlplane/provider"
 	"github.com/xraph/ctrlplane/render"
@@ -27,6 +31,7 @@ type service struct {
 	datacenters DatacenterResolver
 	events      event.Bus
 	auth        auth.Provider
+	metrics     *obs.Metrics
 }
 
 // NewService creates a new instance service.
@@ -40,6 +45,35 @@ func NewService(store Store, providers *provider.Registry, events event.Bus, aut
 		events:      events,
 		auth:        auth,
 	}
+}
+
+// SetMetrics times every provider call and readiness wait the service makes
+// on m. A nil m records nothing. In a Forge app the ctrlplane extension
+// passes app.Metrics() in for you.
+func (s *service) SetMetrics(m gometrics.Metrics) {
+	s.metrics = obs.NewMetrics(m)
+}
+
+// call runs one provider operation for inst, timing it and, under a traced
+// context, giving it a span.
+func (s *service) call(ctx context.Context, p provider.Provider, op string, inst *Instance, fn func(context.Context) error) error {
+	ctx, c := s.metrics.StartProviderCall(ctx, provider.TypeName(p), op,
+		obs.AttrInstanceID.String(inst.ID.String()),
+		obs.AttrSourceType.String(sourceType(inst.Source.Type)))
+	err := fn(ctx)
+	c.End(err)
+
+	return err
+}
+
+// sourceType names the deployment source type, treating the empty type of
+// rows that predate sources as services.
+func sourceType(t provider.SourceType) string {
+	if t == "" {
+		return string(provider.SourceServices)
+	}
+
+	return string(t)
 }
 
 // Create provisions a new instance on the resolved provider.
@@ -197,9 +231,23 @@ func (s *service) awaitReady(ctx, pctx context.Context, p provider.Provider, ins
 		return fmt.Errorf("update before readiness wait: %w", err)
 	}
 
+	started := time.Now()
+
 	st, err := provider.WaitReady(pctx, waiter.ReadinessPolicy(), func(ctx context.Context) (*provider.InstanceStatus, error) {
-		return dispatch.Status(ctx, p, inst.Source.Type, inst.ID)
+		var st *provider.InstanceStatus
+
+		err := s.call(ctx, p, obs.OpStatus, inst, func(ctx context.Context) error {
+			var err error
+
+			st, err = dispatch.Status(ctx, p, inst.Source.Type, inst.ID)
+
+			return err
+		})
+
+		return st, err
 	})
+
+	s.metrics.ReadinessWaited(provider.ReadinessOutcome(st, err), time.Since(started))
 
 	// Platforms like Cloud Run only know the URL once the service is up,
 	// so take the endpoints the status reports over the ones Provision
@@ -231,6 +279,38 @@ func (s *service) provisionSource(
 	source provider.DeploymentSource,
 	req CreateRequest,
 ) (*provider.ProvisionResult, error) {
+	rendered, err := renderSource(ctx, inst, source, req)
+	if err != nil {
+		return nil, err
+	}
+
+	var result *provider.ProvisionResult
+
+	err = s.call(ctx, p, obs.OpProvision, inst, func(ctx context.Context) error {
+		var err error
+
+		result, err = dispatch.Provision(ctx, p, dispatch.Request{
+			InstanceID: inst.ID,
+			TenantID:   inst.TenantID,
+			Name:       inst.Name,
+			Kind:       inst.Kind,
+			Source:     rendered,
+			Labels:     inst.Labels,
+		})
+
+		return err
+	})
+
+	return result, err
+}
+
+// renderSource resolves the instance's variables and renders its source.
+// Rendering a kustomize or Helm source can be slow, so it gets a span.
+func renderSource(ctx context.Context, inst *Instance, source provider.DeploymentSource, req CreateRequest) (provider.RenderedSource, error) {
+	ctx, span := obs.StartChild(ctx, "render deployment source",
+		trace.WithAttributes(obs.AttrSourceType.String(sourceType(source.Type))))
+	defer span.End()
+
 	derived := vars.Scope{
 		Instance: vars.InstanceContext{ID: inst.ID.String(), Name: inst.Name},
 		Tenant:   vars.TenantContext{ID: inst.TenantID},
@@ -239,22 +319,19 @@ func (s *service) provisionSource(
 
 	scope, _, err := vars.NewResolver().Resolve(ctx, req.Variables, req.VariableValues, derived)
 	if err != nil {
-		return nil, fmt.Errorf("resolve variables: %w", err)
+		obs.Fail(span, err)
+
+		return provider.RenderedSource{}, fmt.Errorf("resolve variables: %w", err)
 	}
 
 	rendered, err := render.Render(source, scope)
 	if err != nil {
-		return nil, fmt.Errorf("render source: %w", err)
+		obs.Fail(span, err)
+
+		return provider.RenderedSource{}, fmt.Errorf("render source: %w", err)
 	}
 
-	return dispatch.Provision(ctx, p, dispatch.Request{
-		InstanceID: inst.ID,
-		TenantID:   inst.TenantID,
-		Name:       inst.Name,
-		Kind:       inst.Kind,
-		Source:     rendered,
-		Labels:     inst.Labels,
-	})
+	return rendered, nil
 }
 
 // Get returns an instance by ID, scoped to the caller's tenant.
@@ -413,7 +490,9 @@ func (s *service) Delete(ctx context.Context, instanceID id.ID) error {
 			return nil
 		}
 
-		if err := dispatch.Deprovision(pctx, p, inst.Source.Type, inst.ID); err != nil {
+		if err := s.call(pctx, p, obs.OpDeprovision, inst, func(ctx context.Context) error {
+			return dispatch.Deprovision(ctx, p, inst.Source.Type, inst.ID)
+		}); err != nil {
 			inst.State = provider.StateFailed
 			inst.UpdatedAt = time.Now().UTC()
 			_ = s.store.Update(ctx, inst)
@@ -469,7 +548,7 @@ func (s *service) Start(ctx context.Context, instanceID id.ID) error {
 		return fmt.Errorf("start instance: resolve provider: %w", err)
 	}
 
-	if err := p.Start(pctx, inst.ID); err != nil {
+	if err := s.call(pctx, p, obs.OpStart, inst, func(ctx context.Context) error { return p.Start(ctx, inst.ID) }); err != nil {
 		inst.State = provider.StateFailed
 		inst.UpdatedAt = time.Now().UTC()
 		_ = s.store.Update(ctx, inst)
@@ -528,7 +607,7 @@ func (s *service) Stop(ctx context.Context, instanceID id.ID) error {
 		return fmt.Errorf("stop instance: resolve provider: %w", err)
 	}
 
-	if err := p.Stop(pctx, inst.ID); err != nil {
+	if err := s.call(pctx, p, obs.OpStop, inst, func(ctx context.Context) error { return p.Stop(ctx, inst.ID) }); err != nil {
 		inst.State = provider.StateFailed
 		inst.UpdatedAt = time.Now().UTC()
 		_ = s.store.Update(ctx, inst)
@@ -576,7 +655,7 @@ func (s *service) Restart(ctx context.Context, instanceID id.ID) error {
 		return fmt.Errorf("restart instance: resolve provider: %w", err)
 	}
 
-	if err := p.Restart(pctx, inst.ID); err != nil {
+	if err := s.call(pctx, p, obs.OpRestart, inst, func(ctx context.Context) error { return p.Restart(ctx, inst.ID) }); err != nil {
 		inst.State = provider.StateFailed
 		inst.UpdatedAt = time.Now().UTC()
 		_ = s.store.Update(ctx, inst)
@@ -646,7 +725,7 @@ func (s *service) Scale(ctx context.Context, instanceID id.ID, req ScaleRequest)
 		return fmt.Errorf("scale instance: resolve provider: %w", err)
 	}
 
-	if err := p.Scale(pctx, inst.ID, spec); err != nil {
+	if err := s.call(pctx, p, obs.OpScale, inst, func(ctx context.Context) error { return p.Scale(ctx, inst.ID, spec) }); err != nil {
 		return fmt.Errorf("scale instance: provider scale: %w", err)
 	}
 
@@ -699,7 +778,7 @@ func (s *service) Suspend(ctx context.Context, instanceID id.ID, reason string) 
 		return fmt.Errorf("suspend instance: resolve provider: %w", err)
 	}
 
-	if err := p.Stop(pctx, inst.ID); err != nil {
+	if err := s.call(pctx, p, obs.OpStop, inst, func(ctx context.Context) error { return p.Stop(ctx, inst.ID) }); err != nil {
 		return fmt.Errorf("suspend instance: provider stop: %w", err)
 	}
 
@@ -748,7 +827,7 @@ func (s *service) Unsuspend(ctx context.Context, instanceID id.ID) error {
 		return fmt.Errorf("unsuspend instance: resolve provider: %w", err)
 	}
 
-	if err := p.Start(pctx, inst.ID); err != nil {
+	if err := s.call(pctx, p, obs.OpStart, inst, func(ctx context.Context) error { return p.Start(ctx, inst.ID) }); err != nil {
 		return fmt.Errorf("unsuspend instance: provider start: %w", err)
 	}
 
@@ -790,10 +869,18 @@ func (s *service) Logs(ctx context.Context, instanceID id.ID, opts LogsOptions) 
 		return nil, fmt.Errorf("logs: resolve provider: %w", err)
 	}
 
-	rc, err := p.Logs(pctx, inst.ID, provider.LogOptions{
-		Follow: opts.Follow,
-		Since:  opts.Since,
-		Tail:   opts.Tail,
+	var rc io.ReadCloser
+
+	err = s.call(pctx, p, obs.OpLogs, inst, func(ctx context.Context) error {
+		var err error
+
+		rc, err = p.Logs(ctx, inst.ID, provider.LogOptions{
+			Follow: opts.Follow,
+			Since:  opts.Since,
+			Tail:   opts.Tail,
+		})
+
+		return err
 	})
 	if err != nil {
 		return nil, fmt.Errorf("logs: provider: %w", err)
@@ -826,7 +913,15 @@ func (s *service) Resources(ctx context.Context, instanceID id.ID) (*provider.Re
 		return nil, fmt.Errorf("resources: resolve provider: %w", err)
 	}
 
-	usage, err := p.Resources(pctx, inst.ID)
+	var usage *provider.ResourceUsage
+
+	err = s.call(pctx, p, obs.OpResources, inst, func(ctx context.Context) error {
+		var err error
+
+		usage, err = p.Resources(ctx, inst.ID)
+
+		return err
+	})
 	if err != nil {
 		return nil, fmt.Errorf("resources: provider: %w", err)
 	}
