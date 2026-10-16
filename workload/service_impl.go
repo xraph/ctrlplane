@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/otel/trace"
+
 	ctrlplane "github.com/xraph/ctrlplane"
 	"github.com/xraph/ctrlplane/auth"
 	"github.com/xraph/ctrlplane/deploy"
@@ -16,6 +18,7 @@ import (
 	"github.com/xraph/ctrlplane/health"
 	"github.com/xraph/ctrlplane/id"
 	"github.com/xraph/ctrlplane/instance"
+	"github.com/xraph/ctrlplane/internal/obs"
 	"github.com/xraph/ctrlplane/managed"
 	"github.com/xraph/ctrlplane/metrics"
 	"github.com/xraph/ctrlplane/network"
@@ -808,6 +811,31 @@ func (s *service) ListInstances(ctx context.Context, workloadID id.ID) ([]*insta
 // the row and letting subsequent Restart/health checks reconcile
 // the live container is the right behaviour.
 func (s *service) spawnReplica(ctx context.Context, w *Workload, replicaIndex int) (*instance.Instance, error) {
+	// One span per replica groups its provision, readiness wait and v1
+	// release record, so a multi-replica create or scale reads replica
+	// by replica.
+	ctx, span := obs.StartChild(ctx, "spawn replica", trace.WithAttributes(
+		obs.AttrWorkloadID.String(w.ID.String()),
+		obs.AttrWorkloadReplica.Int(replicaIndex),
+	))
+	defer span.End()
+
+	inst, adopted, err := s.spawn(ctx, w, replicaIndex)
+
+	span.SetAttributes(obs.AttrReplicaAdopted.Bool(adopted))
+
+	if inst != nil {
+		span.SetAttributes(obs.AttrInstanceID.String(inst.ID.String()))
+	}
+
+	obs.Fail(span, err)
+
+	return inst, err
+}
+
+// spawn is spawnReplica's body. adopted reports that an existing instance
+// was reused rather than provisioned.
+func (s *service) spawn(ctx context.Context, w *Workload, replicaIndex int) (*instance.Instance, bool, error) {
 	labels := make(map[string]string, len(w.Labels)+2)
 	maps.Copy(labels, w.Labels)
 
@@ -818,11 +846,11 @@ func (s *service) spawnReplica(ctx context.Context, w *Workload, replicaIndex in
 
 	existing, found, err := s.replicaCandidate(ctx, w, replicaIndex)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	if found {
-		return existing, nil
+		return existing, true, nil
 	}
 
 	inst, err := s.instances.Create(ctx, instance.CreateRequest{
@@ -835,7 +863,7 @@ func (s *service) spawnReplica(ctx context.Context, w *Workload, replicaIndex in
 		Labels:       labels,
 	})
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	// Record the v1 Release + a synthetic completed Deployment for
@@ -866,7 +894,7 @@ func (s *service) spawnReplica(ctx context.Context, w *Workload, replicaIndex in
 		}
 	}
 
-	return inst, nil
+	return inst, false, nil
 }
 
 // replicaCandidate validates the exact slug match before reuse, including unlabeled rows.
