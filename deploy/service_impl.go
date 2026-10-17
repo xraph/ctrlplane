@@ -672,7 +672,7 @@ func (s *service) execute(ctx, pctx context.Context, st Strategy, prov provider.
 			dep.ServiceProgress[serviceName] = state
 
 			// Best-effort persist; a failed update doesn't fail the
-			// rollout itself — the in-memory state still drives the
+			// rollout itself. The in-memory state still drives the
 			// final UpdateDeployment call below.
 			_ = s.store.UpdateDeployment(ctx, dep)
 		},
