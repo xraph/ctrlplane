@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -13,9 +14,12 @@ import (
 
 	"github.com/xraph/ctrlplane/auth"
 	"github.com/xraph/ctrlplane/deploy"
+	"github.com/xraph/ctrlplane/event"
 	"github.com/xraph/ctrlplane/id"
 	"github.com/xraph/ctrlplane/instance"
+	"github.com/xraph/ctrlplane/internal/obs"
 	"github.com/xraph/ctrlplane/internal/obs/obstest"
+	"github.com/xraph/ctrlplane/observability"
 	"github.com/xraph/ctrlplane/provider"
 	"github.com/xraph/ctrlplane/store/memory"
 )
@@ -192,6 +196,10 @@ func TestTelemetryCoversAnInstanceLifecycle(t *testing.T) {
 	}
 }
 
+// TestWithMetricsReachesEverySubsystem checks the fan-out itself: every
+// subsystem that records metrics ends up holding a sink, and the lifecycle
+// event plugin is registered once. A subsystem dropped from wireMetrics
+// keeps a nil *obs.Metrics and fails here.
 func TestWithMetricsReachesEverySubsystem(t *testing.T) {
 	t.Parallel()
 
@@ -201,14 +209,97 @@ func TestWithMetricsReachesEverySubsystem(t *testing.T) {
 	}
 
 	targets := map[string]any{
-		"providers": cp.providers, "scheduler": cp.scheduler, "bootstraps": cp.Bootstraps,
+		"providers": cp.providers, "scheduler": cp.scheduler, "gc": cp.gc, "bootstraps": cp.Bootstraps,
 		"instances": cp.Instances, "deploys": cp.Deploys, "health": cp.Health, "metrics": cp.Metrics,
 		"provider health": cp.ProviderHealth, "admin": cp.Admin, "plugins": cp.extensions,
 	}
 
 	for name, target := range targets {
-		if _, ok := target.(metricsSetter); !ok {
-			t.Errorf("%s (%T) does not take metrics", name, target)
+		if !holdsSink(target) {
+			t.Errorf("%s (%T) did not receive the metrics sink", name, target)
 		}
 	}
+
+	if n := countMetricsExtensions(cp); n != 1 {
+		t.Fatalf("want one lifecycle event plugin, got %d", n)
+	}
+
+	// Without WithMetrics nothing holds a sink.
+	bare, err := New(WithStore(memory.New()))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if holdsSink(bare.Instances) || countMetricsExtensions(bare) != 0 {
+		t.Fatal("a control plane built without WithMetrics records metrics")
+	}
+}
+
+// TestWithMetricsDoesNotDoubleCountAHostPlugin registers the lifecycle
+// event plugin by hand as well as passing WithMetrics, and checks each
+// event is counted once.
+func TestWithMetricsDoesNotDoubleCountAHostPlugin(t *testing.T) {
+	t.Parallel()
+
+	sink := obstest.NewSink()
+
+	cp, err := New(
+		WithStore(memory.New()),
+		WithMetrics(sink.Metrics()),
+		WithExtension(observability.NewMetricsExtension(sink.Metrics())),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if n := countMetricsExtensions(cp); n != 1 {
+		t.Fatalf("want one lifecycle event plugin, got %d", n)
+	}
+
+	if err := cp.Events().Publish(context.Background(), event.NewEvent(event.TenantCreated, "")); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := sink.Counter(t, "ctrlplane_lifecycle_events_total{event=tenant.created}"); got != 1 {
+		t.Fatalf("tenant.created counted %v times", got)
+	}
+}
+
+// holdsSink reports whether target, or the struct it points at, has a
+// non-nil *obs.Metrics field.
+func holdsSink(target any) bool {
+	v := reflect.ValueOf(target)
+	for v.Kind() == reflect.Interface || v.Kind() == reflect.Pointer {
+		if v.IsNil() {
+			return false
+		}
+
+		v = v.Elem()
+	}
+
+	if v.Kind() != reflect.Struct {
+		return false
+	}
+
+	want := reflect.TypeFor[*obs.Metrics]()
+
+	for i := range v.NumField() {
+		if f := v.Field(i); f.Type() == want && !f.IsNil() {
+			return true
+		}
+	}
+
+	return false
+}
+
+func countMetricsExtensions(cp *CtrlPlane) int {
+	n := 0
+
+	for _, ext := range cp.extensions.Extensions() {
+		if _, ok := ext.(*observability.MetricsExtension); ok {
+			n++
+		}
+	}
+
+	return n
 }
