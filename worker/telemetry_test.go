@@ -168,7 +168,7 @@ func TestReconcilerTracesAPassAsItsOwnRoot(t *testing.T) {
 		t.Fatalf("failed bootstrap provisions = %v", got)
 	}
 
-	if got := sink.HistogramCount(t, "ctrlplane_provider_call_duration_seconds{operation=provision,provider=fake,result=ok}"); got != 1 {
+	if got := sink.HistogramCount(t, "ctrlplane_provider_call_duration_seconds{operation=provision,provider=custom,result=ok}"); got != 1 {
 		t.Fatalf("provider provision calls = %d", got)
 	}
 }

@@ -73,6 +73,6 @@ func (c *ProviderCall) End(err error) {
 	c.span.End()
 
 	if c.m != nil {
-		c.m.providerCallDuration.with(c.providerType, c.op, Result(err)).Observe(time.Since(c.start).Seconds())
+		c.m.providerCallDuration.with(ProviderLabel(c.providerType), c.op, Result(err)).Observe(time.Since(c.start).Seconds())
 	}
 }

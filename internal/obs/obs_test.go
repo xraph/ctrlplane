@@ -290,6 +290,35 @@ func TestMetricsRecordLabelledSeries(t *testing.T) {
 	}
 }
 
+func TestProviderLabelIsBounded(t *testing.T) {
+	t.Parallel()
+
+	for in, want := range map[string]string{
+		"docker": "docker", "kubernetes": "kubernetes", "nomad": "nomad",
+		"cloudrun": ProviderCustom, "acme-cloud-connection-7": ProviderCustom, "": ProviderCustom,
+	} {
+		if got := ProviderLabel(in); got != want {
+			t.Fatalf("ProviderLabel(%q) = %q, want %q", in, got, want)
+		}
+	}
+
+	f := obstest.NewSink()
+	m := NewMetrics(f.Metrics())
+
+	_, call := m.StartProviderCall(context.Background(), "acme-cloud", OpDeploy)
+	call.End(nil)
+	m.ProviderHealthChecked("acme-cloud", HealthHealthy, time.Millisecond)
+
+	for _, key := range []string{
+		"ctrlplane_provider_call_duration_seconds{operation=deploy,provider=custom,result=ok}",
+		"ctrlplane_provider_health_check_duration_seconds{provider=custom,result=healthy}",
+	} {
+		if got := f.HistogramCount(t, key); got != 1 {
+			t.Fatalf("%s = %d", key, got)
+		}
+	}
+}
+
 func TestNilMetricsRecordNothing(t *testing.T) {
 	t.Parallel()
 

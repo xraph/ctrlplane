@@ -292,7 +292,23 @@ func (m *Metrics) ProviderHealthChecked(providerType, result string, took time.D
 		return
 	}
 
-	m.providerHealthChecks.with(providerType, result).Observe(took.Seconds())
+	m.providerHealthChecks.with(ProviderLabel(providerType), result).Observe(took.Seconds())
+}
+
+// ProviderCustom is the provider label value for every provider that isn't
+// one of the built-in ones.
+const ProviderCustom = "custom"
+
+// ProviderLabel maps a provider's Info().Name to the provider label:
+// docker, kubernetes and nomad stay as they are, and anything else, which a
+// host chooses, becomes custom. Spans keep the real name.
+func ProviderLabel(providerType string) string {
+	switch providerType {
+	case "docker", "kubernetes", "nomad":
+		return providerType
+	default:
+		return ProviderCustom
+	}
 }
 
 // SampleEmpty is the resource sample result label value for a provider

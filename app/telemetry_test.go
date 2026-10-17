@@ -165,11 +165,11 @@ func TestTelemetryCoversAnInstanceLifecycle(t *testing.T) {
 	obstest.AssertAbsent(t, rec.Ended(), pii, "alice", "quota exhausted")
 
 	for key, want := range map[string]uint64{
-		"ctrlplane_provider_call_duration_seconds{operation=provision,provider=fake,result=ok}": 1,
-		"ctrlplane_provider_call_duration_seconds{operation=deploy,provider=fake,result=ok}":    1,
-		"ctrlplane_provider_call_duration_seconds{operation=start,provider=fake,result=error}":  1,
-		"ctrlplane_readiness_wait_duration_seconds{result=ready}":                               2,
-		"ctrlplane_deployment_duration_seconds{action=deploy,result=ok,strategy=rolling}":       1,
+		"ctrlplane_provider_call_duration_seconds{operation=provision,provider=custom,result=ok}": 1,
+		"ctrlplane_provider_call_duration_seconds{operation=deploy,provider=custom,result=ok}":    1,
+		"ctrlplane_provider_call_duration_seconds{operation=start,provider=custom,result=error}":  1,
+		"ctrlplane_readiness_wait_duration_seconds{result=ready}":                                 2,
+		"ctrlplane_deployment_duration_seconds{action=deploy,result=ok,strategy=rolling}":         1,
 	} {
 		if got := sink.HistogramCount(t, key); got != want {
 			t.Fatalf("%s = %d, want %d", key, got, want)
