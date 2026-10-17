@@ -414,8 +414,8 @@ func holdsSink(target any) bool {
 
 	want := reflect.TypeFor[*obs.Metrics]()
 
-	for i := range v.NumField() {
-		if f := v.Field(i); f.Type() == want && !f.IsNil() {
+	for _, f := range v.Fields() {
+		if f.Type() == want && !f.IsNil() {
 			return true
 		}
 	}

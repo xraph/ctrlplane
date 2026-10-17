@@ -68,7 +68,7 @@ func (t redactedTracer) Start(ctx context.Context, name string, opts ...trace.Sp
 	ctx, inner := otel.GetTracerProvider().Tracer(t.name, t.opts...).Start(ctx, name, clean...) //nolint:spancheck // the instrumentation ends it
 	span := &redactedSpan{Span: inner}
 
-	return trace.ContextWithSpan(ctx, span), span
+	return trace.ContextWithSpan(ctx, span), span //nolint:spancheck // the instrumentation that called Start ends the span
 }
 
 func redactAttrs(attrs []attribute.KeyValue) []attribute.KeyValue {
