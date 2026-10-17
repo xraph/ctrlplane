@@ -340,6 +340,29 @@ func TestProviderCallsDropInboundBaggage(t *testing.T) {
 	}
 }
 
+type notFoundMarker struct{}
+
+func (notFoundMarker) Error() string { return "no such container" }
+func (notFoundMarker) NotFound()     {}
+
+func TestIsNotFound(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		err  error
+		want bool
+	}{
+		{fmt.Errorf("status: %w", ctrlplane.ErrNotFound), true},
+		{fmt.Errorf("inspect: %w", notFoundMarker{}), true},
+		{errors.New("service not found"), false},
+		{context.DeadlineExceeded, false},
+	} {
+		if got := IsNotFound(tt.err); got != tt.want {
+			t.Fatalf("IsNotFound(%v) = %v", tt.err, got)
+		}
+	}
+}
+
 func TestNilMetricsRecordNothing(t *testing.T) {
 	t.Parallel()
 

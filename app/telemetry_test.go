@@ -3,9 +3,11 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -13,6 +15,7 @@ import (
 	"go.opentelemetry.io/otel/baggage"
 	"go.opentelemetry.io/otel/codes"
 
+	ctrlplane "github.com/xraph/ctrlplane"
 	"github.com/xraph/ctrlplane/auth"
 	"github.com/xraph/ctrlplane/deploy"
 	"github.com/xraph/ctrlplane/event"
@@ -262,6 +265,65 @@ func TestProviderCallsCarryNoInboundBaggage(t *testing.T) {
 
 	if calls < 2 {
 		t.Fatalf("want the provision and at least one status poll, got %d calls", calls)
+	}
+}
+
+// lateProvider reports "not found" on its first status read, the way an
+// asynchronous platform does right after accepting a request.
+type lateProvider struct {
+	telemetryProvider
+
+	polls *atomic.Int32
+}
+
+func (p lateProvider) Status(ctx context.Context, instanceID id.ID) (*provider.InstanceStatus, error) {
+	if p.polls.Add(1) == 1 {
+		return nil, fmt.Errorf("service %s: %w", instanceID, ctrlplane.ErrNotFound)
+	}
+
+	return p.telemetryProvider.Status(ctx, instanceID)
+}
+
+func TestReadinessNotFoundIsBenign(t *testing.T) {
+	rec := obstest.Record(t)
+	sink := obstest.NewSink()
+
+	cp, err := New(
+		WithStore(memory.New()),
+		WithProvider("cloud", lateProvider{polls: new(atomic.Int32)}),
+		WithDefaultProvider("cloud"),
+		WithMetrics(sink.Metrics()),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := auth.WithClaims(context.Background(), &auth.Claims{SubjectID: "u", TenantID: "t", Roles: []string{"system:admin"}})
+	ctx, request := otel.Tracer("test").Start(ctx, "POST /instances")
+
+	if _, err := cp.Instances.Create(ctx, instance.CreateRequest{Name: "web", Services: []provider.ServiceSpec{{Name: "web", Image: "nginx"}}}); err != nil {
+		t.Fatal(err)
+	}
+
+	request.End()
+
+	polls := obstest.Named(rec, "read instance status")
+	if len(polls) != 2 {
+		t.Fatalf("want two status reads, got %d", len(polls))
+	}
+
+	if polls[0].Status().Code == codes.Error || obstest.Attrs(polls[0])["ctrlplane.provider.not_found"] != "true" {
+		t.Fatalf("the not found read = %+v %v", polls[0].Status(), obstest.Attrs(polls[0]))
+	}
+
+	for key, want := range map[string]uint64{
+		"ctrlplane_provider_call_duration_seconds{operation=status,provider=custom,result=not_found}": 1,
+		"ctrlplane_provider_call_duration_seconds{operation=status,provider=custom,result=ok}":        1,
+		"ctrlplane_readiness_wait_duration_seconds{result=ready}":                                     1,
+	} {
+		if got := sink.HistogramCount(t, key); got != want {
+			t.Fatalf("%s = %d, want %d", key, got, want)
+		}
 	}
 }
 

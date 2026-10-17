@@ -236,13 +236,11 @@ func (s *service) awaitReady(ctx, pctx context.Context, p provider.Provider, ins
 	st, err := provider.WaitReady(pctx, waiter.ReadinessPolicy(), func(ctx context.Context) (*provider.InstanceStatus, error) {
 		var st *provider.InstanceStatus
 
-		err := s.call(ctx, p, obs.OpStatus, inst, func(ctx context.Context) error {
-			var err error
-
-			st, err = dispatch.Status(ctx, p, inst.Source.Type, inst.ID)
-
-			return err
-		})
+		ctx, c := s.metrics.StartProviderCall(ctx, provider.TypeName(p), obs.OpStatus,
+			obs.AttrInstanceID.String(inst.ID.String()),
+			obs.AttrSourceType.String(sourceType(inst.Source.Type)))
+		st, err := dispatch.Status(ctx, p, inst.Source.Type, inst.ID)
+		c.EndPoll(err)
 
 		return st, err
 	})

@@ -737,7 +737,7 @@ func (s *service) awaitReady(ctx, pctx context.Context, prov provider.Provider, 
 		ctx, call := s.metrics.StartProviderCall(ctx, provider.TypeName(prov), obs.OpStatus,
 			obs.AttrInstanceID.String(inst.ID.String()))
 		st, err := dispatch.Status(ctx, prov, inst.Source.Type, inst.ID)
-		call.End(err)
+		call.EndPoll(err)
 
 		return st, err
 	})

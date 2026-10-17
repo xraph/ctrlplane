@@ -9,6 +9,7 @@ const (
 	AttrProviderType      = attribute.Key("ctrlplane.provider.type")
 	AttrProviderOperation = attribute.Key("ctrlplane.provider.operation")
 	AttrProviderHealthy   = attribute.Key("ctrlplane.provider.healthy")
+	AttrProviderNotFound  = attribute.Key("ctrlplane.provider.not_found")
 	AttrProvidersChecked  = attribute.Key("ctrlplane.providers.checked")
 	AttrProvidersFailing  = attribute.Key("ctrlplane.providers.unhealthy")
 	AttrSourceType        = attribute.Key("ctrlplane.source.type")

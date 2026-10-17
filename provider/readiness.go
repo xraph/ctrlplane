@@ -30,6 +30,11 @@ var ErrNotReady = errors.New("ctrlplane: workload did not become ready")
 //
 // Providers that finish their work inside Provision and Deploy, like the
 // built-in docker provider, need not implement it.
+//
+// A status read that fails is retried. If the platform reports "not found"
+// for a moment after accepting a request, wrap ctrlplane.ErrNotFound in the
+// error: telemetry then records that read as not_found instead of a failed
+// provider call.
 type ReadinessWaiter interface {
 	ReadinessPolicy() ReadinessPolicy
 }
