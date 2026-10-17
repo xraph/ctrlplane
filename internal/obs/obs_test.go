@@ -329,3 +329,33 @@ func TestTracedAndMethodSpanName(t *testing.T) {
 
 	_ = rec
 }
+
+func TestRedactedTracerProviderKeepsOnlyTheAllowlist(t *testing.T) {
+	rec := obstest.Record(t)
+
+	tracer := RedactedTracerProvider().Tracer("go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp")
+
+	_, span := tracer.Start(context.Background(), http.MethodGet,
+		trace.WithSpanKind(trace.SpanKindClient),
+		trace.WithAttributes(
+			attribute.String("http.request.method", http.MethodGet),
+			attribute.String("url.full", "http://docker/v1.47/images/registry.example.com/alice/app/json?token=hunter2"),
+		))
+	span.SetAttributes(attribute.String("error.type", "*url.Error"), attribute.String("url.path", "/containers/alice"))
+	span.RecordError(&customError{msg: "dial http://docker/v1.47/containers/alice/json"})
+	span.AddEvent("read", trace.WithAttributes(attribute.String("url.query", "token=hunter2")))
+	span.SetStatus(codes.Error, `Get "http://docker/v1.47/containers/alice/json": dial tcp: refused`)
+	span.End()
+
+	s := rec.Ended()[0]
+	if s.SpanKind() != trace.SpanKindClient || s.Status().Code != codes.Error || s.Status().Description != "*url.Error" {
+		t.Fatalf("span = kind %v status %+v", s.SpanKind(), s.Status())
+	}
+
+	attrs := obstest.Attrs(s)
+	if len(attrs) != 2 || attrs["http.request.method"] != http.MethodGet || attrs["error.type"] != "*url.Error" {
+		t.Fatalf("attributes = %v", attrs)
+	}
+
+	obstest.AssertAbsent(t, rec.Ended(), "alice", "hunter2", "registry.example.com", "/v1.47")
+}

@@ -23,15 +23,21 @@ import (
 )
 
 // traceOptions tunes the otelhttp transport the Docker SDK always wraps
-// around its client. A daemon request gets a client span only under a
-// traced call, so the metrics poller's stats reads don't start a root trace
-// each, and the span is named after the method instead of a path that
-// carries container IDs. The daemon gets the W3C trace context and never
-// the baggage a client sent in, which often names users or tenants.
+// around its client.
+//
+// A daemon request gets a client span only under a traced call, so the
+// metrics poller's stats reads don't start a root trace each. The span is
+// named after the method, and it starts on obs.RedactedTracerProvider,
+// which keeps only the method, status, server address and port and
+// error.type: otelhttp would otherwise record url.full, whose path and query
+// name containers, image references and label filters, and copy err.Error()
+// into the status. The daemon gets the W3C trace context and never the
+// baggage a client sent in, which often names users or tenants.
 func traceOptions() client.Opt {
 	return client.WithTraceOptions(
 		otelhttp.WithFilter(obs.Traced),
 		otelhttp.WithSpanNameFormatter(obs.MethodSpanName),
+		otelhttp.WithTracerProvider(obs.RedactedTracerProvider()),
 		otelhttp.WithPropagators(propagation.TraceContext{}),
 	)
 }

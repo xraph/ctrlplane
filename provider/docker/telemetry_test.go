@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/baggage"
@@ -106,4 +107,92 @@ func TestDaemonCallsCarryTraceContextOnly(t *testing.T) {
 	if clientSpans == 0 {
 		t.Fatal("the traced ping produced no client span")
 	}
+}
+
+// TestDaemonSpansCarryNoPathQueryOrErrorText drives requests whose path,
+// query and error text name an image reference and a container, plus one
+// that fails in the transport, and checks none of that reaches a span.
+func TestDaemonSpansCarryNoPathQueryOrErrorText(t *testing.T) {
+	rec := obstest.Record(t)
+
+	const (
+		imageRef      = "registry.example.com/alice/app@sha256:deadbeefcafe"
+		containerName = "alice-private-container"
+	)
+
+	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Api-Version", "1.47")
+
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/_ping"):
+			_, _ = w.Write([]byte("OK"))
+		case strings.Contains(r.URL.Path, "/containers/create"):
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte(`{"message":"Conflict. The container name \"/` + containerName + `\" is already in use"}`))
+		default:
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"message":"No such image: ` + imageRef + `"}`))
+		}
+	}))
+	t.Cleanup(daemon.Close)
+
+	newClient := func(host string) *client.Client {
+		t.Helper()
+
+		cli, err := client.New(client.WithHost("tcp://"+host), client.WithAPIVersion("1.47"), traceOptions())
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		t.Cleanup(func() { _ = cli.Close() })
+
+		return cli
+	}
+
+	cli := newClient(strings.TrimPrefix(daemon.URL, "http://"))
+
+	ctx, span := otel.Tracer("test").Start(context.Background(), "execute managed docker step")
+
+	if _, err := cli.Ping(ctx, client.PingOptions{}); err != nil {
+		t.Fatalf("ping: %v", err)
+	}
+
+	if _, err := cli.ImageInspect(ctx, imageRef); err == nil {
+		t.Fatal("image inspect should fail")
+	}
+
+	if _, err := cli.ContainerCreate(ctx, client.ContainerCreateOptions{
+		Name:   containerName,
+		Config: &container.Config{Image: imageRef},
+	}); err == nil {
+		t.Fatal("container create should fail")
+	}
+
+	// A daemon that is gone: the transport error is a *url.Error, whose
+	// text quotes the full URL.
+	dead := httptest.NewServer(http.NotFoundHandler())
+	deadHost := strings.TrimPrefix(dead.URL, "http://")
+	dead.Close()
+
+	if _, err := newClient(deadHost).ImageInspect(ctx, imageRef); err == nil {
+		t.Fatal("inspect against a closed daemon should fail")
+	}
+
+	span.End()
+
+	var clientSpans []string
+
+	for _, s := range rec.Ended() {
+		if s.SpanKind() == trace.SpanKindClient {
+			clientSpans = append(clientSpans, s.Name())
+		}
+	}
+
+	if len(clientSpans) < 4 {
+		t.Fatalf("want a client span per daemon request, got %v", clientSpans)
+	}
+
+	obstest.AssertAbsent(t, rec.Ended(), "_ping", "/v1.47", "registry.example.com", "deadbeef", "alice", "No such image", "Conflict.")
 }
