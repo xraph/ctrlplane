@@ -17,7 +17,7 @@ type Worker interface {
 }
 ```
 
-`Interval()` controls how often the worker runs. Return `0` for event-driven workers that run once and exit.
+`Interval()` controls how often the worker runs. The scheduler skips a worker whose interval is zero or less: it shows up in `Workers()` but never runs, so drive it yourself if it is event-driven.
 
 ## Scheduler
 

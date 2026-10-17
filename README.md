@@ -201,7 +201,7 @@ app.Run()
 
 Ctrl Plane traces and measures its own work. In a Forge app you get it for free: the extension records on `app.Metrics()`, so `/_/metrics` carries series like `forge_ctrlplane_provider_call_duration_seconds` and `forge_ctrlplane_deployment_duration_seconds`, and spans such as `execute deployment` and `provision instance` nest under forge's HTTP server span. The reconciler, garbage collector and provider health poller each start one root span per pass that has work.
 
-Outside Forge, pass a go-utils metrics sink with `app.WithMetrics(m)` and install an OpenTelemetry tracer provider. Error messages, tenant IDs, names and URLs stay off spans and labels. The full list of spans and metrics is in `docs/content/docs/subsystems/observability.mdx`.
+Outside Forge, pass a go-utils metrics sink with `app.WithMetrics(m)` and install an OpenTelemetry tracer provider. The sink has to keep one series per name and label set, as forge's metrics do; go-utils' `NewMetricsCollector` keys by name alone and would merge them. Error messages, tenant IDs, names, URL paths and query strings stay off spans and labels, Docker's client spans included, and calls to providers never forward your callers' baggage. The full list of spans and metrics is in `docs/content/docs/subsystems/observability.mdx`.
 
 ## Documentation
 

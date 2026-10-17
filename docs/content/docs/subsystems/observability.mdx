@@ -25,6 +25,10 @@ cp, err := app.New(
 )
 ```
 
+Mind which sink you pick. Every labelled family here asks the sink for one series per label set, by calling `Counter(name, metrics.WithLabels(...))` with the same name and different labels, so the sink has to key series by name and labels together. forge's metrics (what `app.Metrics()` returns) do. go-utils' `metrics.NewMetricsCollector` keys by name alone and would fold every label set of a family into one series.
+
+`app.WithMetrics` also registers an `observability.MetricsExtension`, the plugin behind `forge_ctrlplane_lifecycle_events_total`. If you register one yourself with `app.WithExtension`, it is used instead and events are still counted once.
+
 Spans need no option. They go to the global OpenTelemetry tracer provider, so install one (or let `forge.New` do it) and you'll see them.
 
 ## How the spans are shaped
@@ -35,7 +39,11 @@ Everything else only starts a span when the context already carries one. A deplo
 
 The long-lived loops (the worker scheduler, the provider health poller and the workload log, health and metrics fan-ins) drop the span of the context they were started from. Forge starts extensions under a boot span and a streaming request carries its server span for as long as the stream is open; without this, every idle-tick query grove traces would hang off a trace that ended long ago.
 
-A failed span gets an error status whose description is the error's class: a sentinel name such as `ctrlplane.ErrNotFound` or `provider.ErrNotReady`, or the Go type of the innermost error. Its `exception` event carries only `exception.type`. Error messages never reach a span, because provider and driver messages quote names, addresses and tokens. Neither do tenant IDs, subject IDs, instance names, provider registry keys (they can name a customer's cloud connection), health check targets or URL paths. Opaque resource IDs (instance, datacenter, deployment, workload and health check IDs) are on spans so you can find the row you're looking at.
+A failed span gets an error status whose description is the error's class: a sentinel name such as `ctrlplane.ErrNotFound` or `provider.ErrNotReady`, or the Go type of the innermost error. Its `exception` event carries only `exception.type`. Error messages never reach a span, because provider and driver messages quote names, addresses and tokens. Neither do tenant IDs, subject IDs, instance names, provider registry keys (they can name a customer's cloud connection), health check targets, URL paths or query strings.
+
+A status read made while Ctrl Plane waits for readiness is the one exception to "an error marks the span failed". Right after a platform accepts a request it often answers "not found" for a moment, and the wait retries. When the provider's error wraps `ctrlplane.ErrNotFound` (or carries the errdefs `NotFound()` marker, as Docker SDK errors do), that read gets `ctrlplane.provider.not_found` and no error status, and it is counted with result `not_found`. A provider that only says it in the error text, or a raw Kubernetes API error, still counts as a failed read.
+
+Provider calls, provider health probes and health checks never carry the baggage your callers sent in. forge propagates baggage, and a provider calling its cloud API through an instrumented client would otherwise forward it, often with user or tenant IDs in it. Opaque resource IDs (instance, datacenter, deployment, workload and health check IDs) are on spans so you can find the row you're looking at.
 
 ## Spans
 
@@ -68,7 +76,7 @@ Every span below uses the instrumentation scope `github.com/xraph/ctrlplane` and
 | `execute managed docker step` | One Docker custody mutation | `ctrlplane.managed.step` (`create_network`, `create_container`, `start_container`, `remove_container`, `remove_network`) |
 | `GET`, `POST`, ... (kind Client) | A Kubernetes or Nomad API request made under a traced call | `http.request.method`, `server.address`, `server.port`, `http.response.status_code`, `error.type` |
 
-Docker daemon requests get client spans from the Docker SDK's own instrumentation, only under a traced call, named after the method. The Kubernetes and Nomad client spans never record the URL path, which names tenant namespaces and workloads. All three send the W3C trace context and drop any baggage your callers sent in, since baggage often carries user or tenant IDs and these APIs may belong to someone else. Database statements under any of these spans are traced by grove.
+Docker daemon requests get client spans from the Docker SDK's own instrumentation, only under a traced call, named after the method. Those spans start on a tracer provider that keeps only the method, status code, server address and port and `error.type`, so the URL (whose path and query name containers, image references and label filters) and the raw error text the SDK's instrumentation writes into the status never reach your backend. The Kubernetes and Nomad client spans record the same few attributes and never the URL path, which names tenant namespaces and workloads. All three send the W3C trace context and drop any baggage your callers sent in, since baggage often carries user or tenant IDs and these APIs may belong to someone else. Database statements under any of these spans are traced by grove.
 
 ## Metrics
 
@@ -84,7 +92,7 @@ Forge exports these under its namespace, so `ctrlplane_worker_run_duration_secon
 | `forge_ctrlplane_bootstrap_actions_total` | counter | `action` (`provision`, `retire`), `result` (`ok`, `error`) |
 | `forge_ctrlplane_gc_tenant_sweeps_total` | counter | `result` (`ok`, `error`) |
 | `forge_ctrlplane_gc_instances_reaped_total` | counter | `result` (`ok`, `error`) |
-| `forge_ctrlplane_provider_call_duration_seconds` | histogram | `provider`, `operation`, `result` (`ok`, `error`) |
+| `forge_ctrlplane_provider_call_duration_seconds` | histogram | `provider`, `operation`, `result` (`ok`, `error`, `not_found` for readiness status reads) |
 | `forge_ctrlplane_provider_credentials_duration_seconds` | histogram | `result` (`ok`, `error`) |
 | `forge_ctrlplane_readiness_wait_duration_seconds` | histogram | `result` (`ready`, `failed`, `timeout`, `canceled`) |
 | `forge_ctrlplane_deployment_duration_seconds` | histogram | `strategy`, `action` (`deploy`, `rollback`), `result` (`ok`, `error`) |
@@ -98,7 +106,7 @@ Forge exports these under its namespace, so `ctrlplane_worker_run_duration_secon
 The label values come from code, never from requests:
 
 - `worker` is a worker's `Name()`: `reconciler`, `health_runner`, `telemetry_collector`, `gc` and `cert_renewer` for the built-in ones, plus the name of any worker you register.
-- `provider` is the provider's `Info().Name` (`docker`, `kubernetes`, `nomad`, or your custom provider's name), never the key you registered it under.
+- `provider` is `docker`, `kubernetes` or `nomad` for the built-in providers and `custom` for any other, whatever its `Info().Name`. It is never the key you registered a provider under. Spans keep the real name in `ctrlplane.provider.type`.
 - `operation` is one of `provision`, `deprovision`, `start`, `stop`, `restart`, `scale`, `deploy`, `status`, `logs` and `resources`. Suspend and unsuspend count as `stop` and `start`.
 - `strategy` is a registered strategy name: `rolling`, `blue-green`, `canary`, `recreate`, or one you registered. Rollbacks use `recreate`.
 - `check_type` is a type a checker is registered for (`http`, `tcp`, `grpc`, `command`, `custom`).
