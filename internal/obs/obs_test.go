@@ -6,12 +6,16 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/baggage"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 
 	ctrlplane "github.com/xraph/ctrlplane"
@@ -127,10 +131,15 @@ func TestFailKeepsMessagesOffTheSpan(t *testing.T) {
 func TestTransport(t *testing.T) {
 	rec := obstest.Record(t)
 
-	var gotTraceparent []string
+	// forge installs tracecontext plus baggage; Record restores the
+	// previous propagator when the test ends.
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
+
+	var gotTraceparent, gotBaggage []string
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotTraceparent = append(gotTraceparent, r.Header.Get("Traceparent"))
+		gotBaggage = append(gotBaggage, r.Header.Get("Baggage"))
 
 		if strings.HasSuffix(r.URL.Path, "/broken") {
 			w.WriteHeader(http.StatusBadGateway)
@@ -163,13 +172,28 @@ func TestTransport(t *testing.T) {
 		t.Fatal("an untraced request was traced")
 	}
 
-	ctx, parent := Start(context.Background(), "deploy instance")
+	// A client's inbound baggage rides on the request context.
+	member, err := baggage.NewMember("user_id", "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	bag, err := baggage.New(member)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, parent := Start(baggage.ContextWithBaggage(context.Background(), bag), "deploy instance")
 	do(ctx, "/api/v1/namespaces/tenant-alice/pods/web")
 	do(ctx, "/broken")
 	parent.End()
 
 	if gotTraceparent[1] == "" {
 		t.Fatal("traceparent was not injected under a span")
+	}
+
+	if slices.ContainsFunc(gotBaggage, func(b string) bool { return b != "" }) {
+		t.Fatalf("inbound baggage reached the upstream: %q", gotBaggage)
 	}
 
 	ended := rec.Ended()

@@ -15,6 +15,7 @@ import (
 	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel/propagation"
 
 	"github.com/xraph/ctrlplane/id"
 	"github.com/xraph/ctrlplane/internal/obs"
@@ -25,11 +26,13 @@ import (
 // around its client. A daemon request gets a client span only under a
 // traced call, so the metrics poller's stats reads don't start a root trace
 // each, and the span is named after the method instead of a path that
-// carries container IDs.
+// carries container IDs. The daemon gets the W3C trace context and never
+// the baggage a client sent in, which often names users or tenants.
 func traceOptions() client.Opt {
 	return client.WithTraceOptions(
 		otelhttp.WithFilter(obs.Traced),
 		otelhttp.WithSpanNameFormatter(obs.MethodSpanName),
+		otelhttp.WithPropagators(propagation.TraceContext{}),
 	)
 }
 

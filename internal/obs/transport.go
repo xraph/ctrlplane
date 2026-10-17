@@ -6,6 +6,7 @@ import (
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/baggage"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -24,7 +25,7 @@ func MethodSpanName(_ string, req *http.Request) string {
 }
 
 // Transport wraps rt so a request made under a span gets a client span and
-// carries the trace context. A request whose context has no span goes out
+// carries the trace context, without any inbound baggage. A request whose context has no span goes out
 // untouched, so a poller with no trace of its own adds nothing. A nil rt
 // means http.DefaultTransport.
 //
@@ -69,9 +70,12 @@ func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
 		trace.WithAttributes(attrs...))
 	defer span.End()
 
-	// A RoundTripper must not modify the request it was given.
+	// A RoundTripper must not modify the request it was given. The
+	// upstream is a cluster or scheduler API the operator doesn't
+	// necessarily run, so it gets the trace context but never the
+	// baggage a client sent in: that often names users or tenants.
 	out := req.Clone(ctx)
-	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(out.Header))
+	otel.GetTextMapPropagator().Inject(baggage.ContextWithoutBaggage(ctx), propagation.HeaderCarrier(out.Header))
 
 	resp, err := t.base.RoundTrip(out)
 	if err != nil {

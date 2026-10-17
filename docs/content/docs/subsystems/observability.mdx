@@ -68,7 +68,7 @@ Every span below uses the instrumentation scope `github.com/xraph/ctrlplane` and
 | `execute managed docker step` | One Docker custody mutation | `ctrlplane.managed.step` (`create_network`, `create_container`, `start_container`, `remove_container`, `remove_network`) |
 | `GET`, `POST`, ... (kind Client) | A Kubernetes or Nomad API request made under a traced call | `http.request.method`, `server.address`, `server.port`, `http.response.status_code`, `error.type` |
 
-Docker daemon requests get client spans from the Docker SDK's own instrumentation, only under a traced call, named after the method. The Kubernetes and Nomad client spans carry the trace context to the API server and never record the URL path, which names tenant namespaces and workloads. Database statements under any of these spans are traced by grove.
+Docker daemon requests get client spans from the Docker SDK's own instrumentation, only under a traced call, named after the method. The Kubernetes and Nomad client spans never record the URL path, which names tenant namespaces and workloads. All three send the W3C trace context and drop any baggage your callers sent in, since baggage often carries user or tenant IDs and these APIs may belong to someone else. Database statements under any of these spans are traced by grove.
 
 ## Metrics
 
