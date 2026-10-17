@@ -7,6 +7,9 @@ import (
 	"reflect"
 	"time"
 
+	"go.opentelemetry.io/otel/trace"
+
+	"github.com/xraph/ctrlplane/internal/obs"
 	"github.com/xraph/ctrlplane/managed"
 )
 
@@ -85,6 +88,20 @@ type ManagedDockerJournal interface {
 // removal, compensating cleanup, pull, or NotFound-to-success conversion.
 type ManagedDockerTransport interface {
 	Execute(ctx context.Context, command ManagedDockerCommand) (string, error)
+}
+
+// executeTraced runs one custody mutation under an "execute managed docker
+// step" span when ctx is traced. The span carries the step kind only: the
+// command's names, IDs and startup material stay off it.
+func executeTraced(ctx context.Context, transport ManagedDockerTransport, command ManagedDockerCommand) (string, error) {
+	ctx, span := obs.StartChild(ctx, "execute managed docker step",
+		trace.WithAttributes(obs.AttrManagedStep.String(string(command.Kind))))
+	defer span.End()
+
+	resourceID, err := transport.Execute(ctx, command)
+	obs.Fail(span, err)
+
+	return resourceID, err
 }
 
 // ManagedDockerRecord is a bounded observation. Only complete has authenticated custody.
@@ -519,7 +536,7 @@ func (e *ManagedDockerExecutor) Execute(ctx context.Context, request ManagedDock
 		return ManagedDockerRecord{}, managed.ErrConflict
 	}
 
-	resourceID, err := e.transport.Execute(ctx, custodyClone(record.Request.Command))
+	resourceID, err := executeTraced(ctx, e.transport, custodyClone(record.Request.Command))
 	if err != nil {
 		return delegated, err
 	}

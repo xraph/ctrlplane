@@ -4,7 +4,10 @@ import (
 	"context"
 	"log/slog"
 
+	gometrics "github.com/xraph/go-utils/metrics"
+
 	"github.com/xraph/ctrlplane/event"
+	"github.com/xraph/ctrlplane/internal/obs"
 )
 
 // Named entry types pair a hook implementation with the plugin name
@@ -245,11 +248,18 @@ type Registry struct {
 	tenantDeleted       []tenantDeletedEntry
 	quotaExceeded       []quotaExceededEntry
 	shutdown            []shutdownEntry
+	metrics             *obs.Metrics
 }
 
 // NewRegistry creates a plugin registry with the given logger.
 func NewRegistry(logger *slog.Logger) *Registry {
 	return &Registry{logger: logger}
+}
+
+// SetMetrics counts the hooks that return an error on m, labelled by hook
+// method name. A nil m records nothing. Call it before events flow.
+func (r *Registry) SetMetrics(m gometrics.Metrics) {
+	r.metrics = obs.NewMetrics(m)
 }
 
 // Register adds a plugin and type-asserts it into all applicable
@@ -880,6 +890,7 @@ func (r *Registry) HandleEvent(ctx context.Context, evt *event.Event) error {
 // logHookError logs a warning when a lifecycle hook returns an error.
 // Errors from hooks are never propagated — they must not block the event pipeline.
 func (r *Registry) logHookError(hook, extName string, err error) {
+	r.metrics.PluginHookFailed(hook)
 	r.logger.Warn("plugin hook error",
 		slog.String("hook", hook),
 		slog.String("plugin", extName),

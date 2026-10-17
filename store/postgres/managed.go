@@ -9,9 +9,11 @@ import (
 
 	"github.com/xraph/grove/driver"
 	"github.com/xraph/grove/drivers/pgdriver"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/xraph/ctrlplane/id"
 	"github.com/xraph/ctrlplane/internal/managedstate"
+	"github.com/xraph/ctrlplane/internal/obs"
 	"github.com/xraph/ctrlplane/managed"
 )
 
@@ -177,7 +179,39 @@ func (b managedBackend) Obligations(ctx context.Context, tenant string) (bool, e
 
 	return exists, err
 }
+
+// Atomic runs one managed target transition in a transaction. Under a
+// traced call it is a "transact managed target" span; the statements grove
+// traces nest inside it, the row lock wait included.
 func (b managedBackend) Atomic(ctx context.Context, k managed.Key, operation id.ID, digest string, fn func(*managed.Target, time.Time) (managed.Receipt, error)) (managed.Receipt, error) {
+	ctx, span := obs.StartChild(ctx, "transact managed target",
+		trace.WithAttributes(obs.AttrInstanceID.String(k.InstanceID.String())))
+	defer span.End()
+
+	receipt, err := b.atomic(ctx, k, operation, digest, fn)
+	endManagedSpan(span, err)
+
+	return receipt, err
+}
+
+// endManagedSpan records how a managed transaction ended. A refusal (the
+// target is missing, the command conflicts, or an obligation blocks it) is
+// the protocol working, so it is an attribute rather than a failure.
+func endManagedSpan(span trace.Span, err error) {
+	if err == nil {
+		return
+	}
+
+	if errors.Is(err, managed.ErrNotFound) || errors.Is(err, managed.ErrConflict) || errors.Is(err, managed.ErrBlocked) {
+		span.SetAttributes(obs.AttrManagedRefusal.String(obs.ErrorType(err)))
+
+		return
+	}
+
+	obs.Fail(span, err)
+}
+
+func (b managedBackend) atomic(ctx context.Context, k managed.Key, operation id.ID, digest string, fn func(*managed.Target, time.Time) (managed.Receipt, error)) (managed.Receipt, error) {
 	tx, err := b.begin(ctx)
 	if err != nil {
 		return managed.Receipt{}, err

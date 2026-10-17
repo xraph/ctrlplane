@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/xraph/ctrlplane/id"
+	"github.com/xraph/ctrlplane/internal/obs"
 	"github.com/xraph/ctrlplane/provider"
 )
 
@@ -42,7 +43,7 @@ func nomadJobName(instanceID id.ID) string {
 // running job shows "—" in the dashboard rather than errors.
 func fetchAllocResources(ctx context.Context, address, namespace string, instanceID id.ID) (*provider.ResourceUsage, error) {
 	address = strings.TrimRight(address, "/")
-	httpClient := &http.Client{Timeout: statsHTTPTimeout}
+	httpClient := &http.Client{Timeout: statsHTTPTimeout, Transport: obs.Transport(nil)}
 
 	// 1. List allocations for the conventional job name.
 	jobName := nomadJobName(instanceID)

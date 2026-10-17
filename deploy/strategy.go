@@ -3,6 +3,7 @@ package deploy
 import (
 	"context"
 
+	"github.com/xraph/ctrlplane/internal/obs"
 	"github.com/xraph/ctrlplane/provider"
 )
 
@@ -38,13 +39,24 @@ type StrategyParams struct {
 	OnProgress        func(phase string, percent int, message string)
 	OnServiceProgress func(serviceName string, state string)
 	OnEndpoints       func(endpoints []provider.Endpoint)
+
+	// metrics times the provider calls made through DeployProvider. The
+	// deploy service sets it; nil records nothing.
+	metrics *obs.Metrics
 }
 
 // DeployProvider calls Provider.Deploy and passes any endpoints the
 // result carries to OnEndpoints. A nil result, nil Endpoints or a nil
 // OnEndpoints reports nothing.
+//
+// The call is timed on the deploy service's metrics and, under a traced
+// context, gets a "deploy instance" span.
 func (p StrategyParams) DeployProvider(ctx context.Context, req provider.DeployRequest) (*provider.DeployResult, error) {
+	ctx, call := p.metrics.StartProviderCall(ctx, provider.TypeName(p.Provider), obs.OpDeploy,
+		obs.AttrInstanceID.String(req.InstanceID.String()))
 	result, err := p.Provider.Deploy(ctx, req)
+	call.End(err)
+
 	if err != nil {
 		return result, err
 	}

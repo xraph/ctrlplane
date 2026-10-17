@@ -9,6 +9,7 @@ import (
 
 	"github.com/xraph/ctrlplane/id"
 	"github.com/xraph/ctrlplane/instance"
+	"github.com/xraph/ctrlplane/internal/obs"
 	"github.com/xraph/ctrlplane/metrics"
 )
 
@@ -117,6 +118,11 @@ func (s *service) WatchMetrics(ctx context.Context, workloadID id.ID) (<-chan *M
 }
 
 func (s *service) fanInMetrics(ctx context.Context, workloadID id.ID, out chan<- *MetricsEvent) {
+	// The fan-in outlives any one unit of work and re-lists replicas
+	// on a timer, so it runs without the caller's request span: its
+	// queries must not pile up under one long-lived server span.
+	ctx = obs.Detach(ctx)
+
 	var (
 		wg   sync.WaitGroup
 		mu   sync.Mutex

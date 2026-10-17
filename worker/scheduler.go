@@ -7,6 +7,10 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	gometrics "github.com/xraph/go-utils/metrics"
+
+	"github.com/xraph/ctrlplane/internal/obs"
 )
 
 // WorkerInfo holds runtime information about a registered worker.
@@ -33,6 +37,8 @@ type Scheduler struct {
 	// mirrors the most recent answer for IsLeader.
 	elector LeaderElector
 	leader  atomic.Bool
+
+	metrics *obs.Metrics
 }
 
 // workerStatus tracks runtime state for a single worker.
@@ -57,6 +63,14 @@ func (s *Scheduler) SetLeaderElector(e LeaderElector) {
 	s.elector = e
 }
 
+// SetMetrics records how long each worker pass takes, which ticks were
+// skipped for want of leadership, and the leader election answers on m.
+// Call it before Start. A nil m records nothing. In a Forge app the
+// ctrlplane extension passes app.Metrics() in for you.
+func (s *Scheduler) SetMetrics(m gometrics.Metrics) {
+	s.metrics = obs.NewMetrics(m)
+}
+
 // IsLeader reports whether the scheduler last found itself leader. It is
 // always true when no elector is set.
 func (s *Scheduler) IsLeader() bool {
@@ -76,6 +90,8 @@ func (s *Scheduler) lead(ctx context.Context) bool {
 	}
 
 	ok, err := s.elector.IsLeader(ctx)
+	s.metrics.LeaderCheck(ok, err)
+
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "worker scheduler: leader election: %v\n", err)
 
@@ -151,10 +167,18 @@ func (s *Scheduler) WorkerByName(name string) (WorkerInfo, bool) {
 }
 
 // Start launches a goroutine for each periodic worker. It returns immediately.
+//
+// The workers run on ctx without whatever span it carries: Forge starts
+// extensions under a boot span, and a worker's spans and queries must not
+// join that trace. Each worker starts a root span per unit of work.
 func (s *Scheduler) Start(ctx context.Context) error {
-	ctx, s.cancel = context.WithCancel(ctx)
+	ctx, s.cancel = context.WithCancel(obs.Detach(ctx))
 	s.done = make(chan struct{})
 	s.active.Store(true)
+
+	if s.elector == nil {
+		s.metrics.SetLeader(true)
+	}
 
 	var wg sync.WaitGroup
 
@@ -181,10 +205,15 @@ func (s *Scheduler) Start(ctx context.Context) error {
 				select {
 				case <-ticker.C:
 					if !s.lead(ctx) {
+						s.metrics.WorkerSkipped(w.Name())
+
 						continue
 					}
 
+					started := time.Now()
 					err := w.Run(ctx)
+
+					s.metrics.WorkerRun(w.Name(), time.Since(started), err)
 
 					now := time.Now().UTC()
 
@@ -237,6 +266,8 @@ func (s *Scheduler) Stop(ctx context.Context) error {
 	case <-s.done:
 	case <-time.After(10 * time.Second):
 	}
+
+	s.metrics.SetLeader(false)
 
 	if s.elector == nil {
 		return nil

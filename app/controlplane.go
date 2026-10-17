@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"time"
 
+	gometrics "github.com/xraph/go-utils/metrics"
+
 	ctrlplane "github.com/xraph/ctrlplane"
 	"github.com/xraph/ctrlplane/admin"
 	audithook "github.com/xraph/ctrlplane/audit_hook"
@@ -20,6 +22,7 @@ import (
 	"github.com/xraph/ctrlplane/instance"
 	"github.com/xraph/ctrlplane/metrics"
 	"github.com/xraph/ctrlplane/network"
+	"github.com/xraph/ctrlplane/observability"
 	"github.com/xraph/ctrlplane/plugin"
 	"github.com/xraph/ctrlplane/provider"
 	"github.com/xraph/ctrlplane/providerhealth"
@@ -44,6 +47,14 @@ type CtrlPlane struct {
 	extensions  *plugin.Registry
 	pendingExts []plugin.Extension
 	auditHook   *audithook.Extension
+
+	// metrics, when set by WithMetrics, is handed to every subsystem
+	// that records metrics.
+	metrics gometrics.Metrics
+
+	// gc is the garbage collector worker, kept so wireMetrics can reach
+	// it after the scheduler owns it.
+	gc *worker.GarbageCollector
 
 	// leaderElector, when set, limits background workers to the replica
 	// that holds leadership.
@@ -330,12 +341,15 @@ func (cp *CtrlPlane) wireServices() {
 	cp.scheduler.Register(worker.NewReconciler(cp.store, cp.store, cp.Bootstraps, cp.providers, cp.events, 60*time.Second))
 	cp.scheduler.Register(worker.NewHealthRunner(cp.Health, cp.events, healthInterval))
 	cp.scheduler.Register(worker.NewTelemetryCollector(cp.Telemetry, cp.providers, telemetryInterval))
-	cp.scheduler.Register(worker.NewGarbageCollector(cp.store, cp.Instances, cp.store, cp.events, 5*time.Minute, worker.GCConfig{}))
+	cp.gc = worker.NewGarbageCollector(cp.store, cp.Instances, cp.store, cp.events, 5*time.Minute, worker.GCConfig{})
+	cp.scheduler.Register(cp.gc)
 	cp.scheduler.Register(worker.NewCertRenewer(cp.Network, cp.events, 12*time.Hour))
 
 	if cp.leaderElector != nil {
 		cp.scheduler.SetLeaderElector(cp.leaderElector)
 	}
+
+	cp.wireMetrics()
 
 	// Default audit-trail plugin: bridges every lifecycle event to
 	// admin.AuditEntry rows in the store. Without this nothing
@@ -354,6 +368,49 @@ func (cp *CtrlPlane) wireServices() {
 	if cp.extensions != nil {
 		cp.events.Subscribe(cp.extensions.HandleEvent)
 	}
+}
+
+// metricsSetter is satisfied by every subsystem that records metrics.
+type metricsSetter interface {
+	SetMetrics(m gometrics.Metrics)
+}
+
+// wireMetrics hands the WithMetrics sink to every subsystem that records
+// metrics and registers the lifecycle event counter, unless you registered
+// an observability.MetricsExtension yourself. Without WithMetrics it does
+// nothing, and every subsystem records nothing.
+func (cp *CtrlPlane) wireMetrics() {
+	if cp.metrics == nil {
+		return
+	}
+
+	targets := []any{
+		cp.providers, cp.scheduler, cp.gc, cp.Bootstraps, cp.Instances, cp.Deploys,
+		cp.Health, cp.Metrics, cp.ProviderHealth, cp.Admin,
+	}
+
+	for _, t := range targets {
+		if s, ok := t.(metricsSetter); ok {
+			s.SetMetrics(cp.metrics)
+		}
+	}
+
+	if cp.extensions == nil {
+		return
+	}
+
+	cp.extensions.SetMetrics(cp.metrics)
+
+	// The plugin registry doesn't dedupe, so a host that already
+	// registered its own lifecycle event plugin would count every event
+	// twice.
+	for _, ext := range cp.extensions.Extensions() {
+		if _, ok := ext.(*observability.MetricsExtension); ok {
+			return
+		}
+	}
+
+	cp.extensions.Register(observability.NewMetricsExtension(cp.metrics))
 }
 
 // storeAuditRecorder is the default audit_hook.Recorder. Translates

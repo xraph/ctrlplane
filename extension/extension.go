@@ -113,7 +113,14 @@ func (e *Extension) Init(fapp forge.App) error {
 		authProvider = &auth.NoopProvider{}
 	}
 
-	cpOpts := make([]app.Option, 0, len(e.opts)+3)
+	cpOpts := make([]app.Option, 0, len(e.opts)+5)
+
+	// Record on the app's metrics, so ctrlplane's series land on
+	// /_/metrics next to forge's.
+	if m := fapp.Metrics(); m != nil {
+		cpOpts = append(cpOpts, app.WithMetrics(m))
+	}
+
 	cpOpts = append(cpOpts, e.opts...)
 
 	// Resolve the store if one was not explicitly provided via WithStore.

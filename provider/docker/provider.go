@@ -14,10 +14,33 @@ import (
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel/propagation"
 
 	"github.com/xraph/ctrlplane/id"
+	"github.com/xraph/ctrlplane/internal/obs"
 	"github.com/xraph/ctrlplane/provider"
 )
+
+// traceOptions tunes the otelhttp transport the Docker SDK always wraps
+// around its client.
+//
+// A daemon request gets a client span only under a traced call, so the
+// metrics poller's stats reads don't start a root trace each. The span is
+// named after the method, and it starts on obs.RedactedTracerProvider,
+// which keeps only the method, status, server address and port and
+// error.type: otelhttp would otherwise record url.full, whose path and query
+// name containers, image references and label filters, and copy err.Error()
+// into the status. The daemon gets the W3C trace context and never the
+// baggage a client sent in, which often names users or tenants.
+func traceOptions() client.Opt {
+	return client.WithTraceOptions(
+		otelhttp.WithFilter(obs.Traced),
+		otelhttp.WithSpanNameFormatter(obs.MethodSpanName),
+		otelhttp.WithTracerProvider(obs.RedactedTracerProvider()),
+		otelhttp.WithPropagators(propagation.TraceContext{}),
+	)
+}
 
 // ErrLogsNotImplemented is returned when log streaming is requested
 // but the docker exec/logs path hasn't been wired yet.
@@ -81,7 +104,7 @@ func New(opts ...Option) (*Provider, error) {
 		}
 	}
 
-	cliOpts := []client.Opt{client.FromEnv}
+	cliOpts := []client.Opt{client.FromEnv, traceOptions()}
 	if p.cfg.Host != "" {
 		cliOpts = append(cliOpts, client.WithHost(p.cfg.Host))
 	}

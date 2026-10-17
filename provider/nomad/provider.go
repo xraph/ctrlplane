@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/xraph/ctrlplane/id"
+	"github.com/xraph/ctrlplane/internal/obs"
 	"github.com/xraph/ctrlplane/provider"
 )
 
@@ -28,7 +29,7 @@ func (p *Provider) HealthCheck(ctx context.Context) (*provider.HealthStatus, err
 		return nil, err
 	}
 
-	httpClient := &http.Client{Timeout: 5 * time.Second}
+	httpClient := &http.Client{Timeout: 5 * time.Second, Transport: obs.Transport(nil)}
 
 	resp, err := httpClient.Do(req)
 	latency := time.Since(start)
@@ -90,7 +91,9 @@ func New(opts ...Option) (*Provider, error) {
 			Region:    "global",
 			Namespace: "default",
 		},
-		client: &http.Client{Timeout: 30 * time.Second},
+		// The transport adds a client span to a request made under a
+		// traced call and leaves untraced polls alone.
+		client: &http.Client{Timeout: 30 * time.Second, Transport: obs.Transport(nil)},
 	}
 
 	for _, opt := range opts {

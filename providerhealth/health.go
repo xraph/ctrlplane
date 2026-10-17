@@ -12,9 +12,15 @@ package providerhealth
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
+	gometrics "github.com/xraph/go-utils/metrics"
+	"go.opentelemetry.io/otel/baggage"
+	"go.opentelemetry.io/otel/trace"
+
+	"github.com/xraph/ctrlplane/internal/obs"
 	"github.com/xraph/ctrlplane/provider"
 )
 
@@ -36,6 +42,8 @@ type Cache struct {
 
 	mu      sync.RWMutex
 	results map[string]Status
+
+	metrics *obs.Metrics
 }
 
 // Config tunes the cache.
@@ -80,14 +88,26 @@ func NewCache(registry *provider.Registry, cfg Config) *Cache {
 	}
 }
 
+// SetMetrics times every provider health check on m, labelled by provider
+// type and result. A nil m records nothing. Call it before Run. In a Forge
+// app the ctrlplane extension passes app.Metrics() in for you.
+func (c *Cache) SetMetrics(m gometrics.Metrics) {
+	c.metrics = obs.NewMetrics(m)
+}
+
 // Run blocks until ctx is cancelled. Does an upfront sweep so the
 // cache populates promptly, then ticks at the poll interval.
 // Spawn this in a background goroutine — never call it inline:
 // the sweep can block on a slow provider HealthCheck (k8s when
 // the cluster is unreachable, for instance), and we don't want
 // startup to depend on that.
+//
+// Each sweep that has a provider to probe is the root span of its own
+// trace, whatever span ctx carries: Run outlives the call that started it.
 func (c *Cache) Run(ctx context.Context) {
-	c.sweep(ctx)
+	ctx = obs.Detach(ctx)
+
+	c.sweepRoot(ctx)
 
 	ticker := time.NewTicker(c.pollInterval)
 	defer ticker.Stop()
@@ -97,14 +117,47 @@ func (c *Cache) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			c.sweep(ctx)
+			c.sweepRoot(ctx)
 		}
 	}
 }
 
+// sweepRoot runs one scheduled sweep as the root of a new trace, when
+// there is at least one provider that can be probed.
+func (c *Cache) sweepRoot(ctx context.Context) {
+	if !c.anyProbe() {
+		// Only providers without a probe: the sweep is bookkeeping,
+		// so it doesn't get a trace.
+		c.sweep(ctx)
+
+		return
+	}
+
+	ctx, span := obs.StartRoot(ctx, "check providers")
+	defer span.End()
+
+	c.sweep(ctx)
+}
+
+// anyProbe reports whether any registered provider implements
+// provider.HealthChecker.
+func (c *Cache) anyProbe() bool {
+	for _, p := range c.registry.All() {
+		if _, ok := p.(provider.HealthChecker); ok {
+			return true
+		}
+	}
+
+	return false
+}
+
 // CheckNow runs a one-shot sweep ignoring the schedule. Useful
-// after a provider re-registers or a manual "refresh" action.
+// after a provider re-registers or a manual "refresh" action. Under a
+// traced context the sweep is a "check providers" child span.
 func (c *Cache) CheckNow(ctx context.Context) {
+	ctx, span := obs.StartChild(ctx, "check providers")
+	defer span.End()
+
 	c.sweep(ctx)
 }
 
@@ -190,6 +243,19 @@ func (c *Cache) sweep(ctx context.Context) {
 
 	now := time.Now().UTC()
 
+	unhealthy := 0
+
+	for _, st := range collected {
+		if !st.Healthy {
+			unhealthy++
+		}
+	}
+
+	trace.SpanFromContext(ctx).SetAttributes(
+		obs.AttrProvidersChecked.Int(len(providers)),
+		obs.AttrProvidersFailing.Int(unhealthy+len(providers)-len(collected)),
+	)
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -231,6 +297,42 @@ func (c *Cache) checkOne(parent context.Context, name string, p provider.Provide
 	ctx, cancel := context.WithTimeout(parent, c.checkTimeout)
 	defer cancel()
 
+	// The span and the metric name the provider by its type. name is the
+	// registry key, which can name a customer's cloud connection.
+	providerType := provider.TypeName(p)
+
+	ctx, span := obs.StartChild(ctx, "check provider health",
+		trace.WithAttributes(obs.AttrProviderType.String(providerType)))
+	defer span.End()
+
+	// The probe reaches the provider's API, which may belong to someone
+	// else, so it never carries a caller's baggage.
+	st, failure := c.probe(baggage.ContextWithoutBaggage(ctx), name, hc, now)
+
+	span.SetAttributes(obs.AttrProviderHealthy.Bool(st.Healthy))
+
+	result := obs.HealthHealthy
+
+	switch {
+	case failure != nil:
+		result = obs.ResultError
+
+		obs.Fail(span, failure)
+	case !st.Healthy:
+		result = obs.HealthUnhealthy
+
+		obs.FailClass(span, "unhealthy")
+	}
+
+	c.metrics.ProviderHealthChecked(providerType, result, time.Since(now))
+
+	return st
+}
+
+// probe runs one provider's HealthCheck with its credentials. failure is
+// the error that kept the check from completing, if any; an unhealthy
+// answer is a completed check.
+func (c *Cache) probe(ctx context.Context, name string, hc provider.HealthChecker, now time.Time) (Status, error) {
 	// name is the registry key, so the probe runs with the same
 	// credentials a real call to this provider would get.
 	ctx, err := c.registry.WithCredentials(ctx, name)
@@ -241,7 +343,7 @@ func (c *Cache) checkOne(parent context.Context, name string, p provider.Provide
 			Message:   err.Error(),
 			Latency:   time.Since(now),
 			CheckedAt: time.Now().UTC(),
-		}
+		}, err
 	}
 
 	hs, err := hc.HealthCheck(ctx)
@@ -254,7 +356,7 @@ func (c *Cache) checkOne(parent context.Context, name string, p provider.Provide
 			Message:   err.Error(),
 			Latency:   time.Since(now),
 			CheckedAt: checked,
-		}
+		}, err
 	}
 
 	if hs == nil {
@@ -264,7 +366,7 @@ func (c *Cache) checkOne(parent context.Context, name string, p provider.Provide
 			Message:   "provider HealthCheck returned nil",
 			Latency:   time.Since(now),
 			CheckedAt: checked,
-		}
+		}, errNilHealth
 	}
 
 	return Status{
@@ -273,5 +375,9 @@ func (c *Cache) checkOne(parent context.Context, name string, p provider.Provide
 		Message:   hs.Message,
 		Latency:   hs.Latency,
 		CheckedAt: hs.CheckedAt,
-	}
+	}, nil
 }
+
+// errNilHealth classifies a HealthCheck that returned neither a status nor
+// an error.
+var errNilHealth = errors.New("providerhealth: HealthCheck returned nil")

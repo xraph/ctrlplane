@@ -6,8 +6,12 @@ import (
 	"fmt"
 	"maps"
 
+	gometrics "github.com/xraph/go-utils/metrics"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/xraph/ctrlplane/event"
 	"github.com/xraph/ctrlplane/id"
+	"github.com/xraph/ctrlplane/internal/obs"
 	"github.com/xraph/ctrlplane/provider"
 )
 
@@ -18,6 +22,7 @@ type service struct {
 	providers *provider.Registry
 	hooks     *Registry
 	events    event.Bus
+	metrics   *obs.Metrics
 }
 
 // NewService wires a bootstrap service. All four dependencies are
@@ -46,6 +51,19 @@ func NewService(store Store, providers *provider.Registry, hooks *Registry, even
 	}
 }
 
+// SetMetrics counts datacenter reconciles and bootstrap provisions and
+// retirements, and times their provider calls, on m. A nil m records
+// nothing. In a Forge app the ctrlplane extension passes app.Metrics() in
+// for you.
+func (s *service) SetMetrics(m gometrics.Metrics) {
+	s.metrics = obs.NewMetrics(m)
+}
+
+// reconcileTally counts what one Reconcile did, for its span.
+type reconcileTally struct {
+	provisioned, retired, failed int
+}
+
 // Reconcile is the single entry point for driving a datacenter's
 // bootstrap state forward. The flow:
 //
@@ -66,6 +84,26 @@ func NewService(store Store, providers *provider.Registry, hooks *Registry, even
 // not abort the rest of the reconcile — one broken hook or one stuck
 // provider call cannot blind-spot the rest of the datacenter.
 func (s *service) Reconcile(ctx context.Context, dc DatacenterInfo, declared []BootstrapServiceSpec) error {
+	ctx, span := obs.StartChild(ctx, "reconcile datacenter",
+		trace.WithAttributes(obs.AttrDatacenterID.String(dc.ID.String())))
+	defer span.End()
+
+	var tally reconcileTally
+
+	err := s.reconcile(ctx, dc, declared, &tally)
+
+	span.SetAttributes(
+		obs.AttrBootstrapProvisioned.Int(tally.provisioned),
+		obs.AttrBootstrapRetired.Int(tally.retired),
+		obs.AttrBootstrapFailed.Int(tally.failed),
+	)
+	obs.Fail(span, err)
+	s.metrics.DatacenterReconciled(err)
+
+	return err
+}
+
+func (s *service) reconcile(ctx context.Context, dc DatacenterInfo, declared []BootstrapServiceSpec, tally *reconcileTally) error {
 	desired, err := s.buildDesired(ctx, dc, declared)
 	if err != nil {
 		return fmt.Errorf("bootstrap reconcile: build desired: %w", err)
@@ -86,6 +124,8 @@ func (s *service) Reconcile(ctx context.Context, dc DatacenterInfo, declared []B
 		desiredByName[spec.Name] = spec
 	}
 
+	trace.SpanFromContext(ctx).SetAttributes(obs.AttrBootstrapDesired.Int(len(desiredByName)))
+
 	pctx, prov, err := s.providers.Acquire(ctx, dc.ProviderName)
 	if err != nil {
 		return fmt.Errorf("bootstrap reconcile: provider %s: %w", dc.ProviderName, err)
@@ -100,7 +140,11 @@ func (s *service) Reconcile(ctx context.Context, dc DatacenterInfo, declared []B
 			continue
 		}
 
-		s.retire(pctx, prov, bw)
+		if s.retire(pctx, prov, bw) {
+			tally.retired++
+		} else {
+			tally.failed++
+		}
 	}
 
 	// Pass 2 — install desired entries that don't have a matching
@@ -112,7 +156,7 @@ func (s *service) Reconcile(ctx context.Context, dc DatacenterInfo, declared []B
 			// Already installed at the right body — only retry if
 			// pending / failed.
 			if bw.State == StatePending || bw.State == StateFailed {
-				s.provision(pctx, prov, dc, bw)
+				tally.count(s.provision(pctx, prov, dc, bw))
 			}
 
 			continue
@@ -122,13 +166,24 @@ func (s *service) Reconcile(ctx context.Context, dc DatacenterInfo, declared []B
 		if err := s.store.InsertBootstrap(ctx, fresh); err != nil {
 			s.emitFailed(ctx, dc, fresh, fmt.Sprintf("insert row: %v", err))
 
+			tally.failed++
+
 			continue
 		}
 
-		s.provision(pctx, prov, dc, fresh)
+		tally.count(s.provision(pctx, prov, dc, fresh))
 	}
 
 	return nil
+}
+
+// count tallies one provision attempt.
+func (t *reconcileTally) count(ok bool) {
+	if ok {
+		t.provisioned++
+	} else {
+		t.failed++
+	}
 }
 
 // buildDesired unions declarative + hook-contributed specs.
@@ -153,7 +208,7 @@ func (s *service) buildDesired(ctx context.Context, dc DatacenterInfo, declared 
 	}
 
 	for _, h := range s.hooks.Hooks() {
-		contributed, hookErr := h.Services(ctx, dc)
+		contributed, hookErr := s.runHook(ctx, h, dc)
 		if hookErr != nil {
 			// A broken hook is a runtime issue, not a fatal one —
 			// log + emit a payload-tagged event so operators see
@@ -180,13 +235,32 @@ func (s *service) buildDesired(ctx context.Context, dc DatacenterInfo, declared 
 	return out, nil
 }
 
+// runHook asks one hook for its contributions. A hook is foreign code that
+// may call out to other systems, so it gets a span named after the hook.
+func (s *service) runHook(ctx context.Context, h Hook, dc DatacenterInfo) ([]BootstrapServiceSpec, error) {
+	ctx, span := obs.StartChild(ctx, "run bootstrap hook",
+		trace.WithAttributes(obs.AttrBootstrapHook.String(h.Name())))
+	defer span.End()
+
+	contributed, err := h.Services(ctx, dc)
+	obs.Fail(span, err)
+
+	return contributed, err
+}
+
 // provision drives a row through Pending/Failed → Provisioning → Running.
 // On error, the row stays in StateFailed with Attempts incremented;
 // the next tick retries. Persistence is best-effort within the
 // reconcile call — a failed Update does not abort the rest of the
 // reconcile, since the next tick will load the stale row and reach
 // the same conclusion anyway.
-func (s *service) provision(ctx context.Context, prov provider.Provider, dc DatacenterInfo, bw *BootstrapWorkload) {
+//
+// It reports whether the provider call succeeded.
+func (s *service) provision(ctx context.Context, prov provider.Provider, dc DatacenterInfo, bw *BootstrapWorkload) bool {
+	ctx, span := obs.StartChild(ctx, "provision bootstrap workload",
+		trace.WithAttributes(obs.AttrBootstrapID.String(bw.ID.String())))
+	defer span.End()
+
 	bw.State = StateProvisioning
 	bw.LastError = ""
 
@@ -195,10 +269,15 @@ func (s *service) provision(ctx context.Context, prov provider.Provider, dc Data
 		// matches what's persisted.
 		bw.State = StatePending
 
-		return
+		obs.Fail(span, err)
+		s.metrics.BootstrapAction(obs.ActionProvision, err)
+
+		return false
 	}
 
-	res, err := prov.Provision(ctx, provider.ProvisionRequest{
+	pctx, call := s.metrics.StartProviderCall(ctx, provider.TypeName(prov), obs.OpProvision,
+		obs.AttrInstanceID.String(bw.ID.String()))
+	res, err := prov.Provision(pctx, provider.ProvisionRequest{
 		InstanceID: bw.ID,
 		TenantID:   "", // platform-owned; no tenant
 		Name:       bw.Name,
@@ -206,6 +285,11 @@ func (s *service) provision(ctx context.Context, prov provider.Provider, dc Data
 		Services:   bw.Services,
 		Labels:     bw.Labels,
 	})
+	call.End(err)
+
+	obs.Fail(span, err)
+	s.metrics.BootstrapAction(obs.ActionProvision, err)
+
 	if err != nil {
 		bw.State = StateFailed
 		bw.LastError = err.Error()
@@ -214,7 +298,7 @@ func (s *service) provision(ctx context.Context, prov provider.Provider, dc Data
 		_ = s.store.UpdateBootstrap(ctx, bw)
 		s.emitFailed(ctx, dc, bw, err.Error())
 
-		return
+		return false
 	}
 
 	bw.State = StateRunning
@@ -224,6 +308,8 @@ func (s *service) provision(ctx context.Context, prov provider.Provider, dc Data
 
 	_ = s.store.UpdateBootstrap(ctx, bw)
 	s.emitRunning(ctx, dc, bw)
+
+	return true
 }
 
 // retire walks a row through Running → Retiring → Retired then
@@ -231,21 +317,37 @@ func (s *service) provision(ctx context.Context, prov provider.Provider, dc Data
 // "already gone" as success (the convergent-Deprovision contract
 // shipped earlier), so a successful return safely removes the row.
 // On error the row stays in Retiring; next tick retries.
-func (s *service) retire(ctx context.Context, prov provider.Provider, bw *BootstrapWorkload) {
+//
+// It reports whether the provider call succeeded.
+func (s *service) retire(ctx context.Context, prov provider.Provider, bw *BootstrapWorkload) bool {
+	ctx, span := obs.StartChild(ctx, "retire bootstrap workload",
+		trace.WithAttributes(obs.AttrBootstrapID.String(bw.ID.String())))
+	defer span.End()
+
 	bw.State = StateRetiring
 	_ = s.store.UpdateBootstrap(ctx, bw)
 
-	if err := prov.Deprovision(ctx, bw.ID); err != nil {
+	pctx, call := s.metrics.StartProviderCall(ctx, provider.TypeName(prov), obs.OpDeprovision,
+		obs.AttrInstanceID.String(bw.ID.String()))
+	err := prov.Deprovision(pctx, bw.ID)
+	call.End(err)
+
+	obs.Fail(span, err)
+	s.metrics.BootstrapAction(obs.ActionRetire, err)
+
+	if err != nil {
 		bw.LastError = err.Error()
 		bw.Attempts++
 		_ = s.store.UpdateBootstrap(ctx, bw)
 
-		return
+		return false
 	}
 
 	bw.State = StateRetired
 	_ = s.store.UpdateBootstrap(ctx, bw)
 	_ = s.store.DeleteBootstrap(ctx, bw.ID)
+
+	return true
 }
 
 // ListByDatacenter returns the bootstrap workloads attached to a
