@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/baggage"
 	"go.opentelemetry.io/otel/codes"
 
 	"github.com/xraph/ctrlplane/auth"
@@ -193,6 +194,74 @@ func TestTelemetryCoversAnInstanceLifecycle(t *testing.T) {
 		if strings.Contains(series, "alice") {
 			t.Fatalf("series %s carries a tenant value", series)
 		}
+	}
+}
+
+// baggageProvider records how many baggage members reach each provider
+// call it gets.
+type baggageProvider struct {
+	telemetryProvider
+
+	seen chan int
+}
+
+func (p baggageProvider) Provision(ctx context.Context, req provider.ProvisionRequest) (*provider.ProvisionResult, error) {
+	p.seen <- baggage.FromContext(ctx).Len()
+
+	return p.telemetryProvider.Provision(ctx, req)
+}
+
+func (p baggageProvider) Status(ctx context.Context, instanceID id.ID) (*provider.InstanceStatus, error) {
+	select {
+	case p.seen <- baggage.FromContext(ctx).Len():
+	default:
+	}
+
+	return p.telemetryProvider.Status(ctx, instanceID)
+}
+
+// TestProviderCallsCarryNoInboundBaggage creates an instance from a
+// context holding a caller's baggage and checks the provider sees none.
+func TestProviderCallsCarryNoInboundBaggage(t *testing.T) {
+	t.Parallel()
+
+	p := baggageProvider{seen: make(chan int, 8)}
+
+	cp, err := New(WithStore(memory.New()), WithProvider("cloud", p), WithDefaultProvider("cloud"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	member, err := baggage.NewMember("user_id", "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	bag, err := baggage.New(member)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := auth.WithClaims(baggage.ContextWithBaggage(context.Background(), bag), &auth.Claims{SubjectID: "u", TenantID: "t", Roles: []string{"system:admin"}})
+
+	if _, err := cp.Instances.Create(ctx, instance.CreateRequest{Name: "web", Services: []provider.ServiceSpec{{Name: "web", Image: "nginx"}}}); err != nil {
+		t.Fatal(err)
+	}
+
+	close(p.seen)
+
+	calls := 0
+
+	for n := range p.seen {
+		calls++
+
+		if n != 0 {
+			t.Fatalf("a provider call carried %d baggage members", n)
+		}
+	}
+
+	if calls < 2 {
+		t.Fatalf("want the provision and at least one status poll, got %d calls", calls)
 	}
 }
 

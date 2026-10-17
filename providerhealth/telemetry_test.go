@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/baggage"
 	"go.opentelemetry.io/otel/codes"
 
 	"github.com/xraph/ctrlplane/internal/obs/obstest"
@@ -114,5 +115,40 @@ func TestCheckNowNestsUnderTheCaller(t *testing.T) {
 	sweeps := obstest.Named(rec, "check providers")
 	if len(sweeps) != 1 || sweeps[0].Parent().SpanID() != parent.SpanContext().SpanID() {
 		t.Fatal("CheckNow did not nest under the caller's span")
+	}
+}
+
+// baggageProbe records how many baggage members reach its health check.
+type baggageProbe struct {
+	fakeProvider
+
+	seen chan int
+}
+
+func (p *baggageProbe) HealthCheck(ctx context.Context) (*provider.HealthStatus, error) {
+	p.seen <- baggage.FromContext(ctx).Len()
+
+	return p.fakeProvider.HealthCheck(ctx)
+}
+
+func TestHealthChecksCarryNoInboundBaggage(t *testing.T) {
+	registry := provider.NewRegistry()
+	probe := &baggageProbe{fakeProvider: fakeProvider{name: "cloudrun", healthy: true}, seen: make(chan int, 1)}
+	registry.Register("cloud", probe)
+
+	member, err := baggage.NewMember("user_id", "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	bag, err := baggage.New(member)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	NewCache(registry, DefaultConfig()).CheckNow(baggage.ContextWithBaggage(context.Background(), bag))
+
+	if n := <-probe.seen; n != 0 {
+		t.Fatalf("the health check carried %d baggage members", n)
 	}
 }

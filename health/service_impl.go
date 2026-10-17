@@ -8,6 +8,7 @@ import (
 	"time"
 
 	gometrics "github.com/xraph/go-utils/metrics"
+	"go.opentelemetry.io/otel/baggage"
 	"go.opentelemetry.io/otel/trace"
 
 	ctrlplane "github.com/xraph/ctrlplane"
@@ -266,8 +267,10 @@ func (s *service) execute(ctx context.Context, checker Checker, check *HealthChe
 	))
 	defer span.End()
 
+	// A check probes a tenant's endpoint, so it never carries a caller's
+	// baggage, even through a custom checker with an instrumented client.
 	started := time.Now()
-	result, err := checker.Check(ctx, check)
+	result, err := checker.Check(baggage.ContextWithoutBaggage(ctx), check)
 
 	status := obs.ResultError
 

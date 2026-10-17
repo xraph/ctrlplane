@@ -17,6 +17,7 @@ import (
 	"time"
 
 	gometrics "github.com/xraph/go-utils/metrics"
+	"go.opentelemetry.io/otel/baggage"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/xraph/ctrlplane/internal/obs"
@@ -304,7 +305,9 @@ func (c *Cache) checkOne(parent context.Context, name string, p provider.Provide
 		trace.WithAttributes(obs.AttrProviderType.String(providerType)))
 	defer span.End()
 
-	st, failure := c.probe(ctx, name, hc, now)
+	// The probe reaches the provider's API, which may belong to someone
+	// else, so it never carries a caller's baggage.
+	st, failure := c.probe(baggage.ContextWithoutBaggage(ctx), name, hc, now)
 
 	span.SetAttributes(obs.AttrProviderHealthy.Bool(st.Healthy))
 

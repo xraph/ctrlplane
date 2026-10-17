@@ -319,6 +319,27 @@ func TestProviderLabelIsBounded(t *testing.T) {
 	}
 }
 
+func TestProviderCallsDropInboundBaggage(t *testing.T) {
+	t.Parallel()
+
+	member, err := baggage.NewMember("user_id", "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	bag, err := baggage.New(member)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, call := NewMetrics(nil).StartProviderCall(baggage.ContextWithBaggage(context.Background(), bag), "cloudrun", OpProvision)
+	defer call.End(nil)
+
+	if n := baggage.FromContext(ctx).Len(); n != 0 {
+		t.Fatalf("the provider call context kept %d baggage members", n)
+	}
+}
+
 func TestNilMetricsRecordNothing(t *testing.T) {
 	t.Parallel()
 

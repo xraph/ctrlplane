@@ -7,6 +7,7 @@ import (
 	"time"
 
 	gometrics "github.com/xraph/go-utils/metrics"
+	"go.opentelemetry.io/otel/baggage"
 	"go.opentelemetry.io/otel/trace"
 
 	ctrlplane "github.com/xraph/ctrlplane"
@@ -490,7 +491,7 @@ func (s *service) TestProviderHealth(ctx context.Context, providerName string) (
 		providerType := provider.TypeName(p)
 		started := time.Now()
 
-		hctx, span := obs.StartChild(pctx, "check provider health",
+		hctx, span := obs.StartChild(baggage.ContextWithoutBaggage(pctx), "check provider health",
 			trace.WithAttributes(obs.AttrProviderType.String(providerType)))
 		status, healthErr := hc.HealthCheck(hctx)
 

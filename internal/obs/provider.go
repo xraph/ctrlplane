@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/baggage"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -50,7 +51,13 @@ type ProviderCall struct {
 // StartProviderCall times one provider operation and, when ctx carries a
 // span, traces it as a child. providerType is the provider's Info().Name
 // and op one of the Op constants. m may be nil.
+//
+// The returned context has no baggage. Providers call cloud and cluster
+// APIs, often through instrumented clients that would forward whatever
+// baggage a caller sent in, and that baggage often names users or tenants.
 func (m *Metrics) StartProviderCall(ctx context.Context, providerType, op string, attrs ...attribute.KeyValue) (context.Context, *ProviderCall) {
+	ctx = baggage.ContextWithoutBaggage(ctx)
+
 	name, ok := providerSpanNames[op]
 	if !ok {
 		name = "call provider"
