@@ -125,10 +125,10 @@ The `worker.Scheduler` manages five built-in workers that run on configurable in
 
 | Worker | Purpose | Default interval |
 |--------|---------|-----------------|
-| Reconciler | Detects drift between stored state and provider state | 60s |
-| HealthRunner | Executes configured health checks | 30s |
-| TelemetryCollector | Collects metrics and resource snapshots from providers | 10s |
-| GarbageCollector | Cleans up old deployments, health results, and audit entries | 5m |
-| CertRenewer | Renews TLS certificates approaching expiry | 1h |
+| Reconciler | Drives every datacenter's bootstrap services forward | 60s |
+| HealthRunner | Placeholder | 30s |
+| TelemetryCollector | Placeholder | 10s |
+| GarbageCollector | Deletes instances whose workload no longer exists | 5m |
+| CertRenewer | Placeholder | 12h |
 
 Workers are started by `cp.Start(ctx)` and stopped by `cp.Stop(ctx)`.

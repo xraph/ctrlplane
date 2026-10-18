@@ -135,6 +135,12 @@ The extension implements the `forge.Extension` interface:
 
 Forge calls these methods in order during its own startup and shutdown sequence.
 
+## Telemetry
+
+You don't wire anything. `Register` passes `app.Metrics()` to Ctrl Plane, so its metrics land on `/_/metrics` under the `forge_` namespace, and its spans go to the tracer provider `forge.New` installs. A deployment you start over HTTP shows up as an `execute deployment` span under the request's server span, with the provider calls and the readiness wait inside it.
+
+`Start` runs the workers and the provider health poller without the `start ctrlplane` boot span, so their passes start traces of their own. See [Observability](/docs/subsystems/observability) for every span and metric.
+
 ## Accessing the Ctrl Plane
 
 If you need to call Ctrl Plane services from other parts of your Forge application:

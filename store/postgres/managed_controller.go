@@ -12,6 +12,7 @@ import (
 
 	"github.com/xraph/ctrlplane/id"
 	"github.com/xraph/ctrlplane/internal/managedstate"
+	"github.com/xraph/ctrlplane/internal/obs"
 	"github.com/xraph/ctrlplane/managed"
 )
 
@@ -21,7 +22,20 @@ type managedControllerTransaction struct {
 	clock time.Time
 }
 
+// ControllerAtomic runs one controller transaction under the global
+// controller lock. Under a traced call it is a "transact managed
+// controller" span, with the lock wait as one of the statements inside it.
 func (b managedBackend) ControllerAtomic(ctx context.Context, serial string, keys []managed.Key, change func(managedstate.ControllerTransaction) error) error {
+	ctx, span := obs.StartChild(ctx, "transact managed controller")
+	defer span.End()
+
+	err := b.controllerAtomic(ctx, serial, keys, change)
+	endManagedSpan(span, err)
+
+	return err
+}
+
+func (b managedBackend) controllerAtomic(ctx context.Context, serial string, keys []managed.Key, change func(managedstate.ControllerTransaction) error) error {
 	tx, err := b.store.pg.BeginTxQuery(ctx, &driver.TxOptions{IsolationLevel: driver.LevelReadCommitted})
 	if err != nil {
 		return err

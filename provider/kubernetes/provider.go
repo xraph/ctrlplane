@@ -22,6 +22,7 @@ import (
 
 	ctrlplane "github.com/xraph/ctrlplane"
 	"github.com/xraph/ctrlplane/id"
+	"github.com/xraph/ctrlplane/internal/obs"
 	"github.com/xraph/ctrlplane/provider"
 )
 
@@ -74,6 +75,12 @@ func New(opts ...Option) (*Provider, error) {
 	if err != nil {
 		return nil, fmt.Errorf("kubernetes: build config: %w", err)
 	}
+
+	// Every client built from restCfg, Helm's included, adds a client
+	// span to an API request made under a traced call. Requests with no
+	// span in their context (Helm's, informer style polls) go out as
+	// before.
+	restCfg.Wrap(obs.Transport)
 
 	client, err := kubernetes.NewForConfig(restCfg)
 	if err != nil {

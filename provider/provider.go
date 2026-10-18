@@ -68,3 +68,19 @@ type Provider interface {
 	// Exec runs a command inside the instance.
 	Exec(ctx context.Context, instanceID id.ID, cmd ExecRequest) (*ExecResult, error)
 }
+
+// TypeName returns p.Info().Name, the bounded name telemetry labels a
+// provider by ("docker", "kubernetes", "nomad"), or "unknown" when p is nil
+// or reports no name. It is not the registry key: a deployment can register
+// one provider per cloud connection, and those keys are unbounded.
+func TypeName(p Provider) string {
+	if p == nil {
+		return "unknown"
+	}
+
+	if name := p.Info().Name; name != "" {
+		return name
+	}
+
+	return "unknown"
+}

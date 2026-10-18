@@ -3,6 +3,8 @@ package app
 import (
 	"errors"
 
+	gometrics "github.com/xraph/go-utils/metrics"
+
 	ctrlplane "github.com/xraph/ctrlplane"
 	"github.com/xraph/ctrlplane/auth"
 	"github.com/xraph/ctrlplane/bootstrap"
@@ -30,6 +32,31 @@ func WithConfig(cfg ctrlplane.Config) Option {
 func WithStore(s store.Store) Option {
 	return func(cp *CtrlPlane) error {
 		cp.store = s
+
+		return nil
+	}
+}
+
+// WithMetrics records Ctrl Plane's metrics on m: worker passes and leader
+// election, provider calls and credential lookups, deployments and
+// readiness waits, provider and instance health checks, bootstrap and
+// garbage collection activity, the resource poller, lifecycle events and
+// plugin hook errors. In a Forge app pass app.Metrics(); the ctrlplane
+// extension does that for you. A nil m records nothing.
+//
+// It registers an observability.MetricsExtension on m for the lifecycle
+// event counter, unless WithExtension already registered one.
+//
+// Outside Forge, m must keep one series per name and label set: the vector
+// metrics here call m.Counter(name, metrics.WithLabels(...)) once per label
+// combination. go-utils' NewMetricsCollector keys series by name alone and
+// would merge them; forge's metrics, which app.Metrics() returns, do not.
+//
+// Spans need no option. They go to the global OpenTelemetry tracer
+// provider, which forge.New installs.
+func WithMetrics(m gometrics.Metrics) Option {
+	return func(cp *CtrlPlane) error {
+		cp.metrics = m
 
 		return nil
 	}

@@ -9,6 +9,7 @@ import (
 
 	"github.com/xraph/ctrlplane/id"
 	"github.com/xraph/ctrlplane/instance"
+	"github.com/xraph/ctrlplane/internal/obs"
 )
 
 // replicaResyncInterval is how often WatchHealth + StreamLogs
@@ -73,6 +74,11 @@ type sub struct {
 // every sub explicitly to unblock blocking I/O, then wg.Wait()
 // before close(out).
 func (s *service) fanInHealth(ctx context.Context, workloadID id.ID, out chan<- *HealthEvent) {
+	// The fan-in outlives any one unit of work and re-lists replicas
+	// on a timer, so it runs without the caller's request span: its
+	// queries must not pile up under one long-lived server span.
+	ctx = obs.Detach(ctx)
+
 	var (
 		wg   sync.WaitGroup
 		mu   sync.Mutex
@@ -207,6 +213,11 @@ func (s *service) fanInHealth(ctx context.Context, workloadID id.ID, out chan<- 
 // scan) and forwards each line as a LogEvent. Same WaitGroup-
 // guarded teardown as fanInHealth.
 func (s *service) fanInLogs(ctx context.Context, workloadID id.ID, opts LogsOptions, out chan<- *LogEvent) {
+	// The fan-in outlives any one unit of work and re-lists replicas
+	// on a timer, so it runs without the caller's request span: its
+	// queries must not pile up under one long-lived server span.
+	ctx = obs.Detach(ctx)
+
 	var (
 		wg   sync.WaitGroup
 		mu   sync.Mutex

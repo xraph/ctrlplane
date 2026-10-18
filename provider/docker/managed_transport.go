@@ -67,7 +67,7 @@ func NewSDKManagedDockerTransport(host, apiVersion string, transport *http.Trans
 		owned.TLSClientConfig.NextProtos = []string{"http/1.1"}
 	}
 
-	api, err := client.New(client.WithHost(host), client.WithScheme(scheme), client.WithAPIVersion(apiVersion), client.WithHTTPClient(&http.Client{Transport: managedDockerRoundTripper{base: owned}, CheckRedirect: func(*http.Request, []*http.Request) error { return managed.ErrUnavailable }}))
+	api, err := client.New(traceOptions(), client.WithHost(host), client.WithScheme(scheme), client.WithAPIVersion(apiVersion), client.WithHTTPClient(&http.Client{Transport: managedDockerRoundTripper{base: owned}, CheckRedirect: func(*http.Request, []*http.Request) error { return managed.ErrUnavailable }}))
 	if err != nil {
 		return nil, err
 	}

@@ -6,11 +6,16 @@ import (
 	"fmt"
 	"time"
 
+	gometrics "github.com/xraph/go-utils/metrics"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+
 	ctrlplane "github.com/xraph/ctrlplane"
 	"github.com/xraph/ctrlplane/admin"
 	"github.com/xraph/ctrlplane/event"
 	"github.com/xraph/ctrlplane/id"
 	"github.com/xraph/ctrlplane/instance"
+	"github.com/xraph/ctrlplane/internal/obs"
 	"github.com/xraph/ctrlplane/workload"
 )
 
@@ -107,6 +112,8 @@ type GarbageCollector struct {
 	// clock lets tests inject a deterministic now() without polluting
 	// the production constructor. Defaults to time.Now in NewGarbageCollector.
 	clock func() time.Time
+
+	metrics *obs.Metrics
 }
 
 // NewGarbageCollector creates a GC worker.
@@ -144,6 +151,12 @@ func NewGarbageCollector(
 	}
 }
 
+// SetMetrics counts tenant sweeps and orphan deletes on m. A nil m records
+// nothing. Call it before the scheduler starts.
+func (g *GarbageCollector) SetMetrics(m gometrics.Metrics) {
+	g.metrics = obs.NewMetrics(m)
+}
+
 // Name returns the worker name.
 func (g *GarbageCollector) Name() string {
 	return "gc"
@@ -172,6 +185,15 @@ func (g *GarbageCollector) Run(ctx context.Context) error {
 		return fmt.Errorf("gc: list tenants: %w", err)
 	}
 
+	if len(tenants.Items) == 0 {
+		// Nothing to sweep, so no trace for this tick.
+		return nil
+	}
+
+	ctx, span := obs.StartRoot(ctx, "sweep orphan instances",
+		trace.WithAttributes(obs.AttrGCTenants.Int(len(tenants.Items))))
+	defer span.End()
+
 	var (
 		swept   int
 		errored int
@@ -183,6 +205,8 @@ func (g *GarbageCollector) Run(ctx context.Context) error {
 		}
 
 		n, sweepErr := g.sweepTenant(ctx, tenant.ID.String())
+		g.metrics.GCTenantSwept(sweepErr)
+
 		if sweepErr != nil {
 			errored++
 
@@ -199,8 +223,7 @@ func (g *GarbageCollector) Run(ctx context.Context) error {
 		swept += n
 	}
 
-	_ = swept   // metrics-friendly local; consumed by future telemetry hook
-	_ = errored // ditto
+	span.SetAttributes(obs.AttrGCReaped.Int(swept), obs.AttrGCTenantsFailed.Int(errored))
 
 	return nil
 }
@@ -244,7 +267,13 @@ func (g *GarbageCollector) sweepTenant(ctx context.Context, tenantID string) (in
 
 		delCancel()
 
+		g.metrics.GCInstanceReaped(err)
+
 		if err != nil {
+			trace.SpanFromContext(ctx).AddEvent("orphan delete failed",
+				trace.WithAttributes(obs.AttrInstanceID.String(inst.ID.String()),
+					attribute.String("exception.type", obs.ErrorType(err))))
+
 			// Don't abort the tenant sweep on a single Delete
 			// failure — convergent Delete will retry next tick.
 			// We still emit a tagged event so operators see the

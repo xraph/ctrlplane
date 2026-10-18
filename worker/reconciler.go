@@ -5,11 +5,14 @@ import (
 	"fmt"
 	"time"
 
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/xraph/ctrlplane/auth"
 	"github.com/xraph/ctrlplane/bootstrap"
 	"github.com/xraph/ctrlplane/datacenter"
 	"github.com/xraph/ctrlplane/event"
 	"github.com/xraph/ctrlplane/instance"
+	"github.com/xraph/ctrlplane/internal/obs"
 	"github.com/xraph/ctrlplane/provider"
 )
 
@@ -91,6 +94,19 @@ func (r *Reconciler) Run(ctx context.Context) error {
 		return fmt.Errorf("reconciler: list datacenters: %w", err)
 	}
 
+	if len(dcs.Items) == 0 {
+		// Nothing to reconcile, so no trace for this tick.
+		return nil
+	}
+
+	// One root span per pass that has work. The bootstrap service
+	// starts a child span per datacenter under it.
+	ctx, span := obs.StartRoot(ctx, "reconcile datacenters",
+		trace.WithAttributes(obs.AttrReconcileDatacenters.Int(len(dcs.Items))))
+	defer span.End()
+
+	failed := 0
+
 	for _, dc := range dcs.Items {
 		if dc == nil {
 			continue
@@ -125,9 +141,13 @@ func (r *Reconciler) Run(ctx context.Context) error {
 			// tick still runs. The bootstrap service itself emits
 			// a kind=bootstrap event with the error payload — no
 			// need to double-publish here.
+			failed++
+
 			continue
 		}
 	}
+
+	span.SetAttributes(obs.AttrReconcileFailed.Int(failed))
 
 	return nil
 }

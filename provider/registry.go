@@ -6,6 +6,12 @@ import (
 	"fmt"
 	"maps"
 	"sync"
+	"time"
+
+	gometrics "github.com/xraph/go-utils/metrics"
+	"go.opentelemetry.io/otel/trace"
+
+	"github.com/xraph/ctrlplane/internal/obs"
 )
 
 // ErrProviderNotFound indicates the named provider is not registered.
@@ -17,6 +23,7 @@ type Registry struct {
 	providers map[string]Provider
 	fallback  string
 	creds     CredentialsResolver
+	metrics   *obs.Metrics
 }
 
 // NewRegistry creates an empty provider registry.
@@ -109,19 +116,44 @@ func (r *Registry) SetCredentialsResolver(res CredentialsResolver) {
 	r.creds = res
 }
 
+// SetMetrics times every credentials resolver call on m. A nil m records
+// nothing. In a Forge app the ctrlplane extension passes app.Metrics() in
+// for you.
+func (r *Registry) SetMetrics(m gometrics.Metrics) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.metrics = obs.NewMetrics(m)
+}
+
 // WithCredentials attaches the credentials for the provider registered
 // under key to ctx. Without a resolver it returns ctx unchanged.
 func (r *Registry) WithCredentials(ctx context.Context, key string) (context.Context, error) {
 	r.mu.RLock()
 	res := r.creds
+	m := r.metrics
+	p := r.providers[key]
 	r.mu.RUnlock()
 
 	if res == nil {
 		return ctx, nil
 	}
 
-	creds, err := res.ResolveCredentials(ctx, key)
+	// The resolver may read a vault or mint a token, so it gets its own
+	// span. It records the provider's type, never the registry key, which
+	// can name a customer's cloud connection.
+	sctx, span := obs.StartChild(ctx, "resolve provider credentials",
+		trace.WithAttributes(obs.AttrProviderType.String(TypeName(p))))
+	defer span.End()
+
+	started := time.Now()
+	creds, err := res.ResolveCredentials(sctx, key)
+
+	m.CredentialsResolved(time.Since(started), err)
+
 	if err != nil {
+		obs.Fail(span, err)
+
 		return ctx, fmt.Errorf("ctrlplane: resolve credentials for provider %s: %w", key, err)
 	}
 
