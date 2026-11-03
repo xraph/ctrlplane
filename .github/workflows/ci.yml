@@ -25,6 +25,8 @@ jobs:
       primary-go-version: "1.26.9"
       os: '["ubuntu-latest"]'
       govulncheck-version: "v1.6.0"
+    secrets:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
   dependency-security:
     name: Complete Go dependency security
