@@ -86,6 +86,7 @@ func request(t *testing.T, h http.Handler, user *dashauth.UserInfo, kind dash.Ki
 
 	r := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/v1", bytes.NewReader(body))
 	r.Header.Set("Content-Type", "application/json")
+
 	if user != nil {
 		r = r.WithContext(dashauth.WithUser(r.Context(), user))
 	}
