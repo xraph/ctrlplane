@@ -36,6 +36,7 @@ func keyedRequest(t *testing.T, h http.Handler, user *dashauth.UserInfo, kind da
 	}
 
 	r := httptest.NewRequestWithContext(dashauth.WithUser(context.Background(), user), http.MethodPost, "/v1", bytes.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
 
